@@ -1,0 +1,1 @@
+"""Arches installer TUI screens."""

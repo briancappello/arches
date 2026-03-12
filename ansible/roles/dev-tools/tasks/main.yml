@@ -1,0 +1,27 @@
+---
+# Developer tooling configuration
+
+- name: Initialize rustup default toolchain
+  become_user: "{{ ansible_user | default('brian') }}"
+  command: rustup default stable
+  args:
+    creates: "~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu"
+  ignore_errors: yes
+
+- name: Add user to docker group
+  user:
+    name: "{{ ansible_user | default('brian') }}"
+    groups: docker
+    append: yes
+
+- name: Enable Docker socket activation
+  systemd:
+    name: docker.socket
+    enabled: yes
+
+# TODO: Add dev-specific configurations
+# - Git global config
+# - Neovim plugin bootstrap
+# - Language-specific tooling (go env, npm global, etc.)
+# - Container runtime config
+# - SSH key generation prompt

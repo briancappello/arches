@@ -1,0 +1,12 @@
+# Example auto-install config for `arches-install --auto`
+#
+# Usage:
+#   arches-install --auto examples/auto-install.toml
+#   arches-install --auto examples/auto-install.toml --dry-run
+
+[install]
+device = "/dev/vda"
+template = "installer/arches_installer/templates/dev-workstation.toml"
+hostname = "archdev"
+username = "brian"
+password = "changeme"

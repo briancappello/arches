@@ -1,0 +1,88 @@
+# ─── Base system ───────────────────────────────────────
+base
+linux-cachyos
+linux-cachyos-headers
+linux-firmware
+mkinitcpio
+
+# ─── CachyOS tooling ──────────────────────────────────
+cachyos-keyring
+cachyos-mirrorlist
+cachyos-v3-mirrorlist
+cachyos-settings
+chwd
+
+# ─── Bootloader ───────────────────────────────────────
+limine
+efibootmgr
+
+# ─── Filesystem & partitioning ────────────────────────
+btrfs-progs
+dosfstools
+e2fsprogs
+parted
+gptfdisk
+lvm2
+
+# ─── Networking ───────────────────────────────────────
+networkmanager
+iwd
+openssh
+curl
+wget
+
+# ─── Arch install tools ──────────────────────────────
+arch-install-scripts
+pacman-contrib
+
+# ─── Python (installer runtime) ──────────────────────
+python
+python-pip
+python-setuptools
+
+# ─── Installer TUI dependencies ──────────────────────
+# Textual is installed via pip at ISO build time into
+# the installer venv; these are its system-level deps
+python-rich
+
+# ─── Ansible (chroot phase) ──────────────────────────
+ansible
+
+# ─── Build tools (for AUR in-chroot if needed) ───────
+base-devel
+git
+
+# ─── Snapshot support ─────────────────────────────────
+snapper
+snap-pac
+
+# ─── Recovery / rescue tools ─────────────────────────
+testdisk
+ddrescue
+nvme-cli
+smartmontools
+hdparm
+dmidecode
+lshw
+pciutils
+usbutils
+memtester
+stress
+iotop
+htop
+btop
+tmux
+neovim
+mc
+rsync
+nmap
+tcpdump
+wireguard-tools
+nfs-utils
+
+# ─── Misc ────────────────────────────────────────────
+sudo
+zsh
+man-db
+man-pages
+less

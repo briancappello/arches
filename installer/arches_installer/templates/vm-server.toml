@@ -1,0 +1,60 @@
+[meta]
+name = "VM Server"
+description = "Headless server — nginx, postgres, redis, SSH"
+
+[disk]
+filesystem = "ext4"
+mount_options = "noatime"
+esp_size_mib = 512
+swap = "zram"
+
+[bootloader]
+type = "limine"
+snapshot_boot = false
+
+[system]
+kernel = "linux-cachyos"
+timezone = "America/New_York"
+locale = "en_US.UTF-8"
+packages = [
+    # CachyOS
+    "cachyos-settings",
+    # Server
+    "openssh",
+    "nginx",
+    "postgresql",
+    "redis",
+    "ansible",
+    # Networking
+    "networkmanager",
+    "firewalld",
+    "nftables",
+    # Monitoring
+    "htop",
+    "btop",
+    "iotop",
+    # Tools
+    "git",
+    "neovim",
+    "tmux",
+    "zsh",
+    "rsync",
+    "curl",
+    "wget",
+    "jq",
+]
+
+[services]
+enable = [
+    "NetworkManager",
+    "sshd",
+    "nginx",
+    "postgresql",
+    "redis",
+    "firewalld",
+    "fstrim.timer",
+]
+
+[ansible]
+chroot_roles = ["base", "vm-server"]
+firstboot_roles = []

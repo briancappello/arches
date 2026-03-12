@@ -1,0 +1,26 @@
+# Build artifacts
+out/
+iso/airootfs/opt/arches/installer/
+iso/airootfs/opt/arches/ansible/
+iso/airootfs/usr/local/bin/arches-install
+iso/airootfs/opt/arches-repo/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

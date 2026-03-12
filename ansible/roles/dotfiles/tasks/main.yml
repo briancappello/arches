@@ -1,0 +1,38 @@
+---
+# Dotfiles role — first-boot chezmoi application
+# This role runs on first boot (not in chroot)
+
+- name: Install chezmoi
+  pacman:
+    name: chezmoi
+    state: present
+
+# TODO: Configure chezmoi source repo
+# Uncomment and set your dotfiles repo URL:
+#
+# - name: Initialize chezmoi
+#   become_user: "{{ ansible_user | default('brian') }}"
+#   command: >
+#     chezmoi init --apply
+#     https://github.com/YOUR_USER/dotfiles.git
+#   args:
+#     creates: "~/.local/share/chezmoi/.git"
+
+- name: Create chezmoi config directory
+  become_user: "{{ ansible_user | default('brian') }}"
+  file:
+    path: "~/.config/chezmoi"
+    state: directory
+    mode: '0755'
+
+- name: Create stub chezmoi config
+  become_user: "{{ ansible_user | default('brian') }}"
+  copy:
+    dest: "~/.config/chezmoi/chezmoi.toml"
+    content: |
+      # Arches chezmoi config
+      # Set your source repo:
+      # [data]
+      #   name = "Your Name"
+      #   email = "your@email.com"
+    force: no

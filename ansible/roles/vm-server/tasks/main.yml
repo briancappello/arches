@@ -1,0 +1,32 @@
+---
+# VM server role — headless server configuration
+
+- name: Configure SSH hardening
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+    - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication yes' }
+    - { regexp: '^#?X11Forwarding', line: 'X11Forwarding no' }
+
+- name: Initialize PostgreSQL data directory
+  command: su - postgres -c "initdb -D /var/lib/postgres/data"
+  args:
+    creates: /var/lib/postgres/data/PG_VERSION
+  ignore_errors: yes
+
+- name: Configure Redis to bind localhost only
+  lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^bind'
+    line: 'bind 127.0.0.1 -::1'
+    create: yes
+
+# TODO: Add server-specific configurations
+# - Firewall rules (nftables/firewalld)
+# - Nginx default config
+# - PostgreSQL pg_hba.conf
+# - Fail2ban
+# - Automatic security updates

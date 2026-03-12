@@ -1,0 +1,38 @@
+---
+# Base system configuration — applied to all templates
+
+- name: Set default shell to zsh for root
+  user:
+    name: root
+    shell: /bin/zsh
+
+- name: Configure pacman parallel downloads
+  lineinfile:
+    path: /etc/pacman.conf
+    regexp: '^#?ParallelDownloads'
+    line: 'ParallelDownloads = 5'
+
+- name: Enable Color in pacman
+  lineinfile:
+    path: /etc/pacman.conf
+    regexp: '^#?Color'
+    line: 'Color'
+
+- name: Configure makepkg to use all cores
+  lineinfile:
+    path: /etc/makepkg.conf
+    regexp: '^#?MAKEFLAGS='
+    line: 'MAKEFLAGS="-j$(nproc)"'
+
+- name: Set journald max disk usage
+  lineinfile:
+    path: /etc/systemd/journald.conf
+    regexp: '^#?SystemMaxUse='
+    line: 'SystemMaxUse=50M'
+    create: yes
+
+- name: Enable NTP
+  systemd:
+    name: systemd-timesyncd
+    enabled: yes
+    state: started

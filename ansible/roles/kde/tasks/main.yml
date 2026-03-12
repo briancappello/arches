@@ -1,0 +1,29 @@
+---
+# KDE Plasma desktop configuration
+
+- name: Set SDDM as default display manager
+  systemd:
+    name: sddm
+    enabled: yes
+
+- name: Create SDDM config directory
+  file:
+    path: /etc/sddm.conf.d
+    state: directory
+
+- name: Configure SDDM
+  copy:
+    dest: /etc/sddm.conf.d/arches.conf
+    content: |
+      [Theme]
+      Current=breeze
+
+      [General]
+      Numlock=on
+
+# TODO: Add KDE-specific configurations
+# - Default panel layout
+# - Window decoration settings
+# - Konsole profile
+# - File associations
+# - Default applications

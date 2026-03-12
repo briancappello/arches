@@ -1,0 +1,18 @@
+---
+# Arches post-install Ansible playbook
+#
+# Roles are selected by the install template via --tags.
+# Chroot phase runs: base, kde, dev-tools, vm-server (as applicable)
+# First-boot phase runs: dotfiles (as applicable)
+
+- name: Arches system configuration
+  hosts: localhost
+  connection: local
+  become: yes
+
+  roles:
+    - { role: base, tags: ['base'] }
+    - { role: kde, tags: ['kde'] }
+    - { role: dev-tools, tags: ['dev-tools'] }
+    - { role: vm-server, tags: ['vm-server'] }
+    - { role: dotfiles, tags: ['dotfiles'] }

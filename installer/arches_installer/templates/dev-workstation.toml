@@ -1,0 +1,93 @@
+[meta]
+name = "Dev Workstation"
+description = "KDE Plasma desktop + CachyOS v3 + btrfs with snapshot booting"
+
+[disk]
+filesystem = "btrfs"
+subvolumes = ["@", "@home", "@var", "@snapshots"]
+mount_options = "compress=zstd:1,noatime,ssd,discard=async"
+esp_size_mib = 2048  # large ESP for snapshot kernel copies
+swap = "zram"
+
+[bootloader]
+type = "limine"
+snapshot_boot = true
+
+[system]
+kernel = "linux-cachyos"
+timezone = "America/New_York"
+locale = "en_US.UTF-8"
+packages = [
+    # CachyOS
+    "cachyos-settings",
+    "chwd",
+    # Desktop
+    "plasma-meta",
+    "sddm",
+    "konsole",
+    "dolphin",
+    "kate",
+    "ark",
+    "spectacle",
+    "gwenview",
+    # Audio
+    "pipewire",
+    "pipewire-alsa",
+    "pipewire-pulse",
+    "pipewire-jack",
+    "wireplumber",
+    # Networking
+    "networkmanager",
+    "firewalld",
+    # Fonts
+    "noto-fonts",
+    "noto-fonts-cjk",
+    "noto-fonts-emoji",
+    "ttf-jetbrains-mono-nerd",
+    # Dev tools
+    "git",
+    "neovim",
+    "tmux",
+    "zsh",
+    "base-devel",
+    "rustup",
+    "go",
+    "python",
+    "python-pip",
+    "nodejs",
+    "npm",
+    "docker",
+    "docker-compose",
+    "podman",
+    # CLI utilities
+    "ripgrep",
+    "fd",
+    "bat",
+    "eza",
+    "fzf",
+    "zoxide",
+    "starship",
+    "lazygit",
+    "bottom",
+    "dust",
+    "duf",
+    "hyperfine",
+    # Snapshot support
+    "snapper",
+    "snap-pac",
+]
+
+[services]
+enable = [
+    "NetworkManager",
+    "sddm",
+    "docker",
+    "firewalld",
+    "fstrim.timer",
+    "snapper-timeline.timer",
+    "snapper-cleanup.timer",
+]
+
+[ansible]
+chroot_roles = ["base", "kde", "dev-tools"]
+firstboot_roles = ["dotfiles"]
