@@ -125,6 +125,84 @@ arches-install --auto config.toml --dry-run
 
 See `examples/auto-install.toml` for a full example.
 
+## How Packages Get Installed and Configured
+
+Customizing what software lands on the system happens in three places, each with a distinct job:
+
+| Layer | File | What it controls |
+|-------|------|-----------------|
+| **Template `[system] packages`** | `templates/*.toml` | Which pacman packages get installed (`pacstrap`) |
+| **Template `[services] enable`** | `templates/*.toml` | Which systemd services get enabled at boot |
+| **Ansible role** | `ansible/roles/*/tasks/main.yml` | How those packages are configured after install |
+
+The template says **what** to install. The Ansible role says **how** to configure it. Both are declarative and version-controlled.
+
+### Example: Adding PostgreSQL and Redis to the VM Server
+
+**Step 1: Add the packages to the template** (`installer/arches_installer/templates/vm-server.toml`):
+
+```toml
+[system]
+packages = [
+    # ...existing packages...
+    "postgresql",
+    "redis",
+]
+
+[services]
+enable = [
+    # ...existing services...
+    "postgresql",
+    "redis",
+]
+```
+
+This ensures `pacstrap` installs both packages and `systemctl enable` starts them on boot. At this point the services would run with their default upstream configs — that's often enough for a dev environment.
+
+**Step 2: Configure them via Ansible** (`ansible/roles/vm-server/tasks/main.yml`):
+
+```yaml
+- name: Initialize PostgreSQL data directory
+  command: su - postgres -c "initdb -D /var/lib/postgres/data"
+  args:
+    creates: /var/lib/postgres/data/PG_VERSION
+  ignore_errors: yes
+
+- name: Configure Redis to bind localhost only
+  lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^bind'
+    line: 'bind 127.0.0.1 -::1'
+    create: yes
+```
+
+The template's `[ansible] chroot_roles = ["base", "vm-server"]` triggers this role during install. The installer runs `ansible-playbook --tags vm-server` inside `arch-chroot`, so these tasks execute against the new filesystem before the first boot.
+
+**Step 3: That's it.** On first boot, PostgreSQL and Redis start with the config Ansible applied.
+
+### The full sequence for a single package
+
+Taking `postgresql` as a concrete example, here's exactly what happens at each stage of the install:
+
+```
+Template [system] packages = ["postgresql"]
+  └─ pacstrap installs the postgresql package from CachyOS v3 repos
+
+Template [services] enable = ["postgresql"]
+  └─ systemctl enable postgresql inside the chroot
+
+Template [ansible] chroot_roles = ["vm-server"]
+  └─ ansible-playbook --tags vm-server runs in chroot
+     └─ vm-server role: initdb, pg_hba.conf, listen_addresses, etc.
+
+First boot
+  └─ postgresql.service starts with the config Ansible applied
+```
+
+### When you don't need Ansible
+
+For packages that work out of the box with no configuration (e.g., `htop`, `git`, `tmux`), you only need the template — just add them to `[system] packages`. No Ansible role needed. Ansible is only for post-install configuration that goes beyond `pacman -S`.
+
 ## Install Templates
 
 Templates are declarative TOML files in `installer/arches_installer/templates/`. Each defines the full system configuration:
@@ -134,7 +212,7 @@ Templates are declarative TOML files in `installer/arches_installer/templates/`.
 | **Dev Workstation** | btrfs (`@`, `@home`, `@var`, `@snapshots`) | `linux-cachyos` | KDE Plasma | Yes (Snapper + limine-snapper-sync) |
 | **VM Server** | ext4 | `linux-cachyos` | None (headless) | No |
 
-To add a new template, create a `.toml` file in the templates directory:
+To add a new template, create a `.toml` file in the templates directory. The installer discovers all `.toml` files automatically:
 
 ```toml
 [meta]
@@ -156,14 +234,14 @@ snapshot_boot = true
 kernel = "linux-cachyos"
 timezone = "America/New_York"
 locale = "en_US.UTF-8"
-packages = ["git", "neovim"]
+packages = ["git", "neovim"]     # installed via pacstrap
 
 [services]
-enable = ["NetworkManager", "sshd"]
+enable = ["NetworkManager"]      # enabled via systemctl enable
 
 [ansible]
-chroot_roles = ["base"]          # Run during install (in chroot)
-firstboot_roles = ["dotfiles"]   # Run on first boot
+chroot_roles = ["base"]          # run during install (in chroot)
+firstboot_roles = ["dotfiles"]   # run on first boot
 ```
 
 ## Post-Install Automation
@@ -174,6 +252,8 @@ Configuration is applied in two phases:
 |-------|------|-----------|-------|
 | **Chroot** | During install | `ansible-playbook` inside `arch-chroot` | `base`, `kde`, `dev-tools`, `vm-server` |
 | **First boot** | First login | systemd oneshot service → `ansible-playbook` | `dotfiles` |
+
+The split exists because some things must happen against the offline filesystem (locale, bootloader, service enablement, database init), while others need a running system (network-dependent dotfiles, user-session config).
 
 The first-boot service runs once and removes its sentinel file (`/opt/arches/firstboot-pending`), so it won't re-run on subsequent boots.
 
