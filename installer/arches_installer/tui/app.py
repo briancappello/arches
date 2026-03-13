@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.binding import Binding
+from textual.screen import Screen
 
+from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.template import InstallTemplate
 from arches_installer.tui.welcome import WelcomeScreen
 from arches_installer.tui.partition import PartitionScreen
@@ -71,6 +73,10 @@ class ArchesApp(App):
         "progress": InstallProgressScreen,
     }
 
-    def on_mount(self) -> None:
-        """Start at the welcome screen."""
-        self.push_screen("welcome")
+    def __init__(self, *, platform: PlatformConfig, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.platform = platform
+
+    def get_default_screen(self) -> Screen:
+        """Use WelcomeScreen as the initial screen."""
+        return WelcomeScreen()

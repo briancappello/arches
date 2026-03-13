@@ -2,8 +2,14 @@
 out/
 iso/airootfs/opt/arches/installer/
 iso/airootfs/opt/arches/ansible/
+iso/airootfs/opt/arches/platform/
 iso/airootfs/usr/local/bin/arches-install
 iso/airootfs/opt/arches-repo/
+
+# Generated at build time from platforms/<platform>/
+iso/pacman.conf
+iso/packages.x86_64
+iso/packages.aarch64
 
 # Python
 __pycache__/

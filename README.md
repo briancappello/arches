@@ -1,8 +1,16 @@
 # Arches
 
-A personal Arch/CachyOS-based Linux distribution with a declarative, template-driven installer.
+A personal Arch-based Linux distribution with a declarative, template-driven installer and configurable platform support.
 
-Arches builds a minimal bootable ISO that launches a custom Python TUI installer. You select a disk, pick a pre-defined install template (e.g., dev workstation or VM server), and the system is configured automatically — partitioning, CachyOS v3-optimized packages, Limine bootloader with btrfs snapshot booting, and post-install Ansible playbooks.
+Arches uses a **platform + template matrix** design. A *platform* defines the hardware foundation — kernel, repos, bootloader, hardware detection — while a *template* defines the workload on top — filesystem, packages, services, Ansible roles. You build an ISO for a specific platform (`make iso-x86-64`), and at install time you select a template. Templates are platform-independent.
+
+Currently supported platforms:
+
+| Platform | Base | Kernel | Status |
+|----------|------|--------|--------|
+| `x86-64` | CachyOS v3 (AVX2/SSE4.2) | `linux-cachyos` | Fully implemented |
+| `aarch64-generic` | Arch Linux ARM | `linux-aarch64` | Stub |
+| `aarch64-apple` | Asahi Linux | `linux-asahi` | Stub |
 
 ## Quickstart
 
@@ -24,19 +32,18 @@ sudo pacman-key --lsign-key F3B607488DB35A47
 ### Build
 
 ```bash
-# 1. Pre-build AUR packages (limine-snapper-sync) into a local repo
-make aur-repo
+# 1. Build the ISO for x86-64 (requires root — mkarchiso needs it)
+#    This also pre-builds AUR packages, stages the platform config,
+#    and assembles the package list from common + platform-specific lists.
+sudo make iso-x86-64
 
-# 2. Build the ISO (requires root — mkarchiso needs it)
-sudo make iso
-
-# 3. Create a QEMU test disk and boot the ISO
+# 2. Create a QEMU test disk and boot the ISO
 make test-disk
 make test-iso          # UEFI mode
 make test-iso-bios     # BIOS mode
 ```
 
-The built ISO is written to `out/arches-<date>.iso`.
+The built ISO is written to `out/arches-<date>.iso`. Each platform has its own make target (`iso-x86-64`, `iso-aarch64-generic`). The platform config is baked into the ISO at `/opt/arches/platform/platform.toml` so the installer knows which kernel, repos, and bootloader settings to use.
 
 ### Development
 
@@ -47,7 +54,7 @@ make test              # Run all tests (unit + TUI)
 make test-unit         # Run core unit tests only (no Textual needed)
 make test-tui          # Run Textual TUI tests only
 make test-template     # Validate all TOML templates parse
-make dry-run           # Dry-run the example auto-install config
+make dry-run           # Dry-run the example auto-install config (x86-64)
 make clean             # Remove staged files from ISO airootfs
 make clean-all         # Remove all build artifacts + output
 ```
@@ -66,7 +73,7 @@ Tests are split into two suites:
 
 | Suite | Path | What it tests | Dependencies |
 |-------|------|---------------|-------------|
-| **Core** | `tests/core/` | Template loading, auto-install config, validation | Standard library only |
+| **Core** | `tests/core/` | Template loading, platform config, auto-install config, validation | Standard library only |
 | **TUI** | `tests/tui/` | Screen rendering, navigation, input validation | `textual`, `pytest-asyncio` |
 
 TUI tests use Textual's `run_test()` framework to run the full app headlessly — no terminal or VM required. System calls (`lsblk`, `pacstrap`, etc.) are mocked so tests run anywhere.
@@ -96,7 +103,7 @@ The installer is a Python/Textual TUI that walks through:
 4. **User setup** — hostname, username, password
 5. **Confirmation** — review summary, then install
 
-The install pipeline runs: `partition` → `pacstrap` → `genfstab` → `chroot config` → `chwd` (GPU detection) → `mkinitcpio` → `Limine` → `Snapper` → `Ansible (chroot phase)` → `first-boot service`.
+The install pipeline runs: `partition` → `pacstrap` (platform base packages + kernel + template packages) → `genfstab` → `chroot config` → `hardware detection` (if platform enables it) → `mkinitcpio` → `bootloader` → `Snapper` (if template uses btrfs snapshots) → `Ansible (chroot phase)` → `first-boot service`.
 
 ### Unattended Install (`--auto`)
 
@@ -117,25 +124,26 @@ username = "brian"
 password = "changeme"
 ```
 
-Use `--dry-run` to validate and preview without executing:
+The platform (kernel, repos, hardware detection) is read from the ISO automatically. During development, you can override it with `--platform`:
 
 ```bash
-arches-install --auto config.toml --dry-run
+arches-install --auto examples/auto-install.toml --platform platforms/x86-64/platform.toml --dry-run
 ```
 
 See `examples/auto-install.toml` for a full example.
 
 ## How Packages Get Installed and Configured
 
-Customizing what software lands on the system happens in three places, each with a distinct job:
+Customizing what software lands on the system happens at three layers:
 
 | Layer | File | What it controls |
 |-------|------|-----------------|
-| **Template `[system] packages`** | `templates/*.toml` | Which pacman packages get installed (`pacstrap`) |
+| **Platform `[base_packages]`** | `platforms/*/platform.toml` | Platform-specific packages always installed (repo keyrings, settings, kernel) |
+| **Template `[system] packages`** | `templates/*.toml` | Workload-specific packages installed via `pacstrap` |
 | **Template `[services] enable`** | `templates/*.toml` | Which systemd services get enabled at boot |
 | **Ansible role** | `ansible/roles/*/tasks/main.yml` | How those packages are configured after install |
 
-The template says **what** to install. The Ansible role says **how** to configure it. Both are declarative and version-controlled.
+The platform provides the hardware foundation (kernel, repo keys, GPU detection tools). The template says **what** workload to install on top. The Ansible role says **how** to configure it. All three are declarative and version-controlled.
 
 ### Example: Adding PostgreSQL and Redis to the VM Server
 
@@ -185,8 +193,11 @@ The template's `[ansible] chroot_roles = ["base", "vm-server"]` triggers this ro
 Taking `postgresql` as a concrete example, here's exactly what happens at each stage of the install:
 
 ```
+Platform [base_packages] install = ["cachyos-keyring", ...]
+  └─ pacstrap installs platform base packages + kernel
+
 Template [system] packages = ["postgresql"]
-  └─ pacstrap installs the postgresql package from CachyOS v3 repos
+  └─ pacstrap installs the postgresql package from platform repos
 
 Template [services] enable = ["postgresql"]
   └─ systemctl enable postgresql inside the chroot
@@ -205,12 +216,12 @@ For packages that work out of the box with no configuration (e.g., `htop`, `git`
 
 ## Install Templates
 
-Templates are declarative TOML files in `installer/arches_installer/templates/`. Each defines the full system configuration:
+Templates are declarative TOML files in `installer/arches_installer/templates/`. Each defines a workload — filesystem layout, packages, services, and Ansible roles. Templates are **platform-independent**: the kernel, repo keyrings, and hardware detection come from the platform, not the template.
 
-| Template | Filesystem | Kernel | Desktop | Snapshots |
-|----------|-----------|--------|---------|-----------|
-| **Dev Workstation** | btrfs (`@`, `@home`, `@var`, `@snapshots`) | `linux-cachyos` | KDE Plasma | Yes (Snapper + limine-snapper-sync) |
-| **VM Server** | ext4 | `linux-cachyos` | None (headless) | No |
+| Template | Filesystem | Desktop | Snapshots |
+|----------|-----------|---------|-----------|
+| **Dev Workstation** | btrfs (`@`, `@home`, `@var`, `@snapshots`) | KDE Plasma | Yes (Snapper + limine-snapper-sync) |
+| **VM Server** | ext4 | None (headless) | No |
 
 To add a new template, create a `.toml` file in the templates directory. The installer discovers all `.toml` files automatically:
 
@@ -231,7 +242,6 @@ type = "limine"
 snapshot_boot = true
 
 [system]
-kernel = "linux-cachyos"
 timezone = "America/New_York"
 locale = "en_US.UTF-8"
 packages = ["git", "neovim"]     # installed via pacstrap
@@ -267,10 +277,19 @@ arches/
 ├── examples/
 │   └── auto-install.toml                 # Example config for --auto mode
 │
+├── platforms/                            # Platform definitions (hardware layer)
+│   ├── x86-64/
+│   │   ├── platform.toml                 # Kernel, repos, bootloader, base packages
+│   │   ├── pacman.conf                   # CachyOS v3 + Arch repos
+│   │   └── packages                      # Platform-specific ISO packages
+│   ├── aarch64-generic/
+│   │   └── platform.toml                 # Stub — Arch Linux ARM
+│   └── aarch64-apple/
+│       └── platform.toml                 # Stub — Asahi Linux
+│
 ├── iso/                                  # archiso profile
-│   ├── profiledef.sh                     # ISO identity, boot modes (BIOS+UEFI)
-│   ├── pacman.conf                       # CachyOS v3 + Arch repos + local AUR repo
-│   ├── packages.x86_64                   # ISO package list (base + recovery tools)
+│   ├── profiledef.sh                     # ISO identity, boot modes (parameterized)
+│   ├── packages.common                   # Platform-agnostic ISO packages
 │   └── airootfs/
 │       ├── etc/
 │       │   └── mkinitcpio.conf           # Hardware-agnostic (kms, no autodetect)
@@ -280,12 +299,13 @@ arches/
 ├── installer/                            # Python package — the TUI installer
 │   ├── pyproject.toml                    # Package config, builds `arches-install` CLI
 │   ├── arches_installer/
-│   │   ├── __main__.py                   # Entry point (--auto or TUI)
+│   │   ├── __main__.py                   # Entry point (--auto or TUI, --platform)
 │   │   ├── core/
+│   │   │   ├── platform.py               # Platform config loader + dataclasses
 │   │   │   ├── auto.py                   # Unattended install runner
 │   │   │   ├── template.py               # TOML template loader + dataclasses
 │   │   │   ├── disk.py                   # Partition, format, mount (btrfs + ext4)
-│   │   │   ├── install.py                # pacstrap, genfstab, chroot config, chwd
+│   │   │   ├── install.py                # pacstrap, genfstab, chroot config, hw detect
 │   │   │   ├── bootloader.py             # Limine install + config (UEFI/BIOS auto)
 │   │   │   ├── snapper.py                # Snapper + limine-snapper-sync setup
 │   │   │   └── firstboot.py              # systemd oneshot for post-install Ansible
@@ -295,14 +315,15 @@ arches/
 │   │   │   ├── partition.py              # Auto-partition or drop to shell
 │   │   │   ├── template_select.py        # Template picker with detail preview
 │   │   │   ├── user_setup.py             # Hostname, username, password
-│   │   │   ├── confirm.py                # Summary review + erase warning
+│   │   │   ├── confirm.py                # Summary review (platform + template)
 │   │   │   └── progress.py               # Threaded install with live log output
 │   │   └── templates/
 │   │       ├── dev-workstation.toml      # KDE + btrfs + snapshots + dev tools
 │   │       └── vm-server.toml            # Headless + ext4 + nginx/postgres/redis
 │   └── tests/
-│       ├── conftest.py                   # Shared fixtures (templates, mocks)
+│       ├── conftest.py                   # Shared fixtures (platform, templates, mocks)
 │       ├── core/
+│       │   ├── test_platform.py          # Platform config loading + validation
 │       │   ├── test_template.py          # Template loading + validation tests
 │       │   └── test_auto.py              # Auto-install config tests
 │       └── tui/
@@ -334,13 +355,14 @@ arches/
 
 ## Key Technical Decisions
 
-- **CachyOS v3 repos** — Full Arch package set recompiled with AVX2/SSE4.2 optimizations. Covers all x86-64 hardware from 2011 onward. The CachyOS custom pacman fork is intentionally excluded to maintain standard Arch pacman semantics.
-- **Limine bootloader** — Supports both BIOS and UEFI. Firmware type is auto-detected at install time. Snapshot boot entries are managed by `limine-snapper-sync`.
+- **Platform/template matrix** — Hardware concerns (kernel, repos, bootloader EFI paths, GPU detection) are separated from workload concerns (filesystem, packages, services, Ansible roles). Platforms are selected at ISO build time; templates are selected at install time. Templates work on any platform without modification.
+- **CachyOS v3 repos** (x86-64 platform) — Full Arch package set recompiled with AVX2/SSE4.2 optimizations. Covers all x86-64 hardware from 2011 onward. The CachyOS custom pacman fork is intentionally excluded to maintain standard Arch pacman semantics.
+- **Limine bootloader** — Supports both BIOS and UEFI. Firmware type is auto-detected at install time. EFI binary paths are platform-specific (`BOOTX64.EFI` vs `BOOTAA64.EFI`). Snapshot boot entries are managed by `limine-snapper-sync`.
 - **Btrfs layout** — `@ / @home / @var / @snapshots` with `compress=zstd:1,noatime,ssd,discard=async`. The `@var` subvolume is separated to exclude logs/cache from snapshots.
 - **ESP sizing** — 2 GiB for templates with snapshot booting (each bootable snapshot copies its kernel/initramfs into the ESP), 512 MiB otherwise.
-- **Hardware detection** — CachyOS `chwd` (Rust-based, replaces Manjaro's `mhwd`) auto-installs the correct GPU drivers. Failures are non-fatal (expected in VMs without a discrete GPU).
+- **Hardware detection** — Controlled by the platform config. The x86-64 platform uses CachyOS `chwd` (Rust-based, replaces Manjaro's `mhwd`) to auto-install GPU drivers. ARM platforms disable it. Failures are always non-fatal.
 - **Recovery mode** — The ISO doubles as a recovery environment with `btrfs-progs`, `testdisk`, `ddrescue`, `nvme-cli`, `smartmontools`, `nmap`, and more.
 
 ## Licensing
 
-The build scripts and installer code in this repository are your own. CachyOS first-party packages used (`cachyos-settings`, `chwd`, `linux-cachyos`) are GPL-3.0. CachyOS binary repositories are used under their terms for personal/Arch user use; pre-built ISOs with their repos embedded should not be publicly redistributed.
+The build scripts and installer code in this repository are your own. CachyOS first-party packages used by the x86-64 platform (`cachyos-settings`, `chwd`, `linux-cachyos`) are GPL-3.0. CachyOS binary repositories are used under their terms for personal/Arch user use; pre-built ISOs with their repos embedded should not be publicly redistributed.

@@ -33,16 +33,18 @@ class ConfirmScreen(Screen):
         """Build and display the install summary."""
         summary = self.query_one("#summary", Static)
         tmpl = self.app.selected_template
+        platform = self.app.platform
 
         if tmpl is None:
             summary.update("Error: no template selected")
             return
 
         text = (
+            f"  Platform:    {platform.name}\n"
             f"  Template:    {tmpl.name}\n"
             f"  Device:      {self.app.selected_device}\n"
             f"  Filesystem:  {tmpl.disk.filesystem}\n"
-            f"  Kernel:      {tmpl.system.kernel}\n"
+            f"  Kernel:      {platform.kernel.package}\n"
             f"  Bootloader:  {tmpl.bootloader.type}\n"
             f"  Snapshots:   {'Yes' if tmpl.bootloader.snapshot_boot else 'No'}\n"
             f"  Hostname:    {self.app.hostname}\n"

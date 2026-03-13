@@ -8,9 +8,10 @@ from pathlib import Path
 from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
+from arches_installer.core.platform import ISO_PLATFORM_DIR, PlatformConfig
 from arches_installer.core.template import InstallTemplate
 
-# Path to the pacman.conf that includes CachyOS v3 repos
+# Path to the pacman.conf that includes platform-specific repos
 ISO_PACMAN_CONF = Path("/etc/pacman.conf")
 
 # Ansible playbooks shipped on the ISO
@@ -53,21 +54,30 @@ def chroot_run(
     return run(["arch-chroot", str(MOUNT_ROOT)] + cmd, log=log)
 
 
-def pacstrap(template: InstallTemplate, log: LogCallback | None = None) -> None:
+def pacstrap(
+    platform: PlatformConfig,
+    template: InstallTemplate,
+    log: LogCallback | None = None,
+) -> None:
     """Install base packages into MOUNT_ROOT via pacstrap."""
     _log("Running pacstrap...", log)
+
+    # Platform-agnostic base
     base_packages = [
         "base",
-        template.system.kernel,
-        f"{template.system.kernel}-headers",
+        platform.kernel.package,
+        platform.kernel.headers,
         "linux-firmware",
         "mkinitcpio",
         "sudo",
-        "cachyos-keyring",
-        "cachyos-mirrorlist",
-        "cachyos-v3-mirrorlist",
     ]
+
+    # Platform-specific base packages (keyrings, mirrorlists, settings)
+    base_packages.extend(platform.base_packages)
+
+    # Template-specific packages (desktop, dev tools, services, etc.)
     all_packages = base_packages + template.system.packages
+
     run(
         ["pacstrap", "-C", str(ISO_PACMAN_CONF), str(MOUNT_ROOT)] + all_packages,
         log=log,
@@ -83,10 +93,16 @@ def generate_fstab(log: LogCallback | None = None) -> None:
 
 
 def install_pacman_conf(log: LogCallback | None = None) -> None:
-    """Copy the CachyOS v3 pacman.conf into the target system."""
-    _log("Installing pacman.conf with CachyOS v3 repos...", log)
+    """Copy the platform-specific pacman.conf into the target system."""
+    _log("Installing pacman.conf with platform repos...", log)
+    # Prefer the platform-specific pacman.conf baked into the ISO
+    platform_conf = ISO_PLATFORM_DIR / "pacman.conf"
     target = MOUNT_ROOT / "etc" / "pacman.conf"
-    shutil.copy2(ISO_PACMAN_CONF, target)
+    if platform_conf.exists():
+        shutil.copy2(platform_conf, target)
+    else:
+        # Fallback to the ISO's own pacman.conf
+        shutil.copy2(ISO_PACMAN_CONF, target)
 
 
 def configure_locale(
@@ -224,7 +240,7 @@ def run_chroot_ansible(
 
 
 def run_mkinitcpio(
-    kernel: str,
+    platform: PlatformConfig,
     log: LogCallback | None = None,
 ) -> None:
     """Regenerate initramfs in the target."""
@@ -232,16 +248,31 @@ def run_mkinitcpio(
     chroot_run(["mkinitcpio", "-P"], log=log)
 
 
-def run_chwd(log: LogCallback | None = None) -> None:
-    """Run CachyOS hardware detection for GPU drivers."""
-    _log("Running hardware detection (chwd)...", log)
+def run_hardware_detection(
+    platform: PlatformConfig,
+    log: LogCallback | None = None,
+) -> None:
+    """Run platform-specific hardware detection (e.g., GPU drivers)."""
+    hw = platform.hardware_detection
+    if not hw.enabled:
+        _log("Hardware detection not enabled for this platform, skipping.", log)
+        return
+
+    _log(f"Running hardware detection ({hw.tool})...", log)
     try:
-        chroot_run(["chwd", "-a"], log=log)
+        chroot_run([hw.tool] + hw.args, log=log)
     except subprocess.CalledProcessError:
-        _log("chwd failed (may be expected in a VM), continuing...", log)
+        if hw.optional:
+            _log(
+                f"{hw.tool} failed (may be expected in a VM), continuing...",
+                log,
+            )
+        else:
+            raise
 
 
 def install_system(
+    platform: PlatformConfig,
     template: InstallTemplate,
     hostname: str,
     username: str,
@@ -249,14 +280,14 @@ def install_system(
     log: LogCallback | None = None,
 ) -> None:
     """Full install pipeline after disk is prepared and mounted."""
-    pacstrap(template, log)
+    pacstrap(platform, template, log)
     generate_fstab(log)
     install_pacman_conf(log)
     configure_locale(template.system.locale, log)
     configure_timezone(template.system.timezone, log)
     configure_hostname(hostname, log)
     create_user(username, password, log)
-    run_chwd(log)
-    run_mkinitcpio(template.system.kernel, log)
+    run_hardware_detection(platform, log)
+    run_mkinitcpio(platform, log)
     enable_services(template.services, log)
     run_chroot_ansible(template, log)

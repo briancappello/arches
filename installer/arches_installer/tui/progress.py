@@ -55,6 +55,7 @@ class InstallProgressScreen(Screen):
         """Run the full install pipeline."""
         template = self.app.selected_template
         device = self.app.selected_device
+        platform = self.app.platform
 
         if template is None:
             self.log_msg("[red]ERROR: No template selected![/red]")
@@ -69,6 +70,7 @@ class InstallProgressScreen(Screen):
             # Phase 2: System installation
             self.log_msg("[bold cyan]── Phase 2: System Install ──[/bold cyan]")
             install_system(
+                platform,
                 template,
                 self.app.hostname,
                 self.app.username,
@@ -80,6 +82,7 @@ class InstallProgressScreen(Screen):
             # Phase 3: Bootloader
             self.log_msg("[bold cyan]── Phase 3: Bootloader ──[/bold cyan]")
             install_bootloader(
+                platform,
                 template,
                 device,
                 esp_part,

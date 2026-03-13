@@ -18,6 +18,7 @@ from arches_installer.core.bootloader import install_bootloader
 from arches_installer.core.disk import prepare_disk
 from arches_installer.core.firstboot import inject_firstboot_service
 from arches_installer.core.install import install_system
+from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.snapper import setup_snapshots
 from arches_installer.core.template import InstallTemplate, load_template
 
@@ -92,11 +93,12 @@ def log_stdout(msg: str) -> None:
     print(clean, flush=True)
 
 
-def run_auto_install(config: AutoInstallConfig) -> int:
+def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int:
     """Run the full install pipeline without TUI. Returns exit code."""
     log = log_stdout
 
     log("== Arches Auto Install ==")
+    log(f"  Platform: {platform.name} ({platform.arch})")
     log(f"  Device:   {config.device}")
     log(f"  Template: {config.template.name}")
     log(f"  Hostname: {config.hostname}")
@@ -112,6 +114,7 @@ def run_auto_install(config: AutoInstallConfig) -> int:
         # Phase 2: System install
         log("-- Phase 2: System Install --")
         install_system(
+            platform,
             config.template,
             config.hostname,
             config.username,
@@ -123,6 +126,7 @@ def run_auto_install(config: AutoInstallConfig) -> int:
         # Phase 3: Bootloader
         log("-- Phase 3: Bootloader --")
         install_bootloader(
+            platform,
             config.template,
             config.device,
             esp_part,

@@ -57,7 +57,6 @@ class TemplateSelectScreen(Screen):
             info = (
                 f"{tmpl.description}\n\n"
                 f"  Filesystem: {tmpl.disk.filesystem}\n"
-                f"  Kernel:     {tmpl.system.kernel}\n"
                 f"  Packages:   {len(tmpl.system.packages)} packages\n"
                 f"  Snapshots:  {'Yes' if tmpl.bootloader.snapshot_boot else 'No'}"
             )

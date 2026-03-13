@@ -22,7 +22,6 @@ class TestLoadTemplate:
         assert tmpl.disk.subvolumes == ["@", "@home", "@var", "@snapshots"]
         assert tmpl.disk.esp_size_mib == 2048
         assert tmpl.bootloader.snapshot_boot is True
-        assert tmpl.system.kernel == "linux-cachyos"
         assert "git" in tmpl.system.packages
         assert "NetworkManager" in tmpl.services
         assert "base" in tmpl.ansible.chroot_roles
@@ -57,7 +56,6 @@ class TestLoadTemplate:
         assert tmpl.name == "Unknown"
         assert tmpl.disk.filesystem == "ext4"
         assert tmpl.bootloader.type == "limine"
-        assert tmpl.system.kernel == "linux-cachyos"
 
 
 class TestInstallTemplateFromDict:
@@ -81,7 +79,6 @@ class TestInstallTemplateFromDict:
             },
             "bootloader": {"type": "limine", "snapshot_boot": True},
             "system": {
-                "kernel": "linux-cachyos-bore",
                 "timezone": "Europe/London",
                 "locale": "en_GB.UTF-8",
                 "packages": ["vim", "curl"],
@@ -97,7 +94,6 @@ class TestInstallTemplateFromDict:
         assert tmpl.disk.filesystem == "btrfs"
         assert tmpl.disk.subvolumes == ["@", "@home"]
         assert tmpl.bootloader.snapshot_boot is True
-        assert tmpl.system.kernel == "linux-cachyos-bore"
         assert tmpl.system.timezone == "Europe/London"
         assert tmpl.services == ["sshd"]
         assert tmpl.ansible.chroot_roles == ["base"]
@@ -109,6 +105,18 @@ class TestInstallTemplateFromDict:
         }
         tmpl = InstallTemplate.from_dict(data)
         assert tmpl.name == "Test"
+
+    def test_kernel_in_system_ignored(self) -> None:
+        """Templates with a legacy kernel field should still load (ignored)."""
+        data = {
+            "system": {
+                "kernel": "linux-cachyos",
+                "packages": ["git"],
+            },
+        }
+        tmpl = InstallTemplate.from_dict(data)
+        assert not hasattr(tmpl.system, "kernel")
+        assert tmpl.system.packages == ["git"]
 
 
 class TestDiskConfig:

@@ -7,6 +7,12 @@ from unittest.mock import patch
 from textual.widgets import OptionList, Static
 
 from arches_installer.core.disk import BlockDevice
+from arches_installer.core.platform import (
+    BootloaderPlatformConfig,
+    HardwareDetectionConfig,
+    KernelConfig,
+    PlatformConfig,
+)
 from arches_installer.core.template import (
     AnsibleConfig,
     BootloaderConfig,
@@ -42,14 +48,25 @@ FAKE_TEMPLATES = [
     ),
 ]
 
+TEST_PLATFORM = PlatformConfig(
+    name="x86-64",
+    description="test",
+    arch="x86_64",
+    kernel=KernelConfig(package="linux-cachyos", headers="linux-cachyos-headers"),
+    bootloader=BootloaderPlatformConfig(),
+    hardware_detection=HardwareDetectionConfig(),
+)
+
 
 async def _navigate_to_template_screen(pilot) -> None:
     """Navigate from welcome to template select screen."""
     option_list = pilot.app.query_one("#disk-list", OptionList)
     option_list.highlighted = 0
     await pilot.click("#btn-continue")
+    await pilot.wait_for_animation()
     # Now on partition screen — click auto-partition
     await pilot.click("#btn-auto")
+    await pilot.wait_for_animation()
 
 
 @patch(
@@ -60,17 +77,21 @@ async def _navigate_to_template_screen(pilot) -> None:
     "arches_installer.tui.template_select.discover_templates",
     return_value=FAKE_TEMPLATES,
 )
+@patch("arches_installer.tui.partition.subprocess")
 async def test_template_screen_lists_templates(
+    mock_subprocess,
     mock_templates,
     mock_devices,
 ) -> None:
     """Template screen should show all discovered templates."""
-    app = ArchesApp()
+    mock_subprocess.run.return_value.stdout = "NAME SIZE\nvda 20G\n"
+    app = ArchesApp(platform=TEST_PLATFORM)
     async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.wait_for_animation()
         await _navigate_to_template_screen(pilot)
 
         assert app.screen.__class__.__name__ == "TemplateSelectScreen"
-        template_list = app.query_one("#template-list", OptionList)
+        template_list = app.screen.query_one("#template-list", OptionList)
         assert template_list.option_count == 2
 
 
@@ -82,16 +103,20 @@ async def test_template_screen_lists_templates(
     "arches_installer.tui.template_select.discover_templates",
     return_value=FAKE_TEMPLATES,
 )
+@patch("arches_installer.tui.partition.subprocess")
 async def test_template_select_sets_template(
+    mock_subprocess,
     mock_templates,
     mock_devices,
 ) -> None:
     """Selecting a template and clicking Continue should store it."""
-    app = ArchesApp()
+    mock_subprocess.run.return_value.stdout = "NAME SIZE\nvda 20G\n"
+    app = ArchesApp(platform=TEST_PLATFORM)
     async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.wait_for_animation()
         await _navigate_to_template_screen(pilot)
 
-        template_list = app.query_one("#template-list", OptionList)
+        template_list = app.screen.query_one("#template-list", OptionList)
         template_list.highlighted = 1  # VM Server
         await pilot.click("#btn-continue")
 
@@ -108,13 +133,17 @@ async def test_template_select_sets_template(
     "arches_installer.tui.template_select.discover_templates",
     return_value=FAKE_TEMPLATES,
 )
+@patch("arches_installer.tui.partition.subprocess")
 async def test_template_back_returns_to_partition(
+    mock_subprocess,
     mock_templates,
     mock_devices,
 ) -> None:
     """Back button should return to the partition screen."""
-    app = ArchesApp()
+    mock_subprocess.run.return_value.stdout = "NAME SIZE\nvda 20G\n"
+    app = ArchesApp(platform=TEST_PLATFORM)
     async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.wait_for_animation()
         await _navigate_to_template_screen(pilot)
 
         await pilot.click("#btn-back")

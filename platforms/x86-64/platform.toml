@@ -1,0 +1,69 @@
+# Arches platform config — x86-64 with CachyOS v3 optimized packages
+#
+# This defines the hardware-level foundation: kernel, repos, bootloader,
+# hardware detection, and base packages. Templates build on top of this.
+
+[platform]
+name = "x86-64"
+description = "x86-64 with CachyOS v3 optimized packages (AVX2/SSE4.2)"
+arch = "x86_64"
+
+[kernel]
+package = "linux-cachyos"
+headers = "linux-cachyos-headers"
+
+[bootloader]
+type = "limine"
+efi_binary = "BOOTX64.EFI"
+efi_fallback_path = "EFI/BOOT/BOOTX64.EFI"
+supports_bios = true
+
+[hardware_detection]
+enabled = true
+tool = "chwd"
+args = ["-a"]
+optional = true  # non-fatal failure (expected in VMs without discrete GPU)
+
+[base_packages]
+# Always installed by pacstrap regardless of template.
+# These are platform-specific — repo keyrings, mirrorlists, settings.
+install = [
+    "cachyos-keyring",
+    "cachyos-mirrorlist",
+    "cachyos-v3-mirrorlist",
+    "cachyos-settings",
+]
+
+[aur_packages]
+# AUR packages to pre-build into the local repo for this platform
+build = [
+    "limine-snapper-sync",
+]
+
+[iso]
+boot_modes = [
+    "bios.syslinux.mbr",
+    "bios.syslinux.eltorito",
+    "uefi-ia32.grub.esp",
+    "uefi-x64.grub.esp",
+    "uefi-ia32.grub.eltorito",
+    "uefi-x64.grub.eltorito",
+]
+# Platform-specific packages for the live ISO environment
+extra_packages = [
+    "linux-cachyos",
+    "linux-cachyos-headers",
+    "linux-firmware",
+    "cachyos-keyring",
+    "cachyos-mirrorlist",
+    "cachyos-v3-mirrorlist",
+    "cachyos-settings",
+    "chwd",
+    "limine",
+    "efibootmgr",
+]
+
+[qemu]
+binary = "qemu-system-x86_64"
+firmware = "/usr/share/ovmf/x64/OVMF.fd"
+extra_args = ["-enable-kvm", "-cpu", "host"]

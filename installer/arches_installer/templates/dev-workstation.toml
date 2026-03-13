@@ -1,6 +1,6 @@
 [meta]
 name = "Dev Workstation"
-description = "KDE Plasma desktop + CachyOS v3 + btrfs with snapshot booting"
+description = "KDE Plasma desktop + btrfs with snapshot booting"
 
 [disk]
 filesystem = "btrfs"
@@ -14,13 +14,9 @@ type = "limine"
 snapshot_boot = true
 
 [system]
-kernel = "linux-cachyos"
 timezone = "America/New_York"
 locale = "en_US.UTF-8"
 packages = [
-    # CachyOS
-    "cachyos-settings",
-    "chwd",
     # Desktop
     "plasma-meta",
     "sddm",

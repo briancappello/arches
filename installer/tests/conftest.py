@@ -7,6 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
+from arches_installer.core.platform import (
+    BootloaderPlatformConfig,
+    HardwareDetectionConfig,
+    KernelConfig,
+    PlatformConfig,
+)
 from arches_installer.core.template import (
     AnsibleConfig,
     BootloaderConfig,
@@ -14,6 +20,38 @@ from arches_installer.core.template import (
     InstallTemplate,
     SystemConfig,
 )
+
+
+@pytest.fixture
+def x86_64_platform() -> PlatformConfig:
+    """An x86-64 CachyOS platform config for testing."""
+    return PlatformConfig(
+        name="x86-64",
+        description="x86-64 with CachyOS v3",
+        arch="x86_64",
+        kernel=KernelConfig(
+            package="linux-cachyos",
+            headers="linux-cachyos-headers",
+        ),
+        bootloader=BootloaderPlatformConfig(
+            type="limine",
+            efi_binary="BOOTX64.EFI",
+            efi_fallback_path="EFI/BOOT/BOOTX64.EFI",
+            supports_bios=True,
+        ),
+        hardware_detection=HardwareDetectionConfig(
+            enabled=True,
+            tool="chwd",
+            args=["-a"],
+            optional=True,
+        ),
+        base_packages=[
+            "cachyos-keyring",
+            "cachyos-mirrorlist",
+            "cachyos-v3-mirrorlist",
+            "cachyos-settings",
+        ],
+    )
 
 
 @pytest.fixture
@@ -31,7 +69,6 @@ def btrfs_template() -> InstallTemplate:
         ),
         bootloader=BootloaderConfig(type="limine", snapshot_boot=True),
         system=SystemConfig(
-            kernel="linux-cachyos",
             timezone="America/New_York",
             locale="en_US.UTF-8",
             packages=["git", "neovim", "plasma-meta"],
@@ -59,7 +96,6 @@ def ext4_template() -> InstallTemplate:
         ),
         bootloader=BootloaderConfig(type="limine", snapshot_boot=False),
         system=SystemConfig(
-            kernel="linux-cachyos",
             timezone="America/New_York",
             locale="en_US.UTF-8",
             packages=["openssh", "nginx"],
@@ -70,6 +106,43 @@ def ext4_template() -> InstallTemplate:
             firstboot_roles=[],
         ),
     )
+
+
+@pytest.fixture
+def platform_toml_file(tmp_path: Path) -> Path:
+    """Create a temporary platform TOML file for testing."""
+    p = tmp_path / "platform.toml"
+    p.write_text("""\
+[platform]
+name = "x86-64"
+description = "x86-64 with CachyOS v3"
+arch = "x86_64"
+
+[kernel]
+package = "linux-cachyos"
+headers = "linux-cachyos-headers"
+
+[bootloader]
+type = "limine"
+efi_binary = "BOOTX64.EFI"
+efi_fallback_path = "EFI/BOOT/BOOTX64.EFI"
+supports_bios = true
+
+[hardware_detection]
+enabled = true
+tool = "chwd"
+args = ["-a"]
+optional = true
+
+[base_packages]
+install = [
+    "cachyos-keyring",
+    "cachyos-mirrorlist",
+    "cachyos-v3-mirrorlist",
+    "cachyos-settings",
+]
+""")
+    return p
 
 
 @pytest.fixture
@@ -95,7 +168,6 @@ type = "limine"
 snapshot_boot = true
 
 [system]
-kernel = "linux-cachyos"
 timezone = "America/New_York"
 locale = "en_US.UTF-8"
 packages = ["git", "neovim"]
@@ -124,7 +196,6 @@ type = "limine"
 snapshot_boot = false
 
 [system]
-kernel = "linux-cachyos"
 packages = ["openssh", "nginx"]
 
 [services]

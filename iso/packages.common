@@ -1,20 +1,11 @@
+# Platform-agnostic ISO packages
+#
+# These are combined with platforms/<platform>/packages at build time
+# to produce the final ISO package list.
+
 # ─── Base system ───────────────────────────────────────
 base
-linux-cachyos
-linux-cachyos-headers
-linux-firmware
 mkinitcpio
-
-# ─── CachyOS tooling ──────────────────────────────────
-cachyos-keyring
-cachyos-mirrorlist
-cachyos-v3-mirrorlist
-cachyos-settings
-chwd
-
-# ─── Bootloader ───────────────────────────────────────
-limine
-efibootmgr
 
 # ─── Filesystem & partitioning ────────────────────────
 btrfs-progs

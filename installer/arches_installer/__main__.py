@@ -22,30 +22,53 @@ def main() -> int:
         action="store_true",
         help="Validate config and print plan without executing (--auto only)",
     )
+    parser.add_argument(
+        "--platform",
+        metavar="PATH",
+        type=Path,
+        help="Path to platform.toml (default: /opt/arches/platform/platform.toml)",
+    )
     args = parser.parse_args()
 
     if args.auto:
-        return _run_auto(args.auto, dry_run=args.dry_run)
+        return _run_auto(args.auto, platform_path=args.platform, dry_run=args.dry_run)
     else:
-        return _run_tui()
+        return _run_tui(platform_path=args.platform)
 
 
-def _run_tui() -> int:
+def _load_platform(platform_path: Path | None):
+    """Load platform config from explicit path or ISO default."""
+    from arches_installer.core.platform import load_platform, load_platform_from_iso
+
+    if platform_path:
+        return load_platform(platform_path)
+    return load_platform_from_iso()
+
+
+def _run_tui(*, platform_path: Path | None = None) -> int:
     """Launch the interactive Textual TUI."""
     from arches_installer.tui.app import ArchesApp
 
-    app = ArchesApp()
+    platform = _load_platform(platform_path)
+    app = ArchesApp(platform=platform)
     app.run()
     return 0
 
 
-def _run_auto(config_path: Path, *, dry_run: bool = False) -> int:
+def _run_auto(
+    config_path: Path,
+    *,
+    platform_path: Path | None = None,
+    dry_run: bool = False,
+) -> int:
     """Run unattended install from a TOML config file."""
     from arches_installer.core.auto import AutoInstallConfig, run_auto_install
 
     if not config_path.exists():
         print(f"ERROR: Config file not found: {config_path}", file=sys.stderr)
         return 1
+
+    platform = _load_platform(platform_path)
 
     try:
         config = AutoInstallConfig.from_file(config_path)
@@ -55,10 +78,11 @@ def _run_auto(config_path: Path, *, dry_run: bool = False) -> int:
 
     if dry_run:
         print("== Arches Auto Install (dry run) ==")
+        print(f"  Platform:   {platform.name} ({platform.arch})")
+        print(f"  Kernel:     {platform.kernel.package}")
         print(f"  Device:     {config.device}")
         print(f"  Template:   {config.template.name}")
         print(f"  Filesystem: {config.template.disk.filesystem}")
-        print(f"  Kernel:     {config.template.system.kernel}")
         print(f"  Bootloader: {config.template.bootloader.type}")
         print(f"  Snapshots:  {config.template.bootloader.snapshot_boot}")
         print(f"  Hostname:   {config.hostname}")
@@ -75,11 +99,13 @@ def _run_auto(config_path: Path, *, dry_run: bool = False) -> int:
             print(
                 f"  Ansible (1st boot):  {', '.join(config.template.ansible.firstboot_roles)}"
             )
+        if platform.hardware_detection.enabled:
+            print(f"  HW detect:  {platform.hardware_detection.tool}")
         print("")
         print("Dry run complete. No changes made.")
         return 0
 
-    return run_auto_install(config)
+    return run_auto_install(platform, config)
 
 
 if __name__ == "__main__":

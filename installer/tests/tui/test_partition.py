@@ -7,12 +7,27 @@ from unittest.mock import patch
 from textual.widgets import OptionList
 
 from arches_installer.core.disk import BlockDevice
+from arches_installer.core.platform import (
+    BootloaderPlatformConfig,
+    HardwareDetectionConfig,
+    KernelConfig,
+    PlatformConfig,
+)
 from arches_installer.tui.app import ArchesApp
 
 
 FAKE_DEVICES = [
     BlockDevice("vda", "/dev/vda", "20G", "QEMU HARDDISK", False, []),
 ]
+
+TEST_PLATFORM = PlatformConfig(
+    name="x86-64",
+    description="test",
+    arch="x86_64",
+    kernel=KernelConfig(package="linux-cachyos", headers="linux-cachyos-headers"),
+    bootloader=BootloaderPlatformConfig(),
+    hardware_detection=HardwareDetectionConfig(),
+)
 
 
 @patch(
@@ -29,8 +44,9 @@ async def test_partition_auto_advances(mock_subprocess, mock_devices) -> None:
         {"stdout": "NAME  SIZE\nvda   20G\n", "returncode": 0},
     )()
 
-    app = ArchesApp()
+    app = ArchesApp(platform=TEST_PLATFORM)
     async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.wait_for_animation()
         # Navigate to partition screen
         option_list = app.query_one("#disk-list", OptionList)
         option_list.highlighted = 0
@@ -59,8 +75,9 @@ async def test_partition_back_returns_to_welcome(
         {"stdout": "NAME  SIZE\nvda   20G\n", "returncode": 0},
     )()
 
-    app = ArchesApp()
+    app = ArchesApp(platform=TEST_PLATFORM)
     async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.wait_for_animation()
         option_list = app.query_one("#disk-list", OptionList)
         option_list.highlighted = 0
         await pilot.click("#btn-continue")

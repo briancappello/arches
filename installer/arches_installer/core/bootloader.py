@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
+from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.template import InstallTemplate
 
 LogCallback = Callable[[str], None]
@@ -62,13 +63,13 @@ def get_root_partuuid(root_partition: str) -> str:
 
 
 def generate_limine_conf(
+    platform: PlatformConfig,
     template: InstallTemplate,
     root_partition: str,
-    kernel: str,
 ) -> str:
     """Generate limine.conf content."""
     root_uuid = get_root_uuid(root_partition)
-    kernel_pkg = template.system.kernel
+    kernel_pkg = platform.kernel.package
 
     # Build kernel cmdline
     cmdline_parts = [f"root=UUID={root_uuid}", "rw"]
@@ -113,15 +114,17 @@ def generate_limine_conf(
 
 
 def install_limine_uefi(
+    platform: PlatformConfig,
     esp_partition: str,
     log: LogCallback | None = None,
 ) -> None:
     """Install Limine for UEFI boot."""
     _log("Installing Limine (UEFI)...", log)
     boot_dir = MOUNT_ROOT / "boot"
+    efi_binary = platform.bootloader.efi_binary
 
     # Copy Limine EFI binary
-    limine_efi_src = MOUNT_ROOT / "usr" / "share" / "limine" / "BOOTX64.EFI"
+    limine_efi_src = MOUNT_ROOT / "usr" / "share" / "limine" / efi_binary
     efi_dest = boot_dir / "EFI" / "BOOT"
     efi_dest.mkdir(parents=True, exist_ok=True)
 
@@ -129,7 +132,7 @@ def install_limine_uefi(
     limine_dest = boot_dir / "EFI" / "limine"
     limine_dest.mkdir(parents=True, exist_ok=True)
 
-    run(["cp", str(limine_efi_src), str(efi_dest / "BOOTX64.EFI")], log=log)
+    run(["cp", str(limine_efi_src), str(efi_dest / efi_binary)], log=log)
     run(["cp", str(limine_efi_src), str(limine_dest / "limine.efi")], log=log)
 
     # Create NVRAM entry via efibootmgr
@@ -151,7 +154,7 @@ def install_limine_uefi(
         )
     except subprocess.CalledProcessError:
         _log("efibootmgr failed — UEFI NVRAM entry not created.", log)
-        _log("Falling back to EFI/BOOT/BOOTX64.EFI default path.", log)
+        _log(f"Falling back to {platform.bootloader.efi_fallback_path}.", log)
 
 
 def install_limine_bios(
@@ -173,6 +176,7 @@ def install_limine_bios(
 
 
 def install_bootloader(
+    platform: PlatformConfig,
     template: InstallTemplate,
     device: str,
     esp_partition: str,
@@ -184,18 +188,20 @@ def install_bootloader(
     _log(f"Detected firmware: {firmware}", log)
 
     # Generate and write limine.conf
-    conf = generate_limine_conf(
-        template,
-        root_partition,
-        template.system.kernel,
-    )
+    conf = generate_limine_conf(platform, template, root_partition)
     conf_path = MOUNT_ROOT / "boot" / "limine.conf"
     conf_path.write_text(conf)
     _log("Wrote limine.conf", log)
 
     if firmware == "uefi":
-        install_limine_uefi(esp_partition, log)
-    else:
+        install_limine_uefi(platform, esp_partition, log)
+    elif firmware == "bios" and platform.bootloader.supports_bios:
         install_limine_bios(device, log)
+    else:
+        _log(f"BIOS boot not supported on platform {platform.name}.", log)
+        raise RuntimeError(
+            f"Platform {platform.name} does not support BIOS boot, "
+            "but no UEFI firmware was detected."
+        )
 
     _log("Bootloader installation complete.", log)

@@ -1,0 +1,54 @@
+# Arches platform config — aarch64 Apple Silicon
+#
+# Stub — not yet implemented.
+# Target: Arch Linux ARM + Asahi kernel/mesa on Apple Silicon Macs.
+#
+# Note: Apple Silicon cannot boot standard ISOs. The install path
+# will differ from the ISO-based x86-64 flow (likely installed from
+# a running Asahi base or via the Asahi installer chain).
+
+[platform]
+name = "aarch64-apple"
+description = "Apple Silicon (M1/M2/M3) with Asahi Linux kernel"
+arch = "aarch64"
+
+[kernel]
+package = "linux-asahi"
+headers = "linux-asahi-headers"
+
+[bootloader]
+# Apple Silicon uses m1n1 → U-Boot → GRUB chain
+# Limine is not applicable here
+type = "grub"
+efi_binary = "BOOTAA64.EFI"
+efi_fallback_path = "EFI/BOOT/BOOTAA64.EFI"
+supports_bios = false
+
+[hardware_detection]
+# Asahi mesa and device trees handle hardware; no chwd equivalent
+enabled = false
+
+[base_packages]
+install = [
+    "asahi-fwextract",
+    "asahi-scripts",
+]
+
+[aur_packages]
+build = []
+
+[iso]
+# Apple Silicon cannot boot ISOs — this section is a placeholder.
+# Install delivery mechanism TBD.
+boot_modes = []
+extra_packages = [
+    "linux-asahi",
+    "linux-asahi-headers",
+    "linux-firmware",
+]
+
+[qemu]
+# QEMU Apple Silicon emulation is not practical for testing.
+binary = ""
+firmware = ""
+extra_args = []

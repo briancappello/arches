@@ -1,8 +1,15 @@
 # Example auto-install config for `arches-install --auto`
 #
-# Usage:
-#   arches-install --auto examples/auto-install.toml
-#   arches-install --auto examples/auto-install.toml --dry-run
+# Usage (on a booted ISO — platform is auto-detected):
+#   arches-install --auto config.toml
+#
+# Usage (development — specify platform explicitly):
+#   arches-install --auto examples/auto-install.toml --platform platforms/x86-64/platform.toml
+#   arches-install --auto examples/auto-install.toml --platform platforms/x86-64/platform.toml --dry-run
+#
+# The --platform flag overrides the default path (/opt/arches/platform/platform.toml),
+# which is baked into the ISO at build time. During development you need to pass it
+# explicitly since you're not running from an ISO.
 
 [install]
 device = "/dev/vda"

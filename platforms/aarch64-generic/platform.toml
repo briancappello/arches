@@ -1,0 +1,46 @@
+# Arches platform config — aarch64 (generic ARM64)
+#
+# Stub — not yet implemented.
+# Target: Arch Linux ARM on generic ARM64 hardware (RPi, server boards, etc.)
+
+[platform]
+name = "aarch64-generic"
+description = "Generic ARM64 with Arch Linux ARM"
+arch = "aarch64"
+
+[kernel]
+package = "linux-aarch64"
+headers = "linux-aarch64-headers"
+
+[bootloader]
+type = "limine"
+efi_binary = "BOOTAA64.EFI"
+efi_fallback_path = "EFI/BOOT/BOOTAA64.EFI"
+supports_bios = false
+
+[hardware_detection]
+enabled = false
+
+[base_packages]
+install = []
+
+[aur_packages]
+build = []
+
+[iso]
+boot_modes = [
+    "uefi-aa64.grub.esp",
+    "uefi-aa64.grub.eltorito",
+]
+extra_packages = [
+    "linux-aarch64",
+    "linux-aarch64-headers",
+    "linux-firmware",
+    "limine",
+    "efibootmgr",
+]
+
+[qemu]
+binary = "qemu-system-aarch64"
+firmware = "/usr/share/edk2/aarch64/QEMU_EFI.fd"
+extra_args = ["-machine", "virt", "-cpu", "max"]

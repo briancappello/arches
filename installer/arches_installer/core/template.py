@@ -1,4 +1,9 @@
-"""Load and validate install templates from TOML files."""
+"""Load and validate install templates from TOML files.
+
+Templates define the workload built on top of a platform: filesystem layout,
+desktop/server packages, services, and Ansible roles. The kernel and base
+platform packages come from the platform config, not the template.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +31,6 @@ class BootloaderConfig:
 
 @dataclass
 class SystemConfig:
-    kernel: str = "linux-cachyos"
     timezone: str = "America/New_York"
     locale: str = "en_US.UTF-8"
     packages: list[str] = field(default_factory=list)
@@ -73,7 +77,6 @@ class InstallTemplate:
                 snapshot_boot=boot_raw.get("snapshot_boot", False),
             ),
             system=SystemConfig(
-                kernel=sys_raw.get("kernel", "linux-cachyos"),
                 timezone=sys_raw.get("timezone", "America/New_York"),
                 locale=sys_raw.get("locale", "en_US.UTF-8"),
                 packages=sys_raw.get("packages", []),
