@@ -3,34 +3,10 @@
 from __future__ import annotations
 
 import subprocess
-from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
 from arches_installer.core.platform import PlatformConfig
-
-LogCallback = Callable[[str], None]
-
-
-def _log(msg: str, callback: LogCallback | None = None) -> None:
-    if callback:
-        callback(msg)
-
-
-def chroot_run(
-    cmd: list[str],
-    log: LogCallback | None = None,
-) -> subprocess.CompletedProcess:
-    """Run a command inside the target chroot."""
-    _log(f"$ {' '.join(cmd)}", log)
-    result = subprocess.run(
-        ["arch-chroot", str(MOUNT_ROOT)] + cmd,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        _log(f"ERROR: {result.stderr.strip()}", log)
-        result.check_returncode()
-    return result
+from arches_installer.core.run import LogCallback, _log, chroot_run
 
 
 # Default snapper config for root subvolume
@@ -72,11 +48,8 @@ def configure_snapper(
 
     _log("Configuring snapper...", log)
 
-    # The .snapshots subvolume should already exist from disk setup.
-    # Snapper expects to create its own .snapshots directory, so we
-    # need to unmount it, let snapper create-config, then re-mount.
-
-    # Create snapper config for root
+    # Let snapper create its own .snapshots nested subvolume under @.
+    # This is the standard layout expected by snapper and limine-snapper-sync.
     try:
         chroot_run(["snapper", "--no-dbus", "create-config", "/"], log=log)
     except subprocess.CalledProcessError:
@@ -106,6 +79,23 @@ def configure_snapshot_boot(
         return
 
     _log("Configuring snapshot boot (limine-snapper-sync)...", log)
+
+    # Update limine-snapper-sync config for our OS name.
+    # The snapshot path defaults to /@/.snapshots which matches our nested layout.
+    conf = MOUNT_ROOT / "etc" / "limine-snapper-sync.conf"
+    if conf.exists():
+        import re
+
+        content = conf.read_text()
+        # Replace TARGET_OS_NAME regardless of its current value
+        content = re.sub(
+            r"^#?TARGET_OS_NAME=.*$",
+            'TARGET_OS_NAME="Arches Linux"',
+            content,
+            flags=re.MULTILINE,
+        )
+        conf.write_text(content)
+        _log("Updated limine-snapper-sync.conf.", log)
 
     # limine-snapper-sync should be pre-built in the arches-local repo
     # and installed via pacstrap. Enable its service.

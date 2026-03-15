@@ -6,11 +6,11 @@ Arches uses a **platform + template matrix** design. A *platform* defines the ha
 
 Currently supported platforms:
 
-| Platform | Base | Kernel | Bootloader | Filesystem | Status |
-|----------|------|--------|------------|------------|--------|
-| `x86-64` | CachyOS v3 (AVX2/SSE4.2) | `linux-cachyos` | Limine | btrfs + subvolumes | Fully implemented |
-| `aarch64-generic` | Arch Linux ARM | `linux-aarch64` | GRUB | ext4 (4-partition) | Platform configs complete |
-| `aarch64-apple` | Asahi Linux | `linux-asahi` | GRUB (m1n1→U-Boot chain) | ext4 (4-partition) | Platform configs complete |
+| Platform          | Base                     | Kernel          | Bootloader               | Filesystem         | Status                    |
+|-------------------|--------------------------|-----------------|--------------------------|--------------------|---------------------------|
+| `x86-64`          | CachyOS v3 (AVX2/SSE4.2) | `linux-cachyos` | Limine                   | btrfs + subvolumes | Fully implemented         |
+| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64` | GRUB                     | ext4 (4-partition) | Platform configs complete |
+| `aarch64-apple`   | Asahi Linux              | `linux-asahi`   | GRUB (m1n1→U-Boot chain) | ext4 (4-partition) | Platform configs complete |
 
 ## Quickstart
 
@@ -71,10 +71,10 @@ Run `make` with no arguments to see all targets.
 
 Tests are split into two suites:
 
-| Suite | Path | What it tests | Dependencies |
-|-------|------|---------------|-------------|
-| **Core** | `tests/core/` | Template/platform loading, bootloader dispatch, disk partitioning, mount detection, auto-install config | Standard library only |
-| **TUI** | `tests/tui/` | Screen rendering, navigation, input validation, partition flow (manual + auto) | `textual`, `pytest-asyncio` |
+| Suite    | Path          | What it tests                                                                                           | Dependencies                |
+|----------|---------------|---------------------------------------------------------------------------------------------------------|-----------------------------|
+| **Core** | `tests/core/` | Template/platform loading, bootloader dispatch, disk partitioning, mount detection, auto-install config | Standard library only       |
+| **TUI**  | `tests/tui/`  | Screen rendering, navigation, input validation, partition flow (manual + auto)                          | `textual`, `pytest-asyncio` |
 
 TUI tests use Textual's `run_test()` framework to run the full app headlessly — no terminal or VM required. System calls (`lsblk`, `pacstrap`, etc.) are mocked so tests run anywhere.
 
@@ -87,13 +87,6 @@ make test-unit
 ```
 
 ## Install Flow
-
-When the ISO boots, you're presented with a choice:
-
-```
-  [1] Launch Installer
-  [2] Recovery Shell
-```
 
 The installer is a Python/Textual TUI that walks through:
 
@@ -186,7 +179,7 @@ This ensures `pacstrap` installs both packages and `systemctl enable` starts the
     create: yes
 ```
 
-The template's `[ansible] chroot_roles = ["base", "vm-server"]` triggers this role during install. The installer runs `ansible-playbook --tags vm-server` inside `arch-chroot`, so these tasks execute against the new filesystem before the first boot.
+The template's `[ansible] firstboot_roles` includes `"vm-server"`, which triggers this role on first boot. The installer runs `ansible-playbook --tags vm-server` so these tasks execute against the running system.
 
 **Step 3: That's it.** On first boot, PostgreSQL and Redis start with the config Ansible applied.
 
@@ -204,8 +197,8 @@ Template [system] packages = ["postgresql"]
 Template [services] enable = ["postgresql"]
   └─ systemctl enable postgresql inside the chroot
 
-Template [ansible] chroot_roles = ["vm-server"]
-  └─ ansible-playbook --tags vm-server runs in chroot
+Template [ansible] firstboot_roles includes "vm-server"
+  └─ ansible-playbook --tags vm-server runs on first boot
      └─ vm-server role: initdb, pg_hba.conf, listen_addresses, etc.
 
 First boot
@@ -241,8 +234,7 @@ packages = ["git", "neovim"]     # installed via pacstrap
 enable = ["NetworkManager"]      # enabled via systemctl enable
 
 [ansible]
-chroot_roles = ["base"]          # run during install (in chroot)
-firstboot_roles = ["dotfiles"]   # run on first boot
+firstboot_roles = ["base", "zsh"]  # run on first boot
 ```
 
 Disk layout (filesystem, partition scheme, subvolumes, ESP size) and bootloader configuration (Limine vs GRUB, snapshot boot) are defined by the **platform**, not the template. This means the same template works on x86-64 (btrfs + Limine) and aarch64 (ext4 + GRUB) without modification.
@@ -253,14 +245,11 @@ Configuration is applied in two phases:
 
 | Phase | When | Mechanism | Roles |
 |-------|------|-----------|-------|
-| **Chroot** | During install | `ansible-playbook` inside `arch-chroot` | `base`, `kde`, `dev-tools`, `vm-server` |
-| **First boot** | First login | systemd oneshot service → `ansible-playbook` | `dotfiles` |
-
-The split exists because some things must happen against the offline filesystem (locale, bootloader, service enablement, database init), while others need a running system (network-dependent dotfiles, user-session config).
+| **First boot** | First login | systemd oneshot service → `ansible-playbook` | `base`, `zsh`, `kde`, `dev-tools`, `vm-server` (as applicable) |
 
 The first-boot service runs once and removes its sentinel file (`/opt/arches/firstboot-pending`), so it won't re-run on subsequent boots.
 
-Dotfiles are managed via [chezmoi](https://www.chezmoi.io/). Stubs are provided in the `dotfiles/` directory — point them at your own repo when ready.
+Shell configuration uses [Oh My Zsh](https://ohmyz.sh/). The regular user gets the `bullet-train` theme (Powerline prompt); root gets the `fino` theme (visually distinct so it's obvious you're operating as root). Neovim base config is deployed to both users by the `base` role.
 
 ## Project Structure
 
@@ -335,17 +324,11 @@ arches/
 ├── ansible/                              # Post-install configuration
 │   ├── playbook.yml                      # Tag-driven role dispatch
 │   └── roles/
-│       ├── base/tasks/main.yml           # pacman, journal, NTP, shell defaults
+│       ├── base/tasks/main.yml           # pacman, journal, NTP, neovim config
+│       ├── zsh/tasks/main.yml            # Oh-My-Zsh for user (bullet-train) + root (fino)
 │       ├── kde/tasks/main.yml            # SDDM, Plasma config
 │       ├── dev-tools/tasks/main.yml      # Rustup, Docker, user groups
-│       ├── vm-server/tasks/main.yml      # SSH hardening, Postgres, Redis
-│       └── dotfiles/tasks/main.yml       # chezmoi bootstrap
-│
-├── dotfiles/                             # chezmoi-managed stubs
-│   ├── .chezmoiroot
-│   └── home/
-│       ├── dot_zshrc                     # Zsh config (starship, zoxide, aliases)
-│       └── dot_config/nvim/init.lua      # Neovim base config
+│       └── vm-server/tasks/main.yml      # SSH hardening, Postgres, Redis
 │
 └── scripts/
     ├── build-aur-repo.sh                 # Pre-build AUR packages into local repo

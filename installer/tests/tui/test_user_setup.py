@@ -16,6 +16,7 @@ from arches_installer.core.platform import (
 )
 from arches_installer.core.template import (
     AnsibleConfig,
+    InstallPhases,
     InstallTemplate,
     SystemConfig,
 )
@@ -30,7 +31,8 @@ FAKE_TEMPLATES = [
     InstallTemplate(
         name="Dev Workstation",
         description="KDE + btrfs",
-        system=SystemConfig(packages=["git"]),
+        system=SystemConfig(),
+        install=InstallPhases(pacstrap=["git"]),
     ),
 ]
 

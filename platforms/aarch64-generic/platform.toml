@@ -39,8 +39,7 @@ build = []
 
 [iso]
 boot_modes = [
-    "uefi-aa64.grub.esp",
-    "uefi-aa64.grub.eltorito",
+    "uefi.grub",
 ]
 extra_packages = [
     "linux-aarch64",

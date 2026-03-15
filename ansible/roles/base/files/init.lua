@@ -1,5 +1,4 @@
--- Arches neovim stub config
--- TODO: Add your neovim configuration here
+-- Arches neovim base config
 vim.opt.number = true
 vim.opt.relativenumber = true
 vim.opt.expandtab = true

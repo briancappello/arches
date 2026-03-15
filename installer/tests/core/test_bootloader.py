@@ -11,7 +11,6 @@ from arches_installer.core.bootloader import (
     _install_grub,
     _install_limine,
     detect_firmware,
-    generate_limine_conf,
     get_root_partuuid,
     get_root_uuid,
     install_bootloader,
@@ -71,55 +70,6 @@ def test_get_root_partuuid():
             text=True,
             check=True,
         )
-
-
-# ─── generate_limine_conf ────────────────────────────────
-
-
-@patch(
-    "arches_installer.core.bootloader.get_root_uuid",
-    return_value="fake-uuid-1234",
-)
-def test_generate_limine_conf_btrfs_with_snapshots(mock_uuid, x86_64_platform):
-    """Btrfs platform should have rootflags=subvol=@ and a snapshots section."""
-    conf = generate_limine_conf(x86_64_platform, "/dev/sda2")
-
-    assert "root=UUID=fake-uuid-1234" in conf
-    assert "rootflags=subvol=@" in conf
-    assert "vmlinuz-linux-cachyos" in conf
-    assert "initramfs-linux-cachyos.img" in conf
-    assert "initramfs-linux-cachyos-fallback.img" in conf
-    assert "/+Snapshots" in conf
-    assert "limine-snapper-sync" in conf
-
-
-@patch(
-    "arches_installer.core.bootloader.get_root_uuid",
-    return_value="fake-uuid-5678",
-)
-def test_generate_limine_conf_ext4_no_snapshots(mock_uuid, aarch64_platform):
-    """Ext4 platform should have no rootflags and no snapshots section."""
-    conf = generate_limine_conf(aarch64_platform, "/dev/sda2")
-
-    assert "root=UUID=fake-uuid-5678" in conf
-    assert "rootflags" not in conf
-    assert "vmlinuz-linux-aarch64" in conf
-    assert "/+Snapshots" not in conf
-
-
-@patch(
-    "arches_installer.core.bootloader.get_root_uuid",
-    return_value="fake-uuid-0000",
-)
-def test_generate_limine_conf_contains_kernel_params(mock_uuid, x86_64_platform):
-    """Common kernel parameters should be present."""
-    conf = generate_limine_conf(x86_64_platform, "/dev/sda2")
-
-    assert "quiet" in conf
-    assert "loglevel=3" in conf
-    assert "systemd.show_status=auto" in conf
-    assert "rd.udev.log_level=3" in conf
-    assert "timeout: 5" in conf
 
 
 # ─── install_bootloader dispatch ──────────────────────────
@@ -199,31 +149,34 @@ def test_install_grub_bios_raises(mock_fw, aarch64_platform):
 # ─── _install_limine ─────────────────────────────────────
 
 
-@patch("arches_installer.core.bootloader.install_limine_uefi")
-@patch(
-    "arches_installer.core.bootloader.generate_limine_conf", return_value="timeout: 5\n"
-)
+@patch("arches_installer.core.bootloader.chroot_run")
+@patch("arches_installer.core.bootloader.write_limine_defaults")
 @patch("arches_installer.core.bootloader.detect_firmware", return_value="uefi")
 def test_install_limine_uefi_path(
-    mock_fw, mock_conf, mock_uefi, x86_64_platform, tmp_path
+    mock_fw, mock_defaults, mock_chroot, x86_64_platform, tmp_path
 ):
-    """UEFI firmware should call install_limine_uefi."""
-    conf_path = tmp_path / "boot" / "limine.conf"
+    """UEFI firmware should run limine-install and limine-mkinitcpio."""
     with patch("arches_installer.core.bootloader.MOUNT_ROOT", tmp_path):
         (tmp_path / "boot").mkdir(parents=True, exist_ok=True)
         _install_limine(x86_64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
 
-    mock_uefi.assert_called_once_with(x86_64_platform, "/dev/sda1", None)
-    assert conf_path.read_text() == "timeout: 5\n"
+    mock_defaults.assert_called_once_with(x86_64_platform, "/dev/sda2", None)
+    assert mock_chroot.call_args_list == [
+        call(
+            ["pacman", "-Sy", "--noconfirm", "--needed", "limine-mkinitcpio-hook"],
+            log=None,
+        ),
+        call(["limine-install"], log=None),
+        call(["limine-mkinitcpio"], log=None),
+    ]
 
 
+@patch("arches_installer.core.bootloader.chroot_run")
+@patch("arches_installer.core.bootloader.write_limine_defaults")
 @patch("arches_installer.core.bootloader.install_limine_bios")
-@patch(
-    "arches_installer.core.bootloader.generate_limine_conf", return_value="timeout: 5\n"
-)
 @patch("arches_installer.core.bootloader.detect_firmware", return_value="bios")
 def test_install_limine_bios_path(
-    mock_fw, mock_conf, mock_bios, x86_64_platform, tmp_path
+    mock_fw, mock_bios, mock_defaults, mock_chroot, x86_64_platform, tmp_path
 ):
     """BIOS firmware with supports_bios=True should call install_limine_bios."""
     with patch("arches_installer.core.bootloader.MOUNT_ROOT", tmp_path):
@@ -231,14 +184,20 @@ def test_install_limine_bios_path(
         _install_limine(x86_64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
 
     mock_bios.assert_called_once_with("/dev/sda", None)
+    assert mock_chroot.call_args_list == [
+        call(
+            ["pacman", "-Sy", "--noconfirm", "--needed", "limine-mkinitcpio-hook"],
+            log=None,
+        ),
+        call(["limine-mkinitcpio"], log=None),
+    ]
 
 
-@patch(
-    "arches_installer.core.bootloader.generate_limine_conf", return_value="timeout: 5\n"
-)
+@patch("arches_installer.core.bootloader.chroot_run")
+@patch("arches_installer.core.bootloader.write_limine_defaults")
 @patch("arches_installer.core.bootloader.detect_firmware", return_value="bios")
 def test_install_limine_bios_unsupported_raises(
-    mock_fw, mock_conf, aarch64_platform, tmp_path
+    mock_fw, mock_defaults, mock_chroot, aarch64_platform, tmp_path
 ):
     """BIOS firmware with supports_bios=False should raise RuntimeError."""
     with patch("arches_installer.core.bootloader.MOUNT_ROOT", tmp_path):

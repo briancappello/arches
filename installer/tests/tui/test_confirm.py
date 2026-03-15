@@ -16,6 +16,7 @@ from arches_installer.core.platform import (
 )
 from arches_installer.core.template import (
     AnsibleConfig,
+    InstallPhases,
     InstallTemplate,
     SystemConfig,
 )
@@ -30,11 +31,11 @@ FAKE_TEMPLATES = [
     InstallTemplate(
         name="Dev Workstation",
         description="KDE + btrfs",
-        system=SystemConfig(packages=["git", "neovim"]),
+        system=SystemConfig(),
+        install=InstallPhases(pacstrap=["git", "neovim"]),
         services=["NetworkManager", "sddm"],
         ansible=AnsibleConfig(
-            chroot_roles=["base", "kde"],
-            firstboot_roles=["dotfiles"],
+            firstboot_roles=["base", "zsh", "kde"],
         ),
     ),
 ]
@@ -166,8 +167,8 @@ async def test_confirm_shows_ansible_roles(
         rendered = str(summary.render())
 
         assert "base" in rendered
+        assert "zsh" in rendered
         assert "kde" in rendered
-        assert "dotfiles" in rendered
 
 
 @patch(

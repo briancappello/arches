@@ -11,6 +11,17 @@ from textual.widgets import Button, Label, Static
 class ConfirmScreen(Screen):
     """Review all selections and confirm before installing."""
 
+    BINDINGS = [
+        ("up", "prev_button", "Previous"),
+        ("down", "next_button", "Next"),
+    ]
+
+    def action_next_button(self) -> None:
+        self.focus_next(Button)
+
+    def action_prev_button(self) -> None:
+        self.focus_previous(Button)
+
     def compose(self) -> ComposeResult:
         with Center():
             with Vertical(classes="panel"):
@@ -66,12 +77,10 @@ class ConfirmScreen(Screen):
             f"  Snapshots:   {'Yes' if platform.bootloader.snapshot_boot else 'No'}\n"
             f"  Hostname:    {self.app.hostname}\n"
             f"  User:        {self.app.username}\n"
-            f"  Packages:    {len(tmpl.system.packages)} packages\n"
+            f"  Packages:    {len(tmpl.install.all_packages)} packages\n"
             f"  Services:    {len(tmpl.services)} services\n"
         )
 
-        if tmpl.ansible.chroot_roles:
-            text += f"  Ansible (chroot):  {', '.join(tmpl.ansible.chroot_roles)}\n"
         if tmpl.ansible.firstboot_roles:
             text += f"  Ansible (1st boot): {', '.join(tmpl.ansible.firstboot_roles)}\n"
 

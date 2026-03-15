@@ -1,0 +1,59 @@
+---
+# ==========================================================================
+# Oh-My-Zsh role — shell configuration for regular user and root
+# ==========================================================================
+# Regular user: bullet-train theme (Powerline prompt)
+# Root user:    fino theme (visually distinct so it's obvious you are root)
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# Regular user setup
+# --------------------------------------------------------------------------
+
+- name: Clone oh-my-zsh for {{ zsh_user }}
+  become_user: "{{ zsh_user }}"
+  git:
+    repo: "{{ zsh_omz_repo }}"
+    dest: "{{ zsh_user_home }}/.oh-my-zsh"
+    depth: "{{ zsh_omz_depth }}"
+    version: master
+    update: no
+
+- name: Create custom themes directory for {{ zsh_user }}
+  become_user: "{{ zsh_user }}"
+  file:
+    path: "{{ zsh_user_home }}/.oh-my-zsh/custom/themes"
+    state: directory
+    mode: '0755'
+
+- name: Install bullet-train theme for {{ zsh_user }}
+  become_user: "{{ zsh_user }}"
+  copy:
+    src: bullet-train.zsh-theme
+    dest: "{{ zsh_user_home }}/.oh-my-zsh/custom/themes/bullet-train.zsh-theme"
+    mode: '0644'
+
+- name: Deploy .zshrc for {{ zsh_user }}
+  become_user: "{{ zsh_user }}"
+  template:
+    src: zshrc-user.j2
+    dest: "{{ zsh_user_home }}/.zshrc"
+    mode: '0644'
+
+# --------------------------------------------------------------------------
+# Root user setup
+# --------------------------------------------------------------------------
+
+- name: Clone oh-my-zsh for root
+  git:
+    repo: "{{ zsh_omz_repo }}"
+    dest: /root/.oh-my-zsh
+    depth: "{{ zsh_omz_depth }}"
+    version: master
+    update: no
+
+- name: Deploy .zshrc for root
+  template:
+    src: zshrc-root.j2
+    dest: /root/.zshrc
+    mode: '0644'

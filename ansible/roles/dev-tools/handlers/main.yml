@@ -1,0 +1,24 @@
+---
+- name: restart postgresql
+  systemd:
+    name: postgresql
+    state: restarted
+  ignore_errors: yes
+
+- name: restart redis
+  systemd:
+    name: redis
+    state: restarted
+  ignore_errors: yes
+
+- name: restart rabbitmq
+  systemd:
+    name: rabbitmq
+    state: restarted
+  ignore_errors: yes
+
+- name: restart nginx
+  systemd:
+    name: nginx
+    state: restarted
+  ignore_errors: yes

@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+# Arches — root zsh config (oh-my-zsh + {{ zsh_root_theme }})
+#
+# This prompt is intentionally different from the regular user's prompt
+# so it is immediately obvious when you are operating as root.
+
+# Path to your Oh My Zsh installation.
+export ZSH="/root/.oh-my-zsh"
+
+# Theme — visually distinct from user prompt
+ZSH_THEME="{{ zsh_root_theme }}"
+
+# Plugins (no ssh-agent for root)
+plugins=({{ zsh_root_plugins | join(' ') }})
+
+source $ZSH/oh-my-zsh.sh
+
+# ── History ───────────────────────────────────────────────────────────────
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt appendhistory sharehistory

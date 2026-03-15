@@ -24,17 +24,12 @@ arch="${ARCHES_ARCH:-x86_64}"
 # Boot modes depend on architecture
 if [[ "$arch" == "x86_64" ]]; then
     bootmodes=(
-        'bios.syslinux.mbr'
-        'bios.syslinux.eltorito'
-        'uefi-ia32.grub.esp'
-        'uefi-x64.grub.esp'
-        'uefi-ia32.grub.eltorito'
-        'uefi-x64.grub.eltorito'
+        'bios.syslinux'
+        'uefi.grub'
     )
 elif [[ "$arch" == "aarch64" ]]; then
     bootmodes=(
-        'uefi-aa64.grub.esp'
-        'uefi-aa64.grub.eltorito'
+        'uefi.grub'
     )
 fi
 
@@ -42,6 +37,8 @@ pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"
 airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' '15' '-b' '1M')
 file_permissions=(
+    ["/etc/shadow"]="0:0:400"
     ["/root"]="0:0:750"
     ["/root/.bash_profile"]="0:0:644"
+    ["/usr/local/bin/arches-install"]="0:0:755"
 )

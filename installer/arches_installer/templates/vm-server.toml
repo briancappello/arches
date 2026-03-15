@@ -3,8 +3,10 @@ name = "VM Server"
 description = "Headless server — nginx, postgres, redis, SSH"
 
 [system]
-timezone = "America/New_York"
+timezone = "America/Denver"
 locale = "en_US.UTF-8"
+
+[install.pacstrap]
 packages = [
     # Server
     "openssh",
@@ -31,6 +33,12 @@ packages = [
     "jq",
 ]
 
+[install.override]
+packages = []
+
+[install.firstboot]
+packages = []
+
 [services]
 enable = [
     "NetworkManager",
@@ -43,5 +51,4 @@ enable = [
 ]
 
 [ansible]
-chroot_roles = ["base", "vm-server"]
-firstboot_roles = []
+firstboot_roles = ["base", "zsh", "vm-server"]

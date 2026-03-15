@@ -1,28 +1,9 @@
-# Arches ISO — auto-launch installer or drop to recovery shell
-
-cat << 'BANNER'
-
-    ╔═══════════════════════════════════════╗
-    ║           A R C H E S                 ║
-    ║   Arch/CachyOS Install & Recovery     ║
-    ╚═══════════════════════════════════════╝
-
-BANNER
-
-echo "  [1] Launch Installer"
-echo "  [2] Recovery Shell"
-echo ""
-read -rp "  Select [1/2]: " choice
-
-case "$choice" in
-    2)
-        echo ""
-        echo "  Dropping to recovery shell. The installer is available at:"
-        echo "    arches-install"
-        echo ""
-        exec /bin/zsh
-        ;;
-    *)
-        exec arches-install
-        ;;
-esac
+# Arches ISO — launch installer on tty1, recovery shell on other ttys
+if [[ "$(tty)" == "/dev/tty1" ]]; then
+    arches-install
+    # If the installer exits (e.g. "Recovery Shell"), drop to zsh
+    echo ""
+    echo "  Recovery shell. Run 'arches-install' to restart the installer."
+    echo ""
+    exec /bin/zsh
+fi

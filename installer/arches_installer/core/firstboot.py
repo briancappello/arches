@@ -1,19 +1,12 @@
-"""First-boot service injection for post-install Ansible and dotfiles."""
+"""First-boot service injection for post-install Ansible."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
+from arches_installer.core.run import LogCallback, _log
 from arches_installer.core.template import InstallTemplate
-
-LogCallback = Callable[[str], None]
-
-
-def _log(msg: str, callback: LogCallback | None = None) -> None:
-    if callback:
-        callback(msg)
 
 
 FIRSTBOOT_SERVICE = """\
@@ -21,6 +14,7 @@ FIRSTBOOT_SERVICE = """\
 Description=Arches first-boot setup
 After=network-online.target
 Wants=network-online.target
+Before=display-manager.service sddm.service
 ConditionPathExists=/opt/arches/firstboot-pending
 
 [Service]
@@ -32,7 +26,7 @@ StandardOutput=journal+console
 StandardError=journal+console
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
 """
 
 
@@ -45,7 +39,13 @@ def generate_firstboot_script(
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "",
-        'echo "=== Arches first-boot setup ==="',
+        'echo ""',
+        'echo "╔═══════════════════════════════════════════╗"',
+        'echo "║     Arches — First-Boot Configuration     ║"',
+        'echo "╚═══════════════════════════════════════════╝"',
+        'echo ""',
+        'echo "Configuring your system. SDDM will start when complete."',
+        'echo ""',
         "",
     ]
 
@@ -59,24 +59,15 @@ def generate_firstboot_script(
                 "ansible-playbook /opt/arches/ansible/playbook.yml \\",
                 "    --connection=local \\",
                 "    -i localhost, \\",
-                f"    --tags {tags}",
+                f"    -e install_user={username} \\",
+                f"    -e ansible_user={username} \\",
+                f"    --tags {tags} \\",
+                "    -v 2>&1 | tee -a /var/log/arches-firstboot.log",
                 "",
             ]
         )
 
-    # Apply chezmoi dotfiles if the repo URL is set
-    lines.extend(
-        [
-            "# Apply dotfiles via chezmoi (if configured)",
-            f'CHEZMOI_CONF="/home/{username}/.config/chezmoi/chezmoi.toml"',
-            'if [ -f "$CHEZMOI_CONF" ]; then',
-            f'    echo "Applying chezmoi dotfiles for {username}..."',
-            f"    sudo -u {username} chezmoi apply",
-            "fi",
-            "",
-            'echo "=== First-boot setup complete ==="',
-        ]
-    )
+    lines.append('echo "=== First-boot setup complete ==="')
 
     return "\n".join(lines) + "\n"
 
@@ -99,8 +90,8 @@ def inject_firstboot_service(
     service_file = service_dir / "arches-firstboot.service"
     service_file.write_text(FIRSTBOOT_SERVICE)
 
-    # Enable the service (create symlink)
-    wants_dir = service_dir / "multi-user.target.wants"
+    # Enable the service (create symlink in graphical.target)
+    wants_dir = service_dir / "graphical.target.wants"
     wants_dir.mkdir(parents=True, exist_ok=True)
     symlink = wants_dir / "arches-firstboot.service"
     if not symlink.exists():

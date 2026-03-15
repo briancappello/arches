@@ -53,6 +53,29 @@ class UserSetupScreen(Screen):
                 )
                 yield Button("Back", variant="default", id="btn-back")
 
+    def _try_continue(self) -> None:
+        """Validate and advance to the confirm screen."""
+        error = self._validate()
+        error_label = self.query_one("#error-label", Label)
+
+        if error:
+            error_label.update(f"[red]{error}[/red]")
+            return
+
+        error_label.update("")
+        self.app.hostname = self.query_one("#input-hostname", Input).value.strip()
+        self.app.username = self.query_one("#input-username", Input).value.strip()
+        self.app.password = self.query_one("#input-password", Input).value
+        self.app.push_screen("confirm")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter pressed in an input field."""
+        if event.input.id == "input-password-confirm":
+            self._try_continue()
+        else:
+            # Move focus to the next input field
+            self.focus_next()
+
     def _validate(self) -> str | None:
         """Validate inputs. Returns error message or None."""
         hostname = self.query_one("#input-hostname", Input).value.strip()
@@ -76,27 +99,6 @@ class UserSetupScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-continue":
-            error = self._validate()
-            error_label = self.query_one("#error-label", Label)
-
-            if error:
-                error_label.update(f"[red]{error}[/red]")
-                return
-
-            self.app.hostname = self.query_one(
-                "#input-hostname",
-                Input,
-            ).value.strip()
-            self.app.username = self.query_one(
-                "#input-username",
-                Input,
-            ).value.strip()
-            self.app.password = self.query_one(
-                "#input-password",
-                Input,
-            ).value
-
-            self.app.push_screen("confirm")
-
+            self._try_continue()
         elif event.button.id == "btn-back":
             self.app.pop_screen()

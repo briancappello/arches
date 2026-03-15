@@ -14,6 +14,7 @@ from arches_installer.core.disk import (
     _part_name,
     detect_block_devices,
     detect_mounts,
+    detect_single_disk,
     partition_disk_aarch64,
     partition_disk_x86,
     validate_mounts,
@@ -424,3 +425,40 @@ def test_block_device_display() -> None:
         partitions=["sda1", "sda2"],
     )
     assert dev.display == "/dev/sda  500G  Samsung SSD 970"
+
+
+# ---------------------------------------------------------------------------
+# detect_single_disk
+# ---------------------------------------------------------------------------
+
+
+@patch("arches_installer.core.disk.detect_block_devices")
+def test_detect_single_disk_one_non_removable(mock_detect: MagicMock) -> None:
+    """Single non-removable disk is returned; removable disks are ignored."""
+    mock_detect.return_value = [
+        BlockDevice("vda", "/dev/vda", "20G", "QEMU HARDDISK", False, []),
+        BlockDevice("sdb", "/dev/sdb", "32G", "USB Flash", True, ["sdb1"]),
+    ]
+    result = detect_single_disk()
+    assert result.path == "/dev/vda"
+
+
+@patch("arches_installer.core.disk.detect_block_devices")
+def test_detect_single_disk_no_disks(mock_detect: MagicMock) -> None:
+    """Error when no non-removable disks are found."""
+    mock_detect.return_value = [
+        BlockDevice("sdb", "/dev/sdb", "32G", "USB Flash", True, ["sdb1"]),
+    ]
+    with pytest.raises(RuntimeError, match="No non-removable disks"):
+        detect_single_disk()
+
+
+@patch("arches_installer.core.disk.detect_block_devices")
+def test_detect_single_disk_multiple_disks(mock_detect: MagicMock) -> None:
+    """Error when multiple non-removable disks are found."""
+    mock_detect.return_value = [
+        BlockDevice("sda", "/dev/sda", "500G", "Samsung SSD", False, []),
+        BlockDevice("sdb", "/dev/sdb", "1T", "WD Blue", False, []),
+    ]
+    with pytest.raises(RuntimeError, match="Multiple non-removable disks"):
+        detect_single_disk()

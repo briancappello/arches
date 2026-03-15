@@ -41,6 +41,9 @@ class TemplateSelectScreen(Screen):
             self._templates = discover_templates()
             for tmpl in self._templates:
                 template_list.add_option(Option(tmpl.name, id=tmpl.name))
+            if self._templates:
+                template_list.highlighted = 0
+                template_list.focus()
         except Exception as e:
             template_list.add_option(
                 Option(f"Error loading templates: {e}", id="error")
@@ -56,18 +59,29 @@ class TemplateSelectScreen(Screen):
             tmpl = self._templates[event.option_index]
             info = (
                 f"{tmpl.description}\n\n"
-                f"  Packages:   {len(tmpl.system.packages)} packages\n"
+                f"  Packages:   {len(tmpl.install.all_packages)} packages\n"
                 f"  Services:   {len(tmpl.services)} services"
             )
-            if tmpl.ansible.chroot_roles:
-                info += f"\n  Ansible:    {', '.join(tmpl.ansible.chroot_roles)}"
+            if tmpl.ansible.firstboot_roles:
+                info += f"\n  Ansible:    {', '.join(tmpl.ansible.firstboot_roles)}"
             desc.update(info)
+
+    def _select_template(self) -> None:
+        """Accept the currently highlighted template and advance."""
+        template_list = self.query_one("#template-list", OptionList)
+        if template_list.highlighted is not None and self._templates:
+            self.app.selected_template = self._templates[template_list.highlighted]
+            self.app.push_screen("user_setup")
+
+    def on_option_list_option_selected(
+        self,
+        event: OptionList.OptionSelected,
+    ) -> None:
+        """Enter pressed on a template option — select it and advance."""
+        self._select_template()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-continue":
-            template_list = self.query_one("#template-list", OptionList)
-            if template_list.highlighted is not None and self._templates:
-                self.app.selected_template = self._templates[template_list.highlighted]
-                self.app.push_screen("user_setup")
+            self._select_template()
         elif event.button.id == "btn-back":
             self.app.pop_screen()

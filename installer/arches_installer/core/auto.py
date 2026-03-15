@@ -1,13 +1,16 @@
 """Automated (non-interactive) install runner.
 
 Used by `arches-install --auto <config.toml>` to run the full install
-pipeline without the TUI. The config file specifies the device, template,
+pipeline without the TUI. The config file specifies the template,
 hostname, username, and password — everything the TUI would collect
-interactively. Disk layout and bootloader come from the platform config.
+interactively. The target disk is auto-detected (must be exactly one
+non-removable disk). Disk layout and bootloader come from the platform
+config.
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -15,38 +18,38 @@ from pathlib import Path
 from typing import Any
 
 from arches_installer.core.bootloader import install_bootloader
-from arches_installer.core.disk import prepare_disk
+from arches_installer.core.disk import detect_single_disk, prepare_disk
 from arches_installer.core.firstboot import inject_firstboot_service
 from arches_installer.core.install import install_system
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.snapper import setup_snapshots
-from arches_installer.core.template import InstallTemplate, load_template
+from arches_installer.core.template import (
+    InstallTemplate,
+    load_template,
+    resolve_template,
+)
 
 
 @dataclass
 class AutoInstallConfig:
     """Configuration for an unattended install."""
 
-    device: str
     template: InstallTemplate
     hostname: str
     username: str
     password: str
+    reboot: bool
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AutoInstallConfig:
         """Build config from a parsed TOML dict."""
         install = data.get("install", {})
 
-        device = install.get("device")
-        if not device:
-            raise ValueError("install.device is required")
-
-        template_path = install.get("template")
-        if not template_path:
+        template_name = install.get("template")
+        if not template_name:
             raise ValueError("install.template is required")
 
-        template = load_template(Path(template_path))
+        template = load_template(resolve_template(template_name))
 
         hostname = install.get("hostname", "arches")
         username = install.get("username")
@@ -57,12 +60,14 @@ class AutoInstallConfig:
         if not password:
             raise ValueError("install.password is required")
 
+        reboot = install.get("reboot", False)
+
         return cls(
-            device=device,
             template=template,
             hostname=hostname,
             username=username,
             password=password,
+            reboot=reboot,
         )
 
     @classmethod
@@ -99,16 +104,23 @@ def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int
 
     log("== Arches Auto Install ==")
     log(f"  Platform: {platform.name} ({platform.arch})")
-    log(f"  Device:   {config.device}")
     log(f"  Template: {config.template.name}")
     log(f"  Hostname: {config.hostname}")
     log(f"  User:     {config.username}")
+    log(f"  Reboot:   {config.reboot}")
     log("")
 
     try:
+        # Detect target disk
+        log("Detecting target disk...")
+        disk = detect_single_disk()
+        device = disk.path
+        log(f"  Device:   {device}  {disk.size}  {disk.model}")
+        log("")
+
         # Phase 1: Disk
         log("-- Phase 1: Disk Setup --")
-        parts = prepare_disk(config.device, platform)
+        parts = prepare_disk(device, platform)
         log("Disk prepared successfully.")
 
         # Phase 2: System install
@@ -127,7 +139,7 @@ def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int
         log("-- Phase 3: Bootloader --")
         install_bootloader(
             platform,
-            config.device,
+            device,
             parts.esp,
             parts.root,
             log=log,
@@ -150,6 +162,11 @@ def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int
 
         log("")
         log("== Installation complete ==")
+
+        if config.reboot:
+            log("Rebooting into installed system...")
+            subprocess.run(["systemctl", "reboot"], check=False)
+
         return 0
 
     except Exception as e:

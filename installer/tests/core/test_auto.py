@@ -14,29 +14,17 @@ class TestAutoInstallConfig:
 
     def test_load_valid_config(self, auto_config_file: Path) -> None:
         config = AutoInstallConfig.from_file(auto_config_file)
-        assert config.device == "/dev/vda"
         assert config.hostname == "testbox"
         assert config.username == "testuser"
         assert config.password == "testpass"
+        assert config.reboot is True
         assert config.template.name == "Dev Workstation"
-        assert "git" in config.template.system.packages
-
-    def test_missing_device(self, tmp_path: Path, templates_dir: Path) -> None:
-        config_file = tmp_path / "bad.toml"
-        config_file.write_text(f"""\
-[install]
-template = "{templates_dir / "vm-server.toml"}"
-username = "user"
-password = "pass"
-""")
-        with pytest.raises(ValueError, match="device"):
-            AutoInstallConfig.from_file(config_file)
+        assert "git" in config.template.install.pacstrap
 
     def test_missing_template(self, tmp_path: Path) -> None:
         config_file = tmp_path / "bad.toml"
         config_file.write_text("""\
 [install]
-device = "/dev/sda"
 username = "user"
 password = "pass"
 """)
@@ -45,10 +33,9 @@ password = "pass"
 
     def test_missing_username(self, tmp_path: Path, templates_dir: Path) -> None:
         config_file = tmp_path / "bad.toml"
-        config_file.write_text(f"""\
+        config_file.write_text("""\
 [install]
-device = "/dev/sda"
-template = "{templates_dir / "vm-server.toml"}"
+template = "vm-server.toml"
 password = "pass"
 """)
         with pytest.raises(ValueError, match="username"):
@@ -56,21 +43,19 @@ password = "pass"
 
     def test_missing_password(self, tmp_path: Path, templates_dir: Path) -> None:
         config_file = tmp_path / "bad.toml"
-        config_file.write_text(f"""\
+        config_file.write_text("""\
 [install]
-device = "/dev/sda"
-template = "{templates_dir / "vm-server.toml"}"
+template = "vm-server.toml"
 username = "user"
 """)
         with pytest.raises(ValueError, match="password"):
             AutoInstallConfig.from_file(config_file)
 
-    def test_nonexistent_template_path(self, tmp_path: Path) -> None:
+    def test_nonexistent_template(self, tmp_path: Path, templates_dir: Path) -> None:
         config_file = tmp_path / "bad.toml"
         config_file.write_text("""\
 [install]
-device = "/dev/sda"
-template = "/nonexistent/template.toml"
+template = "nonexistent.toml"
 username = "user"
 password = "pass"
 """)
@@ -79,15 +64,25 @@ password = "pass"
 
     def test_default_hostname(self, tmp_path: Path, templates_dir: Path) -> None:
         config_file = tmp_path / "nohostname.toml"
-        config_file.write_text(f"""\
+        config_file.write_text("""\
 [install]
-device = "/dev/sda"
-template = "{templates_dir / "vm-server.toml"}"
+template = "vm-server.toml"
 username = "user"
 password = "pass"
 """)
         config = AutoInstallConfig.from_file(config_file)
         assert config.hostname == "arches"
+
+    def test_default_reboot_false(self, tmp_path: Path, templates_dir: Path) -> None:
+        config_file = tmp_path / "noreboot.toml"
+        config_file.write_text("""\
+[install]
+template = "vm-server.toml"
+username = "user"
+password = "pass"
+""")
+        config = AutoInstallConfig.from_file(config_file)
+        assert config.reboot is False
 
     def test_nonexistent_config_file(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
@@ -96,16 +91,16 @@ password = "pass"
     def test_from_dict_directly(self, templates_dir: Path) -> None:
         data = {
             "install": {
-                "device": "/dev/nvme0n1",
-                "template": str(templates_dir / "dev-workstation.toml"),
+                "template": "dev-workstation.toml",
                 "hostname": "mybox",
                 "username": "admin",
                 "password": "secret",
+                "reboot": True,
             },
         }
         config = AutoInstallConfig.from_dict(data)
-        assert config.device == "/dev/nvme0n1"
         assert config.hostname == "mybox"
+        assert config.reboot is True
         assert config.template.name == "Dev Workstation"
 
 

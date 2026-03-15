@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────
-# Arches — Custom Arch/CachyOS Install & Recovery ISO
+# Arches — Custom Install & Recovery ISO
 # ─────────────────────────────────────────────────────────
 
 SHELL       := /bin/bash
@@ -17,7 +17,8 @@ OUT_DIR     := $(PROJECT_DIR)/out
 .PHONY: help iso-x86-64 iso-aarch64-generic aur-repo clean clean-all \
         lint format test test-unit test-tui test-template check-root check-deps \
         stage-installer stage-ansible stage-platform assemble-packages \
-        test-iso test-iso-bios test-disk dry-run
+        test-iso test-boot test-iso-bios test-disk dry-run \
+        ansible-dev
 
 # ─── Default ──────────────────────────────────────────
 
@@ -31,8 +32,9 @@ help: ## Show this help
 
 iso-x86-64: PLATFORM := x86-64
 iso-x86-64: export ARCHES_ARCH := x86_64
-iso-x86-64: check-root check-deps aur-repo-x86-64 stage-installer stage-ansible stage-platform assemble-packages ## Build ISO for x86-64 (requires sudo)
+iso-x86-64: check-root check-deps aur-repo-x86-64 stage-installer stage-ansible stage-platform assemble-packages cache-packages ## Build ISO for x86-64 (requires sudo)
 	@echo "══ Building Arches ISO (x86-64) ══"
+	@rm -rf $(WORK_DIR)
 	@mkdir -p $(OUT_DIR)
 	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
 	@echo ""
@@ -43,6 +45,7 @@ iso-aarch64-generic: PLATFORM := aarch64-generic
 iso-aarch64-generic: export ARCHES_ARCH := aarch64
 iso-aarch64-generic: check-root check-deps stage-installer stage-ansible stage-platform assemble-packages ## Build ISO for aarch64-generic (requires sudo)
 	@echo "══ Building Arches ISO (aarch64-generic) ══"
+	@rm -rf $(WORK_DIR)
 	@mkdir -p $(OUT_DIR)
 	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
 	@echo ""
@@ -51,7 +54,7 @@ iso-aarch64-generic: check-root check-deps stage-installer stage-ansible stage-p
 
 aur-repo-x86-64: ## Pre-build AUR packages for x86-64 platform
 	@echo "══ Building AUR repo (x86-64) ══"
-	$(SCRIPTS)/build-aur-repo.sh x86-64
+	$(SCRIPTS)/build-aur-repo.sh $(if $(FORCE),--force) x86-64
 
 stage-installer: ## Copy installer into ISO airootfs
 	@echo "══ Staging installer ══"
@@ -60,9 +63,20 @@ stage-installer: ## Copy installer into ISO airootfs
 	@mkdir -p $(ISO_PROFILE)/airootfs/usr/local/bin
 	@printf '#!/usr/bin/env bash\n\
 cd /opt/arches/installer\n\
-python -m pip install --quiet --break-system-packages textual 2>/dev/null\n\
-exec python -m arches_installer\n' > $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
+exec python -m arches_installer "$$@"\n' > $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
 	@chmod +x $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
+	@# Embed build host's SSH public key for passwordless access to installed systems
+	@REAL_HOME=$$(eval echo ~$${SUDO_USER:-$$USER}); \
+	if [ -f "$$REAL_HOME/.ssh/id_ed25519.pub" ]; then \
+		cp "$$REAL_HOME/.ssh/id_ed25519.pub" $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub; \
+		echo "  Embedded SSH key: $$REAL_HOME/.ssh/id_ed25519.pub"; \
+	elif [ -f "$$REAL_HOME/.ssh/id_rsa.pub" ]; then \
+		cp "$$REAL_HOME/.ssh/id_rsa.pub" $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub; \
+		echo "  Embedded SSH key: $$REAL_HOME/.ssh/id_rsa.pub"; \
+	else \
+		echo "  WARNING: No SSH public key found ($$REAL_HOME/.ssh/id_ed25519.pub or id_rsa.pub)"; \
+		echo "           Installed systems will not have build-host SSH access."; \
+	fi
 
 stage-ansible: ## Copy Ansible playbooks into ISO airootfs
 	@echo "══ Staging Ansible ══"
@@ -92,8 +106,15 @@ assemble-packages: ## Assemble ISO package list from common + platform
 		| grep -v '^#' | grep -v '^$$' | sort -u \
 		> $(ISO_PROFILE)/packages.$$ARCH; \
 	echo "  Wrote packages.$$ARCH ($$(wc -l < $(ISO_PROFILE)/packages.$$ARCH) packages)"
-	@# Also install the platform pacman.conf as the ISO's pacman.conf
-	@cp $(PLATFORMS)/$(PLATFORM)/pacman.conf $(ISO_PROFILE)/pacman.conf
+	@# Install the platform pacman.conf, rewriting the arches-local repo
+	@# path to the build-host location (the ISO airootfs copy).
+	@# At install time the live ISO uses the original /opt/arches-repo path.
+	@sed 's|file:///opt/arches-repo|file://$(ISO_PROFILE)/airootfs/opt/arches-repo|' \
+		$(PLATFORMS)/$(PLATFORM)/pacman.conf > $(ISO_PROFILE)/pacman.conf
+
+cache-packages: ## Pre-download template packages into ISO for offline install
+	@echo "══ Caching template packages ══"
+	@$(SCRIPTS)/cache-template-packages.sh $(PLATFORM)
 
 # ─── Development ──────────────────────────────────────
 
@@ -144,10 +165,23 @@ test-iso: ## Boot the built ISO in QEMU (UEFI, x86-64)
 		-m 4G \
 		-cpu host \
 		-smp 4 \
-		-bios /usr/share/ovmf/x64/OVMF.fd \
+		-bios /usr/share/edk2/x64/OVMF.4m.fd \
 		-drive file=$$ISO,format=raw,media=cdrom \
 		-drive file=/tmp/arches-test-disk.qcow2,format=qcow2,if=virtio \
-		-net nic -net user \
+		-net nic -net user,hostfwd=tcp::2222-:22 \
+		-vga virtio
+
+test-boot: ## Boot the installed test disk in QEMU (UEFI, no ISO)
+	@echo "══ Booting installed disk in QEMU (UEFI) ══"
+	@echo "    SSH: ssh -p 2222 <user>@localhost"
+	qemu-system-x86_64 \
+		-enable-kvm \
+		-m 4G \
+		-cpu host \
+		-smp 4 \
+		-bios /usr/share/edk2/x64/OVMF.4m.fd \
+		-drive file=/tmp/arches-test-disk.qcow2,format=qcow2,if=virtio \
+		-net nic -net user,hostfwd=tcp::2222-:22 \
 		-vga virtio
 
 test-iso-bios: ## Boot the built ISO in QEMU (BIOS, x86-64)
@@ -161,8 +195,24 @@ test-iso-bios: ## Boot the built ISO in QEMU (BIOS, x86-64)
 		-smp 4 \
 		-drive file=$$ISO,format=raw,media=cdrom \
 		-drive file=/tmp/arches-test-disk.qcow2,format=qcow2,if=virtio \
-		-net nic -net user \
+		-net nic -net user,hostfwd=tcp::2222-:22 \
 		-vga std
+
+# ─── Ansible dev against VM ───────────────────────────
+
+VM_SSH_PORT := 2222
+VM_USER     := arches
+TAGS        ?= all
+
+ansible-dev: ## Run Ansible roles against the QEMU VM (TAGS=all)
+	@echo "══ Running Ansible against VM (tags: $(TAGS)) ══"
+	ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook $(ANSIBLE_DIR)/playbook.yml \
+		-i $(ANSIBLE_DIR)/inventory/dev-vm.ini \
+		--become \
+		-e ansible_user=$(VM_USER) \
+		-e install_user=$(VM_USER) \
+		--tags $(TAGS) \
+		-v
 
 test-disk: ## Create a QEMU test disk image (20G)
 	@echo "══ Creating test disk ══"
@@ -178,6 +228,7 @@ clean: ## Remove staged files from ISO airootfs
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/platform
 	rm -f  $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches-repo
+	rm -f  $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub
 	rm -f  $(ISO_PROFILE)/packages.x86_64
 	rm -f  $(ISO_PROFILE)/packages.aarch64
 
@@ -200,13 +251,13 @@ check-root:
 
 check-deps:
 	@missing=""; \
-	for cmd in mkarchiso pacman-key mksquashfs; do \
+	for cmd in mkarchiso pacman-key mksquashfs grub-mkstandalone; do \
 		if ! command -v $$cmd &>/dev/null; then \
 			missing="$$missing $$cmd"; \
 		fi; \
 	done; \
 	if [ -n "$$missing" ]; then \
 		echo "ERROR: Missing required commands:$$missing"; \
-		echo "Install archiso: sudo pacman -S archiso"; \
+		echo "Install prerequisites: sudo pacman -S archiso grub"; \
 		exit 1; \
 	fi

@@ -11,12 +11,14 @@
     path: /etc/pacman.conf
     regexp: '^#?ParallelDownloads'
     line: 'ParallelDownloads = 5'
+    insertafter: '^\[options\]'
 
 - name: Enable Color in pacman
   lineinfile:
     path: /etc/pacman.conf
     regexp: '^#?Color'
     line: 'Color'
+    insertafter: '^\[options\]'
 
 - name: Configure makepkg to use all cores
   lineinfile:
@@ -36,3 +38,33 @@
     name: systemd-timesyncd
     enabled: yes
     state: started
+
+# --------------------------------------------------------------------------
+# Neovim — base config for all users
+# --------------------------------------------------------------------------
+
+- name: Create neovim config directory for {{ ansible_user | default('brian') }}
+  become_user: "{{ ansible_user | default('brian') }}"
+  file:
+    path: "/home/{{ ansible_user | default('brian') }}/.config/nvim"
+    state: directory
+    mode: '0755'
+
+- name: Deploy neovim config for {{ ansible_user | default('brian') }}
+  become_user: "{{ ansible_user | default('brian') }}"
+  copy:
+    src: init.lua
+    dest: "/home/{{ ansible_user | default('brian') }}/.config/nvim/init.lua"
+    mode: '0644'
+
+- name: Create neovim config directory for root
+  file:
+    path: /root/.config/nvim
+    state: directory
+    mode: '0755'
+
+- name: Deploy neovim config for root
+  copy:
+    src: init.lua
+    dest: /root/.config/nvim/init.lua
+    mode: '0644'

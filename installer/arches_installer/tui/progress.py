@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import re
 import threading
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Label, RichLog
+
+INSTALL_LOG = Path("/var/log/arches-install.log")
 
 from arches_installer.core.disk import prepare_disk
 from arches_installer.core.install import install_system
@@ -39,8 +43,15 @@ class InstallProgressScreen(Screen):
                 )
 
     def log_msg(self, msg: str) -> None:
-        """Thread-safe log message to the RichLog widget."""
+        """Thread-safe log message to the RichLog widget and log file."""
         self.app.call_from_thread(self._write_log, msg)
+        # Also append to the log file (strip Rich markup for plain text)
+        try:
+            plain = re.sub(r"\[/?[^\]]*\]", "", msg)
+            with INSTALL_LOG.open("a") as f:
+                f.write(plain + "\n")
+        except OSError:
+            pass
 
     def _write_log(self, msg: str) -> None:
         log = self.query_one("#install-log", RichLog)
@@ -48,6 +59,12 @@ class InstallProgressScreen(Screen):
 
     def on_mount(self) -> None:
         """Start the install in a background thread."""
+        # Initialize the log file
+        try:
+            INSTALL_LOG.parent.mkdir(parents=True, exist_ok=True)
+            INSTALL_LOG.write_text(f"=== Arches Install Log ===\n")
+        except OSError:
+            pass
         thread = threading.Thread(target=self._run_install, daemon=True)
         thread.start()
 
@@ -135,11 +152,12 @@ class InstallProgressScreen(Screen):
             self.app.call_from_thread(self._enable_reboot)
 
     def _enable_reboot(self) -> None:
-        """Enable the reboot button."""
+        """Enable the reboot button and focus it."""
         title = self.query_one("#title", Label)
         title.update("Complete")
         btn = self.query_one("#btn-reboot", Button)
         btn.disabled = False
+        btn.focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-reboot":

@@ -47,6 +47,10 @@ def detect_block_devices() -> list[BlockDevice]:
     for dev in data.get("blockdevices", []):
         if dev.get("type") != "disk":
             continue
+        # Skip virtual/non-installable devices
+        name = dev.get("name", "")
+        if name.startswith(("zram", "loop", "sr", "ram")):
+            continue
         # Get partitions for this device
         part_result = run(
             [
@@ -74,6 +78,25 @@ def detect_block_devices() -> list[BlockDevice]:
             )
         )
     return devices
+
+
+def detect_single_disk() -> BlockDevice:
+    """Detect exactly one non-removable disk for unattended install.
+
+    Returns the single non-removable disk.  Raises ``RuntimeError`` if zero
+    or more than one non-removable disk is found.
+    """
+    all_devs = detect_block_devices()
+    disks = [d for d in all_devs if not d.removable]
+    if len(disks) == 0:
+        raise RuntimeError("No non-removable disks detected")
+    if len(disks) > 1:
+        names = ", ".join(d.path for d in disks)
+        raise RuntimeError(
+            f"Multiple non-removable disks detected ({names}). "
+            "Auto-install requires exactly one disk."
+        )
+    return disks[0]
 
 
 def wipe_disk(device: str) -> None:
@@ -178,7 +201,6 @@ def mount_btrfs(
     subvol_mounts = {
         "@home": MOUNT_ROOT / "home",
         "@var": MOUNT_ROOT / "var",
-        "@snapshots": MOUNT_ROOT / ".snapshots",
     }
 
     for subvol in subvolumes:

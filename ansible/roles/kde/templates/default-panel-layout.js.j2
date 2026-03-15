@@ -1,0 +1,54 @@
+// Arches default panel layout — deployed by ansible to override Plasma defaults.
+// This script runs on first login to create the panel and its widgets.
+
+var panel = new Panel
+panel.location = "{{ kde_panel.location }}"
+panel.height = 2 * Math.ceil(gridUnit * 2.5 / 2)
+panel.floating = {{ kde_panel.floating | lower }}
+
+// Application launcher
+var launcher = panel.addWidget("org.kde.plasma.kickoff")
+launcher.currentConfigGroup = ["Shortcuts"]
+launcher.writeConfig("global", "Alt+F1")
+launcher.currentConfigGroup = ["General"]
+launcher.writeConfig("icon", "start-here-kde")
+
+// Virtual desktop pager
+panel.addWidget("org.kde.plasma.pager")
+
+// Icons-and-Text Task Manager (our custom patched version)
+var taskmanager = panel.addWidget("org.kde.plasma.taskmanager")
+taskmanager.currentConfigGroup = ["General"]
+taskmanager.writeConfig("launchers", [
+    "applications:systemsettings.desktop",
+    "preferred://filemanager",
+    "preferred://browser",
+    "applications:org.kde.konsole.desktop"
+].join(","))
+
+// Separator to push right-side widgets
+panel.addWidget("org.kde.plasma.marginsseparator")
+
+// System tray
+panel.addWidget("org.kde.plasma.systemtray")
+
+// AI Usage Monitor (custom applet)
+panel.addWidget("com.github.loofi.aiusagemonitor")
+
+// Digital clock — show day of week, full date, 12h format
+var clock = panel.addWidget("org.kde.plasma.digitalclock")
+clock.currentConfigGroup = ["Appearance"]
+clock.writeConfig("dateDisplayFormat", "BelowTime")
+clock.writeConfig("dateFormat", "longDate")
+clock.writeConfig("use24hFormat", "0")
+
+// Lock/Logout widget — lock, shutdown, reboot, sleep
+var locklogout = panel.addWidget("org.kde.plasma.lock_logout")
+locklogout.currentConfigGroup = ["Configuration", "General"]
+locklogout.writeConfig("show_lockScreen", "true")
+locklogout.writeConfig("show_requestShutDown", "true")
+locklogout.writeConfig("show_requestReboot", "true")
+locklogout.writeConfig("show_suspendToRam", "true")
+locklogout.writeConfig("show_suspendToDisk", "false")
+locklogout.writeConfig("show_requestLogout", "false")
+locklogout.writeConfig("show_switchUser", "false")

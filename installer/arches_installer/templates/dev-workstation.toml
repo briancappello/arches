@@ -3,8 +3,15 @@ name = "Dev Workstation"
 description = "KDE Plasma desktop with full development toolchain"
 
 [system]
-timezone = "America/New_York"
+timezone = "America/Denver"
 locale = "en_US.UTF-8"
+
+# ─── Package installation phases ──────────────────────
+# pacstrap:  Installed via pacstrap during initial system setup
+# override:  Installed after pacstrap with --overwrite (conflicts with stock packages)
+# firstboot: Installed on first boot (needs running system, network, etc.)
+
+[install.pacstrap]
 packages = [
     # Desktop
     "plasma-meta",
@@ -15,6 +22,7 @@ packages = [
     "ark",
     "spectacle",
     "gwenview",
+    "firefox",
     # Audio
     "pipewire",
     "pipewire-alsa",
@@ -24,11 +32,13 @@ packages = [
     # Networking
     "networkmanager",
     "firewalld",
+    "openssh",
     # Fonts
     "noto-fonts",
     "noto-fonts-cjk",
     "noto-fonts-emoji",
     "ttf-jetbrains-mono-nerd",
+    "ttf-dejavu-nerd",
     # Dev tools
     "git",
     "neovim",
@@ -41,8 +51,6 @@ packages = [
     "python-pip",
     "nodejs",
     "npm",
-    "docker",
-    "docker-compose",
     "podman",
     # CLI utilities
     "ripgrep",
@@ -50,29 +58,48 @@ packages = [
     "bat",
     "eza",
     "fzf",
-    "zoxide",
-    "starship",
     "lazygit",
     "bottom",
     "dust",
     "duf",
-    "hyperfine",
     # Snapshot support
     "snapper",
     "snap-pac",
+    # Custom plasmoids (from arches-local repo)
+    "plasma-ai-usage-monitor",
+    # server
+    "postgresql",
+    "redis",
+    "rabbitmq",
+    "nginx",
 ]
+
+[install.override]
+# Packages that replace files from stock packages.
+# Installed with `pacman --overwrite` after pacstrap.
+packages = [
+    "arches-taskmanager-patched",
+]
+
+[install.firstboot]
+# Packages that need a running system or network.
+# Installed via pacman on first boot.
+packages = []
 
 [services]
 enable = [
     "NetworkManager",
     "sddm",
-    "docker",
+    "sshd",
     "firewalld",
     "fstrim.timer",
     "snapper-timeline.timer",
     "snapper-cleanup.timer",
+    "nginx",
+    "redis",
+    "rabbitmq",
+    "postgresql",
 ]
 
 [ansible]
-chroot_roles = ["base", "kde", "dev-tools"]
-firstboot_roles = ["dotfiles"]
+firstboot_roles = ["base", "zsh", "kde", "dev-tools"]

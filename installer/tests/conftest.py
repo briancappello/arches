@@ -16,6 +16,7 @@ from arches_installer.core.platform import (
 )
 from arches_installer.core.template import (
     AnsibleConfig,
+    InstallPhases,
     InstallTemplate,
     SystemConfig,
 )
@@ -100,12 +101,13 @@ def dev_workstation_template() -> InstallTemplate:
         system=SystemConfig(
             timezone="America/New_York",
             locale="en_US.UTF-8",
-            packages=["git", "neovim", "plasma-meta"],
+        ),
+        install=InstallPhases(
+            pacstrap=["git", "neovim", "plasma-meta"],
         ),
         services=["NetworkManager", "sddm"],
         ansible=AnsibleConfig(
-            chroot_roles=["base", "kde"],
-            firstboot_roles=["dotfiles"],
+            firstboot_roles=["base", "zsh", "kde"],
         ),
     )
 
@@ -119,12 +121,13 @@ def vm_server_template() -> InstallTemplate:
         system=SystemConfig(
             timezone="America/New_York",
             locale="en_US.UTF-8",
-            packages=["openssh", "nginx"],
+        ),
+        install=InstallPhases(
+            pacstrap=["openssh", "nginx"],
         ),
         services=["NetworkManager", "sshd"],
         ansible=AnsibleConfig(
-            chroot_roles=["base", "vm-server"],
-            firstboot_roles=[],
+            firstboot_roles=["base", "zsh", "vm-server"],
         ),
     )
 
@@ -187,7 +190,12 @@ install = [
 
 @pytest.fixture
 def templates_dir(tmp_path: Path) -> Path:
-    """Create a temp directory with sample template TOML files."""
+    """Create a temp directory with sample template TOML files.
+
+    Also patches ``resolve_template`` so that bare filenames (e.g.
+    ``"dev-workstation.toml"``) resolve against this temp directory
+    instead of the installed package's templates directory.
+    """
     d = tmp_path / "templates"
     d.mkdir()
 
@@ -199,14 +207,15 @@ description = "KDE Plasma desktop with full development toolchain"
 [system]
 timezone = "America/New_York"
 locale = "en_US.UTF-8"
+
+[install.pacstrap]
 packages = ["git", "neovim"]
 
 [services]
 enable = ["NetworkManager", "sddm"]
 
 [ansible]
-chroot_roles = ["base", "kde"]
-firstboot_roles = ["dotfiles"]
+firstboot_roles = ["base", "zsh", "kde"]
 """)
 
     (d / "vm-server.toml").write_text("""\
@@ -214,32 +223,39 @@ firstboot_roles = ["dotfiles"]
 name = "VM Server"
 description = "Headless server"
 
-[system]
+[install.pacstrap]
 packages = ["openssh", "nginx"]
 
 [services]
 enable = ["NetworkManager", "sshd"]
 
 [ansible]
-chroot_roles = ["base", "vm-server"]
-firstboot_roles = []
+firstboot_roles = ["base", "zsh", "vm-server"]
 """)
 
-    return d
+    _resolve = lambda name: d / name  # noqa: E731
+    with (
+        patch("arches_installer.core.template.resolve_template", side_effect=_resolve),
+        patch("arches_installer.core.auto.resolve_template", side_effect=_resolve),
+    ):
+        yield d
 
 
 @pytest.fixture
 def auto_config_file(tmp_path: Path, templates_dir: Path) -> Path:
-    """Create a valid auto-install TOML config file."""
-    template_path = templates_dir / "dev-workstation.toml"
+    """Create a valid auto-install TOML config file.
+
+    Depends on ``templates_dir`` so that ``resolve_template`` is patched
+    to find the test templates by bare filename.
+    """
     config = tmp_path / "auto.toml"
-    config.write_text(f"""\
+    config.write_text("""\
 [install]
-device = "/dev/vda"
-template = "{template_path}"
+template = "dev-workstation.toml"
 hostname = "testbox"
 username = "testuser"
 password = "testpass"
+reboot = true
 """)
     return config
 

@@ -1,0 +1,6 @@
+NAME="Arches Linux"
+PRETTY_NAME="Arches Linux"
+ID=arches
+ID_LIKE=arch
+BUILD_ID=rolling
+HOME_URL="https://github.com/your-user/arches"

@@ -42,8 +42,7 @@ class ArchesApp(App):
     }
 
     .panel {
-        width: 80;
-        max-width: 100%;
+        width: 100%;
         padding: 1 2;
         border: solid $accent;
         margin: 1;

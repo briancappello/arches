@@ -1,0 +1,28 @@
+---
+# ==========================================================================
+# Oh-My-Zsh role defaults
+# ==========================================================================
+
+zsh_user: "{{ ansible_user | default('brian') }}"
+zsh_user_home: "/home/{{ zsh_user }}"
+
+# Oh-My-Zsh install source
+zsh_omz_repo: "https://github.com/ohmyzsh/ohmyzsh.git"
+zsh_omz_depth: 1
+
+# --------------------------------------------------------------------------
+# Regular user config
+# --------------------------------------------------------------------------
+zsh_user_theme: "bullet-train"
+zsh_user_plugins:
+  - fzf
+  - git
+  - ssh-agent
+
+# --------------------------------------------------------------------------
+# Root user config
+# --------------------------------------------------------------------------
+zsh_root_theme: "fino"
+zsh_root_plugins:
+  - fzf
+  - git

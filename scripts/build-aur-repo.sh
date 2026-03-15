@@ -7,6 +7,11 @@
 # Usage:
 #   ./scripts/build-aur-repo.sh <platform>
 #   ./scripts/build-aur-repo.sh x86-64
+#   ./scripts/build-aur-repo.sh --force x86-64   # rebuild even if repo exists
+#
+# When run as root (via sudo), automatically drops privileges to
+# SUDO_USER for makepkg, then fixes ownership afterward.
+# Skips the build entirely if the repo is already populated (use --force).
 #
 set -euo pipefail
 
@@ -16,9 +21,17 @@ REPO_DIR="$PROJECT_ROOT/iso/airootfs/opt/arches-repo"
 REPO_NAME="arches-local"
 BUILD_DIR="/tmp/arches-aur-build"
 
-PLATFORM="${1:-}"
+FORCE=false
+PLATFORM=""
+for arg in "$@"; do
+    case "$arg" in
+        --force) FORCE=true ;;
+        *)       PLATFORM="$arg" ;;
+    esac
+done
+
 if [[ -z "$PLATFORM" ]]; then
-    echo "Usage: $0 <platform>"
+    echo "Usage: $0 [--force] <platform>"
     echo "Available platforms:"
     ls -1 "$PROJECT_ROOT/platforms/"
     exit 1
@@ -64,15 +77,50 @@ CUSTOM_CMAKE_PACKAGES=(
 # The kde-task-manager build requires plasma-desktop sources at build time
 # (fetched by its own build script), plus many KF6/Plasma dev libraries.
 declare -A CUSTOM_EXTRA_MAKEDEPS=(
-    ["arches-taskmanager-patched"]="git kf6-kconfig kf6-ki18n kf6-kio kf6-knotifications kf6-kservice kf6-kwindowsystem plasma-activities plasma-activities-stats libplasma libksysguard kf6-kitemmodels plasma-workspace"
-    ["plasma-ai-usage-monitor"]="kf6-kwallet kf6-ki18n kf6-knotifications qt6-base-private-devel"
+    ["arches-taskmanager-patched"]="git kconfig ki18n kio knotifications kservice kwindowsystem plasma-activities plasma-activities-stats libplasma libksysguard kitemmodels plasma-workspace"
+    ["plasma-ai-usage-monitor"]="kwallet ki18n knotifications qt6-base"
 )
 
 # Per-package extra runtime depends (space-separated).
 declare -A CUSTOM_EXTRA_DEPS=(
     ["arches-taskmanager-patched"]=""
-    ["plasma-ai-usage-monitor"]="kf6-kwallet"
+    ["plasma-ai-usage-monitor"]="kwallet"
 )
+
+# ── Skip if repo already populated ────────────────────
+# When called from `sudo make iso-x86-64`, avoid re-building packages that
+# are already present.  Pass --force to rebuild regardless.
+if [[ "$FORCE" == false && -f "$REPO_DIR/${REPO_NAME}.db.tar.gz" ]] \
+   && compgen -G "$REPO_DIR"/*.pkg.tar.zst &>/dev/null; then
+    echo "=== AUR repo already populated at $REPO_DIR — skipping build ==="
+    echo "    (use --force to rebuild)"
+    ls -1 "$REPO_DIR"/*.pkg.tar.zst
+    exit 0
+fi
+
+# ── Privilege handling ────────────────────────────────
+# makepkg refuses to run as root.  When invoked via sudo (e.g. from
+# `sudo make iso-x86-64`), drop back to the invoking user for the
+# actual build, then fix up ownership afterward.
+if [[ $EUID -eq 0 ]]; then
+    if [[ -z "${SUDO_USER:-}" || "${SUDO_USER:-}" == "root" ]]; then
+        echo "ERROR: Running as root without SUDO_USER set."
+        echo "       Run via sudo so the build can drop privileges:"
+        echo "         sudo make iso-x86-64"
+        echo "       Or build the AUR repo first as a normal user:"
+        echo "         make aur-repo-x86-64"
+        exit 1
+    fi
+    echo "  (running as root — will drop to $SUDO_USER for makepkg)"
+    # Re-exec the entire script as the original user, preserving --force
+    FORCE_FLAG=""
+    [[ "$FORCE" == true ]] && FORCE_FLAG="--force"
+    sudo -u "$SUDO_USER" --preserve-env=PATH \
+        "$0" $FORCE_FLAG "$PLATFORM"
+    # Fix ownership so root-owned mkarchiso can read everything
+    chown -R root:root "$REPO_DIR"
+    exit 0
+fi
 
 echo "=== Arches AUR Repo Builder ==="
 echo "Platform:   $PLATFORM"
@@ -157,7 +205,7 @@ makedepends=($makedeps_str 'git')
 build() {
     # Use the project's own CMakeLists.txt with source assembly
     local upstream_clone="/tmp/plasma-desktop-upstream-src"
-    local upstream_tag="v$pkgver"
+    local upstream_tag="v\$pkgver"
     if [[ ! -d "\$upstream_clone" ]]; then
         git clone --depth 1 --branch "\$upstream_tag" --filter=blob:none --sparse \\
             "https://invent.kde.org/plasma/plasma-desktop" "\$upstream_clone"

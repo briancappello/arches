@@ -18,17 +18,18 @@ class TestLoadTemplate:
     def test_load_dev_workstation_template(self, templates_dir: Path) -> None:
         tmpl = load_template(templates_dir / "dev-workstation.toml")
         assert tmpl.name == "Dev Workstation"
-        assert "git" in tmpl.system.packages
+        assert "git" in tmpl.install.pacstrap
         assert "NetworkManager" in tmpl.services
-        assert "base" in tmpl.ansible.chroot_roles
-        assert "dotfiles" in tmpl.ansible.firstboot_roles
+        assert "base" in tmpl.ansible.firstboot_roles
+        assert "zsh" in tmpl.ansible.firstboot_roles
 
     def test_load_vm_server_template(self, templates_dir: Path) -> None:
         tmpl = load_template(templates_dir / "vm-server.toml")
         assert tmpl.name == "VM Server"
-        assert "openssh" in tmpl.system.packages
+        assert "openssh" in tmpl.install.pacstrap
         assert "sshd" in tmpl.services
-        assert tmpl.ansible.firstboot_roles == []
+        assert "base" in tmpl.ansible.firstboot_roles
+        assert "zsh" in tmpl.ansible.firstboot_roles
 
     def test_load_nonexistent_file(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
@@ -46,7 +47,7 @@ class TestLoadTemplate:
         tmpl = load_template(empty)
         # Should use all defaults
         assert tmpl.name == "Unknown"
-        assert tmpl.system.packages == []
+        assert tmpl.install.pacstrap == []
 
     def test_template_has_no_disk_or_bootloader(self, templates_dir: Path) -> None:
         """Templates should not have disk or bootloader attributes."""
@@ -62,7 +63,7 @@ class TestInstallTemplateFromDict:
         tmpl = InstallTemplate.from_dict({})
         assert tmpl.name == "Unknown"
         assert tmpl.description == ""
-        assert tmpl.system.packages == []
+        assert tmpl.install.pacstrap == []
 
     def test_full_dict(self) -> None:
         data = {
@@ -70,19 +71,20 @@ class TestInstallTemplateFromDict:
             "system": {
                 "timezone": "Europe/London",
                 "locale": "en_GB.UTF-8",
-                "packages": ["vim", "curl"],
+            },
+            "install": {
+                "pacstrap": {"packages": ["vim", "curl"]},
             },
             "services": {"enable": ["sshd"]},
             "ansible": {
-                "chroot_roles": ["base"],
-                "firstboot_roles": ["dotfiles"],
+                "firstboot_roles": ["base", "zsh"],
             },
         }
         tmpl = InstallTemplate.from_dict(data)
         assert tmpl.name == "Test"
         assert tmpl.system.timezone == "Europe/London"
         assert tmpl.services == ["sshd"]
-        assert tmpl.ansible.chroot_roles == ["base"]
+        assert tmpl.ansible.firstboot_roles == ["base", "zsh"]
 
     def test_unknown_keys_ignored(self) -> None:
         data = {
@@ -104,7 +106,7 @@ class TestInstallTemplateFromDict:
         assert tmpl.name == "Legacy"
         assert not hasattr(tmpl, "disk")
         assert not hasattr(tmpl, "bootloader")
-        assert tmpl.system.packages == ["git"]
+        assert tmpl.install.pacstrap == ["git"]
 
     def test_kernel_in_system_ignored(self) -> None:
         """Templates with a legacy kernel field should still load (ignored)."""
@@ -116,4 +118,4 @@ class TestInstallTemplateFromDict:
         }
         tmpl = InstallTemplate.from_dict(data)
         assert not hasattr(tmpl.system, "kernel")
-        assert tmpl.system.packages == ["git"]
+        assert tmpl.install.pacstrap == ["git"]

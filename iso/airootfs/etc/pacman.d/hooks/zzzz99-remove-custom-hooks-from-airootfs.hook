@@ -1,0 +1,19 @@
+# remove from airootfs!
+# Workaround for https://bugs.archlinux.org/task/49347
+# Remove pacman hooks specific to the ISO build process so they
+# don't interfere when pacstrap is run in the live environment.
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Removing ISO-build pacman hooks from airootfs...
+When = PostTransaction
+Depends = sh
+Depends = coreutils
+Depends = grep
+Exec = /bin/sh -c "rm -- $(grep -Frl 'remove from airootfs' /etc/pacman.d/hooks/)"

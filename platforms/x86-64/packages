@@ -18,6 +18,11 @@ chwd
 # ─── Bootloader ───────────────────────────────────────
 limine
 efibootmgr
+syslinux
+
+# ─── Memory testing ──────────────────────────────────
+memtest86+
+memtest86+-efi
 
 # ─── Snapshot support (btrfs) ────────────────────────
 snapper

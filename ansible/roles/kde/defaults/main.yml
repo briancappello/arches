@@ -21,13 +21,10 @@ kde_local_share: "{{ kde_home }}/.local/share"
 # Extra packages needed beyond plasma-meta
 # ==========================================================================
 kde_extra_packages:
-  - libinput-gestures            # touchpad gesture daemon
   - ttf-dejavu-nerd              # DejaVu Nerd Font (Powerline glyphs)
   - noto-fonts
   - noto-fonts-cjk
   - noto-fonts-emoji
-  - xdotool                      # used by libinput-gestures to emit key events
-  - zsh-theme-powerlevel10k      # oh-my-zsh theme (optional, pulled by chezmoi)
 
 # ==========================================================================
 # Custom plasmoids — pre-built into the local AUR repo
@@ -175,6 +172,15 @@ kde_krunner:
   desktop_search_typing: false          # "free floating" KRunner triggered by typing on desktop
 
 # ==========================================================================
+# Desktop Layout
+# ==========================================================================
+kde_desktop:
+  welcome_wizard: false                 # disable KDE Welcome Center on first login
+  layout: "org.kde.desktopcontainment"  # Desktop (not Folder View)
+  # org.kde.desktopcontainment = clean desktop (icons placed manually)
+  # org.kde.plasma.folder      = folder view (shows ~/Desktop contents)
+
+# ==========================================================================
 # Theme / Appearance
 # ==========================================================================
 kde_theme:
@@ -208,7 +214,7 @@ kde_konsole:
 # Panel / Widgets — consumed by the Python appletsrc generator
 # ==========================================================================
 kde_panel:
-  location: "bottom"              # top | bottom | left | right
+  location: "top"                 # top | bottom | left | right
   height: 40
   floating: false
   alignment: "center"             # left | center | right

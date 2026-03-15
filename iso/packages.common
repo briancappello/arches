@@ -6,6 +6,8 @@
 # ─── Base system ───────────────────────────────────────
 base
 mkinitcpio
+mkinitcpio-archiso
+terminus-font
 
 # ─── Filesystem & partitioning ────────────────────────
 btrfs-progs
@@ -32,8 +34,7 @@ python-pip
 python-setuptools
 
 # ─── Installer TUI dependencies ──────────────────────
-# Textual is installed via pip at ISO build time into
-# the installer venv; these are its system-level deps
+python-textual
 python-rich
 
 # ─── Ansible (chroot phase) ──────────────────────────

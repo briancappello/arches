@@ -21,6 +21,17 @@ from textual.widgets import Button, Label, Static
 class PartitionScreen(Screen):
     """Partition screen — drop to shell or auto-partition."""
 
+    BINDINGS = [
+        ("up", "prev_button", "Previous"),
+        ("down", "next_button", "Next"),
+    ]
+
+    def action_next_button(self) -> None:
+        self.focus_next(Button)
+
+    def action_prev_button(self) -> None:
+        self.focus_previous(Button)
+
     def compose(self) -> ComposeResult:
         with Center():
             with Vertical(classes="panel"):

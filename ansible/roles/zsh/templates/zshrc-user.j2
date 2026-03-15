@@ -1,0 +1,48 @@
+# {{ ansible_managed }}
+# Arches — user zsh config (oh-my-zsh + {{ zsh_user_theme }})
+
+# Source user environment (Plasma env vars, API keys, PATH additions)
+[ -f "$HOME/dotfiles/env.sh" ] && source "$HOME/dotfiles/env.sh"
+
+# Path to your Oh My Zsh installation.
+export ZSH="$HOME/.oh-my-zsh"
+
+# Theme
+ZSH_THEME="{{ zsh_user_theme }}"
+
+# Hyphen-insensitive completion (_ and - are interchangeable)
+HYPHEN_INSENSITIVE="true"
+
+# Plugins
+plugins=({{ zsh_user_plugins | join(' ') }})
+
+source $ZSH/oh-my-zsh.sh
+
+# ── History ───────────────────────────────────────────────────────────────
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt appendhistory sharehistory
+
+# ── Aliases ───────────────────────────────────────────────────────────────
+alias ls='eza --icons'
+alias ll='eza -la --icons'
+alias cat='bat'
+alias grep='rg'
+alias find='fd'
+alias top='btop'
+
+# pac — friendly pacman wrapper
+alias pac=pacmanf
+pacmanf() {
+    cmd="$1"
+    shift
+    if [ "$cmd" = "info" ]; then        pacman -Si "$@"
+    elif [ "$cmd" = "install" ]; then   sudo pacman -S "$@"
+    elif [ "$cmd" = "remove" ]; then    sudo pacman -Rcns "$@"
+    elif [ "$cmd" = "search" ]; then    pacman -Ss "$@"
+    elif [ "$cmd" = "sync" ]; then      sudo pacman -Sy
+    elif [ "$cmd" = "upgrade" ]; then   sudo pacman -Syyuu
+    else                                pacman "$cmd" "$@"
+    fi
+}

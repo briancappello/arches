@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "arches-installer"
 version = "0.1.0"
-description = "Arches — custom Arch/CachyOS installer TUI"
+description = "Arches — custom installer TUI"
 requires-python = ">=3.11"
 dependencies = [
     "textual>=0.85.0",

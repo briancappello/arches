@@ -17,9 +17,9 @@
     state: present
 
 - name: Install custom plasmoid packages (from local repo)
-  pacman:
-    name: "{{ kde_custom_plasmoid_packages }}"
-    state: present
+  command: >-
+    pacman -S --noconfirm --needed --overwrite '*'
+    {{ kde_custom_plasmoid_packages | join(' ') }}
 
 # --------------------------------------------------------------------------
 # 1. Display Manager (SDDM)
@@ -58,32 +58,50 @@
     mode: "0700"
   loop:
     - "{{ kde_config }}"
-    - "{{ kde_config }}/konsolerc"    # not a dir — we'll make the parent
     - "{{ kde_local_share }}/konsole"
     - "{{ kde_config }}/autostart"
-    - "{{ kde_config }}/libinput-gestures.conf"  # handled as file below
 
-# Fix: konsolerc and libinput-gestures.conf are files not dirs — remove the
-# erroneous dirs if they were created (idempotent guard).
-- name: Remove accidental directories for file targets
-  file:
-    path: "{{ item }}"
+# --------------------------------------------------------------------------
+# 2b. Remove KDE Welcome Center
+# --------------------------------------------------------------------------
+- name: "Welcome: remove plasma-welcome package"
+  pacman:
+    name: plasma-welcome
     state: absent
-  loop:
-    - "{{ kde_config }}/konsolerc"
-    - "{{ kde_config }}/libinput-gestures.conf"
+    force: true
+  when: not kde_desktop.welcome_wizard
 
-- name: Ensure real config directories exist
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: "{{ kde_user }}"
-    group: "{{ kde_user }}"
-    mode: "0700"
-  loop:
-    - "{{ kde_config }}"
-    - "{{ kde_local_share }}/konsole"
-    - "{{ kde_config }}/autostart"
+# --------------------------------------------------------------------------
+# 2c. Override Plasma system-wide defaults
+# --------------------------------------------------------------------------
+# Plasma reads these on first login to decide the desktop containment
+# and initial panel layout. Must be system-wide files, not per-user.
+
+- name: "Plasma defaults: set Desktop containment (not Folder View)"
+  copy:
+    dest: /usr/share/plasma/shells/org.kde.plasma.desktop/contents/defaults
+    mode: "0644"
+    content: |
+      [Desktop]
+      Containment={{ kde_desktop.layout }}
+      ToolBox=
+      RuntimePlatform=Desktop
+
+      [Desktop][ContainmentActions]
+      RightButton;NoModifier=org.kde.contextmenu
+      MiddleButton;NoModifier=org.kde.paste
+
+      [Panel]
+      Containment=org.kde.panel
+      ToolBox=org.kde.paneltoolbox
+      [Panel][ContainmentActions]
+      RightButton;NoModifier=org.kde.contextmenu
+
+- name: "Plasma defaults: override default panel layout script"
+  template:
+    src: default-panel-layout.js.j2
+    dest: /usr/share/plasma/layout-templates/org.kde.plasma.desktop.defaultPanel/contents/layout.js
+    mode: "0644"
 
 # --------------------------------------------------------------------------
 # 3. KWin — Virtual Desktops
@@ -291,32 +309,34 @@
   when: not kde_krunner.desktop_search_typing
 
 # --------------------------------------------------------------------------
-# 15. Theme / Appearance (plasma-apply-* tools)
+# 15. Theme / Appearance
 # --------------------------------------------------------------------------
-# plasma-apply-* commands write the correct KDE config files.
-# In chroot, they won't reload Plasma but the files will be correct for
-# first boot.
+# Use kwriteconfig6 instead of plasma-apply-* tools, which require a
+# running Plasma session and crash (SIGABRT) when run from a systemd service.
 
-- name: "Theme: apply color scheme"
+- name: "Theme: set color scheme"
   command: >-
-    plasma-apply-colorscheme {{ kde_theme.color_scheme }}
-  environment:
-    HOME: "{{ kde_home }}"
-  ignore_errors: true
+    kwriteconfig6 --file {{ kde_config }}/kdeglobals
+    --group General --key ColorScheme
+    {{ kde_theme.color_scheme }}
 
-- name: "Theme: apply Plasma visual style"
+- name: "Theme: set Plasma visual style"
   command: >-
-    plasma-apply-desktoptheme {{ kde_theme.plasma_theme }}
-  environment:
-    HOME: "{{ kde_home }}"
-  ignore_errors: true
+    kwriteconfig6 --file {{ kde_config }}/plasmarc
+    --group Theme --key name
+    {{ kde_theme.plasma_theme }}
 
-- name: "Theme: apply cursor theme"
+- name: "Theme: set cursor theme"
   command: >-
-    plasma-apply-cursortheme {{ kde_theme.cursor_theme }} --size {{ kde_theme.cursor_size }}
-  environment:
-    HOME: "{{ kde_home }}"
-  ignore_errors: true
+    kwriteconfig6 --file {{ kde_config }}/kcminputrc
+    --group Mouse --key cursorTheme
+    {{ kde_theme.cursor_theme }}
+
+- name: "Theme: set cursor size"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kcminputrc
+    --group Mouse --key cursorSize
+    {{ kde_theme.cursor_size }}
 
 # --------------------------------------------------------------------------
 # 16. Fonts (kdeglobals)
@@ -386,32 +406,22 @@
     {{ kde_konsole.tab_bar_position }}
 
 # --------------------------------------------------------------------------
-# 21. Panel / Widgets — generate appletsrc via Python script
+# 21. Panel / Widgets
 # --------------------------------------------------------------------------
-- name: "Panel: deploy panel config JSON for generator"
-  copy:
-    dest: "{{ kde_config }}/arches-panel-config.json"
-    owner: "{{ kde_user }}"
-    group: "{{ kde_user }}"
-    mode: "0600"
-    content: "{{ kde_panel | to_json }}"
+# The panel is created by Plasma on first login using the overridden
+# layout script at /usr/share/plasma/layout-templates/.../layout.js
+# (deployed in task 2c above). No need to generate an appletsrc file —
+# Plasma creates one itself from the layout script.
+#
+# If we pre-generate an appletsrc, Plasma ignores it on first login
+# and overwrites it with its own defaults from the layout script.
 
-- name: "Panel: generate appletsrc"
-  script: >-
-    ../files/generate_appletsrc.py
-    --output {{ kde_config }}/plasma-org.kde.plasma.desktop-appletsrc
-    --config {{ kde_config }}/arches-panel-config.json
-  args:
-    executable: python3
-
-- name: "Panel: fix appletsrc ownership"
+- name: "Panel: ensure no stale appletsrc exists"
   file:
     path: "{{ kde_config }}/plasma-org.kde.plasma.desktop-appletsrc"
-    owner: "{{ kde_user }}"
-    group: "{{ kde_user }}"
-    mode: "0600"
+    state: absent
 
-- name: "Panel: clean up temporary config JSON"
+- name: "Panel: clean up any leftover config JSON"
   file:
     path: "{{ kde_config }}/arches-panel-config.json"
     state: absent
@@ -522,9 +532,13 @@
 # --------------------------------------------------------------------------
 # 26. Fix ownership of entire config tree
 # --------------------------------------------------------------------------
-- name: "Fix ownership of KDE config"
+- name: "Fix ownership of all user files"
   file:
-    path: "{{ kde_config }}"
+    path: "{{ item }}"
     owner: "{{ kde_user }}"
     group: "{{ kde_user }}"
     recurse: yes
+  loop:
+    - "{{ kde_config }}"
+    - "{{ kde_home }}/.local"
+    - "{{ kde_home }}/dotfiles"

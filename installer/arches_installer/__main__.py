@@ -4,12 +4,14 @@ import argparse
 import sys
 from pathlib import Path
 
+AUTO_INSTALL_PATH = Path("/root/auto-install.toml")
+
 
 def main() -> int:
     """Parse args and launch either TUI or auto-install mode."""
     parser = argparse.ArgumentParser(
         prog="arches-install",
-        description="Arches — custom Arch/CachyOS installer",
+        description="Arches — custom installer",
     )
     parser.add_argument(
         "--auto",
@@ -30,10 +32,25 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Explicit --auto flag takes priority — fail hard on errors
     if args.auto:
         return _run_auto(args.auto, platform_path=args.platform, dry_run=args.dry_run)
-    else:
-        return _run_tui(platform_path=args.platform)
+
+    # Auto-detect config baked into the ISO at /root/auto-install.toml.
+    # On failure, print the error and fall through to the TUI so the user
+    # can still perform a manual install.
+    if AUTO_INSTALL_PATH.exists():
+        rc = _run_auto(
+            AUTO_INSTALL_PATH,
+            platform_path=args.platform,
+            dry_run=args.dry_run,
+            fallback_to_tui=True,
+        )
+        if rc == 0:
+            return 0
+        # Non-zero means auto-install failed; fall through to TUI
+
+    return _run_tui(platform_path=args.platform)
 
 
 def _load_platform(platform_path: Path | None):
@@ -60,20 +77,30 @@ def _run_auto(
     *,
     platform_path: Path | None = None,
     dry_run: bool = False,
+    fallback_to_tui: bool = False,
 ) -> int:
-    """Run unattended install from a TOML config file."""
+    """Run unattended install from a TOML config file.
+
+    When *fallback_to_tui* is True (ISO auto-detect path), errors are
+    printed but return non-zero so the caller can fall through to the
+    TUI.  When False (explicit ``--auto``), behaviour is unchanged.
+    """
     from arches_installer.core.auto import AutoInstallConfig, run_auto_install
 
     if not config_path.exists():
         print(f"ERROR: Config file not found: {config_path}", file=sys.stderr)
         return 1
 
-    platform = _load_platform(platform_path)
+    try:
+        platform = _load_platform(platform_path)
+    except Exception as e:
+        print(f"ERROR: Failed to load platform config: {e}", file=sys.stderr)
+        return 1
 
     try:
         config = AutoInstallConfig.from_file(config_path)
-    except (ValueError, KeyError) as e:
-        print(f"ERROR: Invalid config: {e}", file=sys.stderr)
+    except Exception as e:
+        _auto_install_error(f"Invalid config: {e}", fallback_to_tui)
         return 1
 
     if dry_run:
@@ -84,11 +111,12 @@ def _run_auto(
         print(f"  Bootloader: {platform.bootloader.type}")
         print(f"  Filesystem: {layout.filesystem}")
         print(f"  Snapshots:  {platform.bootloader.snapshot_boot}")
-        print(f"  Device:     {config.device}")
+        print(f"  Device:     (auto-detect at install time)")
         print(f"  Template:   {config.template.name}")
         print(f"  Hostname:   {config.hostname}")
         print(f"  User:       {config.username}")
-        print(f"  Packages:   {len(config.template.system.packages)}")
+        print(f"  Reboot:     {config.reboot}")
+        print(f"  Packages:   {len(config.template.install.all_packages)}")
         print(f"  Services:   {len(config.template.services)}")
         if layout.subvolumes:
             print(f"  Subvolumes: {', '.join(layout.subvolumes)}")
@@ -96,10 +124,6 @@ def _run_auto(
             print(f"  /boot:      {layout.boot_size_mib}M (ext4)")
         if layout.home_partition:
             print("  /home:      separate partition")
-        if config.template.ansible.chroot_roles:
-            print(
-                f"  Ansible (chroot):    {', '.join(config.template.ansible.chroot_roles)}"
-            )
         if config.template.ansible.firstboot_roles:
             print(
                 f"  Ansible (1st boot):  {', '.join(config.template.ansible.firstboot_roles)}"
@@ -110,7 +134,17 @@ def _run_auto(
         print("Dry run complete. No changes made.")
         return 0
 
-    return run_auto_install(platform, config)
+    rc = run_auto_install(platform, config)
+    if rc != 0 and fallback_to_tui:
+        print("\nFalling back to manual install...\n", file=sys.stderr)
+    return rc
+
+
+def _auto_install_error(msg: str, fallback_to_tui: bool) -> None:
+    """Print an auto-install error, with fallback context if applicable."""
+    print(f"ERROR: {msg}", file=sys.stderr)
+    if fallback_to_tui:
+        print("Falling back to manual install...\n", file=sys.stderr)
 
 
 if __name__ == "__main__":

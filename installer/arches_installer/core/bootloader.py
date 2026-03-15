@@ -9,32 +9,10 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
 from arches_installer.core.platform import PlatformConfig
-
-LogCallback = Callable[[str], None]
-
-
-def _log(msg: str, callback: LogCallback | None = None) -> None:
-    if callback:
-        callback(msg)
-
-
-def run(cmd: list[str], log: LogCallback | None = None, **kwargs):
-    """Run a command, logging output."""
-    _log(f"$ {' '.join(cmd)}", log)
-    result = subprocess.run(cmd, capture_output=True, text=True, **kwargs)
-    if result.returncode != 0:
-        _log(f"ERROR: {result.stderr.strip()}", log)
-        result.check_returncode()
-    return result
-
-
-def chroot_run(cmd: list[str], log: LogCallback | None = None):
-    """Run a command inside the target chroot."""
-    return run(["arch-chroot", str(MOUNT_ROOT)] + cmd, log=log)
+from arches_installer.core.run import LogCallback, _log, chroot_run, run
 
 
 def detect_firmware() -> str:
@@ -69,55 +47,48 @@ def get_root_partuuid(root_partition: str) -> str:
 # ─── Limine ───────────────────────────────────────────────
 
 
-def generate_limine_conf(
+def write_limine_defaults(
     platform: PlatformConfig,
     root_partition: str,
-) -> str:
-    """Generate limine.conf content."""
+    log: LogCallback | None = None,
+) -> None:
+    """Write /etc/default/limine for limine-entry-tool to use."""
     root_uuid = get_root_uuid(root_partition)
-    kernel_pkg = platform.kernel.package
     layout = platform.disk_layout
 
     # Build kernel cmdline
     cmdline_parts = [f"root=UUID={root_uuid}", "rw"]
 
     if layout.filesystem == "btrfs" and layout.subvolumes:
-        cmdline_parts.append("rootflags=subvol=@")
+        cmdline_parts.append("rootflags=subvol=/@")
 
     # Add common kernel parameters
     cmdline_parts.extend(
         [
-            "quiet",
-            "loglevel=3",
             "systemd.show_status=auto",
-            "rd.udev.log_level=3",
         ]
     )
 
     cmdline = " ".join(cmdline_parts)
 
-    conf = f"""timeout: 5
-
-/Arches Linux
-    protocol: linux
-    path: boot():/vmlinuz-{kernel_pkg}
-    cmdline: {cmdline}
-    module_path: boot():/initramfs-{kernel_pkg}.img
-
-/Arches Linux (fallback)
-    protocol: linux
-    path: boot():/vmlinuz-{kernel_pkg}
-    cmdline: {cmdline}
-    module_path: boot():/initramfs-{kernel_pkg}-fallback.img
-"""
-
+    default_conf = f'ESP_PATH="/boot"\n'
+    default_conf += f'KERNEL_CMDLINE[default]+="{cmdline}"\n'
+    default_conf += f'BOOT_ORDER="*, *lts, *fallback'
     if platform.bootloader.snapshot_boot:
-        conf += """
-/+Snapshots
-    comment: Auto-populated by limine-snapper-sync
-"""
+        default_conf += ", Snapshots"
+    default_conf += '"\n'
 
-    return conf
+    default_dir = MOUNT_ROOT / "etc" / "default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    (default_dir / "limine").write_text(default_conf)
+    _log("Wrote /etc/default/limine", log)
+
+    # Also write /etc/kernel/cmdline — the standard location that
+    # mkinitcpio hooks (including limine-mkinitcpio-hook) look for.
+    kernel_dir = MOUNT_ROOT / "etc" / "kernel"
+    kernel_dir.mkdir(parents=True, exist_ok=True)
+    (kernel_dir / "cmdline").write_text(cmdline + "\n")
+    _log("Wrote /etc/kernel/cmdline", log)
 
 
 def install_limine_uefi(
@@ -193,14 +164,25 @@ def _install_limine(
     firmware = detect_firmware()
     _log(f"Detected firmware: {firmware}", log)
 
-    # Generate and write limine.conf
-    conf = generate_limine_conf(platform, root_partition)
-    conf_path = MOUNT_ROOT / "boot" / "limine.conf"
-    conf_path.write_text(conf)
-    _log("Wrote limine.conf", log)
+    # Write /etc/default/limine config
+    write_limine_defaults(platform, root_partition, log)
+
+    # Install limine-mkinitcpio-hook BEFORE deploying the bootloader.
+    # This package provides limine-install, limine-mkinitcpio, and
+    # limine-update. It must be installed AFTER /etc/default/limine
+    # exists, but we need its tools for the next steps.
+    # Use -Sy to sync the arches-local repo first.
+    _log("Installing limine-mkinitcpio-hook...", log)
+    chroot_run(
+        ["pacman", "-Sy", "--noconfirm", "--needed", "limine-mkinitcpio-hook"],
+        log=log,
+    )
 
     if firmware == "uefi":
-        install_limine_uefi(platform, esp_partition, log)
+        # Use limine-install to deploy the EFI binary and register
+        # the NVRAM entry. This replaces our manual cp + efibootmgr.
+        _log("Running limine-install...", log)
+        chroot_run(["limine-install"], log=log)
     elif firmware == "bios" and platform.bootloader.supports_bios:
         install_limine_bios(device, log)
     else:
@@ -209,6 +191,80 @@ def _install_limine(
             f"Platform {platform.name} does not support BIOS boot, "
             "but no UEFI firmware was detected."
         )
+
+    # Generate initramfs AND limine.conf entries together.
+    # limine-mkinitcpio wraps mkinitcpio and limine-entry-tool to
+    # create the initramfs and corresponding boot entries in one step.
+    _log("Running limine-mkinitcpio to generate initramfs and boot entries...", log)
+    chroot_run(["limine-mkinitcpio"], log=log)
+
+    # Add Memtest86+ entry to limine.conf and install a pacman hook
+    # so it persists across kernel upgrades (limine-mkinitcpio regenerates
+    # limine.conf from scratch on each kernel update).
+    _setup_memtest_limine(log)
+
+
+MEMTEST_APPEND_SCRIPT = """\
+#!/usr/bin/env bash
+# Append Memtest86+ entry to limine.conf if not already present.
+# Called by the 95-memtest-limine pacman hook after kernel updates.
+set -euo pipefail
+
+LIMINE_CONF="$(bootctl --print-esp-path 2>/dev/null || echo /boot)/limine.conf"
+MEMTEST_EFI="/boot/memtest86+/memtest.efi"
+
+[[ -f "$MEMTEST_EFI" && -f "$LIMINE_CONF" ]] || exit 0
+
+if ! grep -q 'Memtest86+' "$LIMINE_CONF"; then
+    printf '\\n/Memtest86+\\n    protocol: efi\\n    path: boot():/memtest86+/memtest.efi\\n' >> "$LIMINE_CONF"
+fi
+"""
+
+MEMTEST_PACMAN_HOOK = """\
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = memtest86+-efi
+Target = limine-mkinitcpio-hook
+Target = linux-cachyos
+
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = usr/lib/modules/*/vmlinuz
+
+[Action]
+Description = Adding Memtest86+ entry to limine.conf...
+When = PostTransaction
+Exec = /usr/local/bin/arches-memtest-limine
+Depends = bash
+Depends = grep
+"""
+
+
+def _setup_memtest_limine(log: LogCallback | None = None) -> None:
+    """Install a script and pacman hook to keep Memtest86+ in limine.conf."""
+    memtest_efi = MOUNT_ROOT / "boot" / "memtest86+" / "memtest.efi"
+    if not memtest_efi.exists():
+        _log("Memtest86+ EFI not found, skipping limine entry.", log)
+        return
+
+    # Install the append script
+    script_path = MOUNT_ROOT / "usr" / "local" / "bin" / "arches-memtest-limine"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(MEMTEST_APPEND_SCRIPT)
+    script_path.chmod(0o755)
+
+    # Install the pacman hook
+    hook_dir = MOUNT_ROOT / "etc" / "pacman.d" / "hooks"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    (hook_dir / "95-memtest-limine.hook").write_text(MEMTEST_PACMAN_HOOK)
+
+    # Run it now to add the entry to the current limine.conf
+    chroot_run(["/usr/local/bin/arches-memtest-limine"], log=log)
+    _log("Installed Memtest86+ limine entry and pacman hook.", log)
 
 
 # ─── GRUB ─────────────────────────────────────────────────

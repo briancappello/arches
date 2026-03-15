@@ -1,6 +1,10 @@
 ---
 # Developer tooling configuration
 
+# ==========================================================================
+# Rust
+# ==========================================================================
+
 - name: Initialize rustup default toolchain
   become_user: "{{ ansible_user | default('brian') }}"
   command: rustup default stable
@@ -8,20 +12,104 @@
     creates: "~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu"
   ignore_errors: yes
 
-- name: Add user to docker group
-  user:
-    name: "{{ ansible_user | default('brian') }}"
-    groups: docker
-    append: yes
+# ==========================================================================
+# Podman
+# ==========================================================================
 
-- name: Enable Docker socket activation
-  systemd:
-    name: docker.socket
-    enabled: yes
+- name: Ensure podman is available for rootless containers
+  pacman:
+    name: podman
+    state: present
 
-# TODO: Add dev-specific configurations
-# - Git global config
-# - Neovim plugin bootstrap
-# - Language-specific tooling (go env, npm global, etc.)
-# - Container runtime config
-# - SSH key generation prompt
+# ==========================================================================
+# PostgreSQL — localhost-only, trust local connections (no password for dev)
+# ==========================================================================
+
+- name: "PostgreSQL: initialize data directory"
+  command: su - postgres -c "initdb -D /var/lib/postgres/data"
+  args:
+    creates: /var/lib/postgres/data/PG_VERSION
+
+- name: "PostgreSQL: bind to localhost only"
+  lineinfile:
+    path: /var/lib/postgres/data/postgresql.conf
+    regexp: "^#?listen_addresses"
+    line: "listen_addresses = 'localhost'"
+  notify: restart postgresql
+
+- name: "PostgreSQL: trust local connections (no password for dev)"
+  copy:
+    dest: /var/lib/postgres/data/pg_hba.conf
+    owner: postgres
+    group: postgres
+    mode: '0600'
+    content: |
+      # Arches dev workstation — trust all local connections
+      # TYPE  DATABASE  USER  ADDRESS      METHOD
+      local   all       all                trust
+      host    all       all   127.0.0.1/32 trust
+      host    all       all   ::1/128      trust
+  notify: restart postgresql
+
+# ==========================================================================
+# Redis — localhost-only (default), protected mode on
+# ==========================================================================
+
+- name: "Redis: bind to localhost only"
+  lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^bind'
+    line: 'bind 127.0.0.1 -::1'
+    create: yes
+  notify: restart redis
+
+- name: "Redis: enable protected mode"
+  lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^protected-mode'
+    line: 'protected-mode yes'
+  notify: restart redis
+
+# ==========================================================================
+# RabbitMQ — localhost-only, management plugin enabled
+# ==========================================================================
+
+- name: "RabbitMQ: create config directory"
+  file:
+    path: /etc/rabbitmq
+    state: directory
+    mode: '0755'
+
+- name: "RabbitMQ: bind to localhost only"
+  copy:
+    dest: /etc/rabbitmq/rabbitmq.conf
+    mode: '0644'
+    content: |
+      # Arches dev workstation — localhost only
+      listeners.tcp.local = 127.0.0.1:5672
+      management.tcp.ip = 127.0.0.1
+      management.tcp.port = 15672
+  notify: restart rabbitmq
+
+- name: "RabbitMQ: enable management plugin"
+  command: rabbitmq-plugins enable rabbitmq_management
+  args:
+    creates: /etc/rabbitmq/enabled_plugins
+  notify: restart rabbitmq
+
+# ==========================================================================
+# nginx — localhost-only dev reverse proxy
+# ==========================================================================
+
+- name: "nginx: create conf.d directory for project drop-ins"
+  file:
+    path: /etc/nginx/conf.d
+    state: directory
+    mode: '0755'
+
+- name: "nginx: deploy localhost-only config"
+  copy:
+    src: nginx-dev.conf
+    dest: /etc/nginx/nginx.conf
+    mode: '0644'
+  notify: restart nginx
