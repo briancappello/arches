@@ -9,14 +9,13 @@ from textual.widgets import OptionList, Static
 from arches_installer.core.disk import BlockDevice
 from arches_installer.core.platform import (
     BootloaderPlatformConfig,
+    DiskLayoutConfig,
     HardwareDetectionConfig,
     KernelConfig,
     PlatformConfig,
 )
 from arches_installer.core.template import (
     AnsibleConfig,
-    BootloaderConfig,
-    DiskConfig,
     InstallTemplate,
     SystemConfig,
 )
@@ -31,8 +30,6 @@ FAKE_TEMPLATES = [
     InstallTemplate(
         name="Dev Workstation",
         description="KDE + btrfs",
-        disk=DiskConfig(filesystem="btrfs"),
-        bootloader=BootloaderConfig(snapshot_boot=True),
         system=SystemConfig(packages=["git", "neovim", "plasma-meta"]),
         services=["NetworkManager"],
         ansible=AnsibleConfig(chroot_roles=["base"]),
@@ -40,8 +37,6 @@ FAKE_TEMPLATES = [
     InstallTemplate(
         name="VM Server",
         description="Headless ext4",
-        disk=DiskConfig(filesystem="ext4"),
-        bootloader=BootloaderConfig(snapshot_boot=False),
         system=SystemConfig(packages=["openssh"]),
         services=["sshd"],
         ansible=AnsibleConfig(chroot_roles=["base"]),
@@ -54,6 +49,7 @@ TEST_PLATFORM = PlatformConfig(
     arch="x86_64",
     kernel=KernelConfig(package="linux-cachyos", headers="linux-cachyos-headers"),
     bootloader=BootloaderPlatformConfig(),
+    disk_layout=DiskLayoutConfig(),
     hardware_detection=HardwareDetectionConfig(),
 )
 

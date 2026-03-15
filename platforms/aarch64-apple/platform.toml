@@ -23,6 +23,18 @@ type = "grub"
 efi_binary = "BOOTAA64.EFI"
 efi_fallback_path = "EFI/BOOT/BOOTAA64.EFI"
 supports_bios = false
+snapshot_boot = false
+
+[disk_layout]
+# Default auto-install layout: ESP + /boot (ext4) + root (ext4) + /home (ext4)
+# Note: On Apple Silicon, partitions are typically pre-created by the Asahi
+# installer. Auto-install assumes a clean target disk.
+filesystem = "ext4"
+mount_options = "noatime"
+esp_size_mib = 512
+boot_size_mib = 1024
+home_partition = true
+swap = "zram"
 
 [hardware_detection]
 # Asahi mesa and device trees handle hardware; no chwd equivalent

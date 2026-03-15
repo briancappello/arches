@@ -147,3 +147,61 @@ class TestPlatformConfigFromDict:
         }
         platform = PlatformConfig.from_dict(data)
         assert platform.name == "test"
+
+
+class TestLoadAarch64Platforms:
+    """Test loading the real aarch64 platform TOML files from the repo."""
+
+    # Project root: installer/tests/core/test_platform.py -> parents[3] = repo root
+    PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+    def test_load_aarch64_generic(self) -> None:
+        toml_path = (
+            self.PROJECT_ROOT / "platforms" / "aarch64-generic" / "platform.toml"
+        )
+        platform = load_platform(toml_path)
+        assert platform.name == "aarch64-generic"
+        assert platform.arch == "aarch64"
+        assert platform.kernel.package == "linux-aarch64"
+        assert platform.kernel.headers == "linux-aarch64-headers"
+        assert platform.bootloader.type == "grub"
+        assert platform.bootloader.snapshot_boot is False
+        assert platform.disk_layout.filesystem == "ext4"
+        assert platform.disk_layout.boot_size_mib == 1024
+        assert platform.disk_layout.home_partition is True
+        assert platform.disk_layout.subvolumes == []
+
+    def test_load_aarch64_apple(self) -> None:
+        toml_path = self.PROJECT_ROOT / "platforms" / "aarch64-apple" / "platform.toml"
+        platform = load_platform(toml_path)
+        assert platform.name == "aarch64-apple"
+        assert platform.arch == "aarch64"
+        assert platform.kernel.package == "linux-asahi"
+        assert platform.kernel.headers == "linux-asahi-headers"
+        assert platform.bootloader.type == "grub"
+        assert platform.bootloader.snapshot_boot is False
+        assert "asahi-fwextract" in platform.base_packages
+
+    def test_aarch64_generic_disk_layout(self) -> None:
+        toml_path = (
+            self.PROJECT_ROOT / "platforms" / "aarch64-generic" / "platform.toml"
+        )
+        platform = load_platform(toml_path)
+        dl = platform.disk_layout
+        assert dl.filesystem == "ext4"
+        assert dl.esp_size_mib == 512
+        assert dl.boot_size_mib == 1024
+        assert dl.home_partition is True
+        assert dl.swap == "zram"
+        assert dl.subvolumes == []
+
+    def test_aarch64_apple_disk_layout(self) -> None:
+        toml_path = self.PROJECT_ROOT / "platforms" / "aarch64-apple" / "platform.toml"
+        platform = load_platform(toml_path)
+        dl = platform.disk_layout
+        assert dl.filesystem == "ext4"
+        assert dl.esp_size_mib == 512
+        assert dl.boot_size_mib == 1024
+        assert dl.home_partition is True
+        assert dl.swap == "zram"
+        assert dl.subvolumes == []

@@ -3,7 +3,7 @@
 Used by `arches-install --auto <config.toml>` to run the full install
 pipeline without the TUI. The config file specifies the device, template,
 hostname, username, and password — everything the TUI would collect
-interactively.
+interactively. Disk layout and bootloader come from the platform config.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int
     try:
         # Phase 1: Disk
         log("-- Phase 1: Disk Setup --")
-        esp_part, root_part = prepare_disk(config.device, config.template.disk)
+        parts = prepare_disk(config.device, platform)
         log("Disk prepared successfully.")
 
         # Phase 2: System install
@@ -127,18 +127,17 @@ def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int
         log("-- Phase 3: Bootloader --")
         install_bootloader(
             platform,
-            config.template,
             config.device,
-            esp_part,
-            root_part,
+            parts.esp,
+            parts.root,
             log=log,
         )
         log("Bootloader installed.")
 
-        # Phase 4: Snapshots
-        if config.template.disk.filesystem == "btrfs":
+        # Phase 4: Snapshots (if btrfs platform)
+        if platform.disk_layout.filesystem == "btrfs":
             log("-- Phase 4: Snapshots --")
-            setup_snapshots(config.template, log=log)
+            setup_snapshots(platform, log=log)
             log("Snapshot support configured.")
 
         # Phase 5: First-boot service

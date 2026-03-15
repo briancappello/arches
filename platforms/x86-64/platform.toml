@@ -17,6 +17,15 @@ type = "limine"
 efi_binary = "BOOTX64.EFI"
 efi_fallback_path = "EFI/BOOT/BOOTX64.EFI"
 supports_bios = true
+snapshot_boot = true
+
+[disk_layout]
+# Default auto-install layout: ESP doubles as /boot, btrfs with subvolumes
+filesystem = "btrfs"
+mount_options = "compress=zstd:1,noatime,ssd,discard=async"
+subvolumes = ["@", "@home", "@var", "@snapshots"]
+esp_size_mib = 2048  # large ESP for snapshot kernel copies
+swap = "zram"
 
 [hardware_detection]
 enabled = true

@@ -18,3 +18,7 @@ chwd
 # ─── Bootloader ───────────────────────────────────────
 limine
 efibootmgr
+
+# ─── Snapshot support (btrfs) ────────────────────────
+snapper
+snap-pac

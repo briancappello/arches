@@ -15,25 +15,17 @@ from arches_installer.core.template import (
 class TestLoadTemplate:
     """Test loading templates from TOML files."""
 
-    def test_load_btrfs_template(self, templates_dir: Path) -> None:
+    def test_load_dev_workstation_template(self, templates_dir: Path) -> None:
         tmpl = load_template(templates_dir / "dev-workstation.toml")
         assert tmpl.name == "Dev Workstation"
-        assert tmpl.disk.filesystem == "btrfs"
-        assert tmpl.disk.subvolumes == ["@", "@home", "@var", "@snapshots"]
-        assert tmpl.disk.esp_size_mib == 2048
-        assert tmpl.bootloader.snapshot_boot is True
         assert "git" in tmpl.system.packages
         assert "NetworkManager" in tmpl.services
         assert "base" in tmpl.ansible.chroot_roles
         assert "dotfiles" in tmpl.ansible.firstboot_roles
 
-    def test_load_ext4_template(self, templates_dir: Path) -> None:
+    def test_load_vm_server_template(self, templates_dir: Path) -> None:
         tmpl = load_template(templates_dir / "vm-server.toml")
         assert tmpl.name == "VM Server"
-        assert tmpl.disk.filesystem == "ext4"
-        assert tmpl.disk.subvolumes == []
-        assert tmpl.disk.esp_size_mib == 512
-        assert tmpl.bootloader.snapshot_boot is False
         assert "openssh" in tmpl.system.packages
         assert "sshd" in tmpl.services
         assert tmpl.ansible.firstboot_roles == []
@@ -54,8 +46,13 @@ class TestLoadTemplate:
         tmpl = load_template(empty)
         # Should use all defaults
         assert tmpl.name == "Unknown"
-        assert tmpl.disk.filesystem == "ext4"
-        assert tmpl.bootloader.type == "limine"
+        assert tmpl.system.packages == []
+
+    def test_template_has_no_disk_or_bootloader(self, templates_dir: Path) -> None:
+        """Templates should not have disk or bootloader attributes."""
+        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        assert not hasattr(tmpl, "disk")
+        assert not hasattr(tmpl, "bootloader")
 
 
 class TestInstallTemplateFromDict:
@@ -65,19 +62,11 @@ class TestInstallTemplateFromDict:
         tmpl = InstallTemplate.from_dict({})
         assert tmpl.name == "Unknown"
         assert tmpl.description == ""
-        assert tmpl.disk.filesystem == "ext4"
+        assert tmpl.system.packages == []
 
     def test_full_dict(self) -> None:
         data = {
             "meta": {"name": "Test", "description": "A test template"},
-            "disk": {
-                "filesystem": "btrfs",
-                "subvolumes": ["@", "@home"],
-                "mount_options": "compress=zstd:1",
-                "esp_size_mib": 1024,
-                "swap": "zram",
-            },
-            "bootloader": {"type": "limine", "snapshot_boot": True},
             "system": {
                 "timezone": "Europe/London",
                 "locale": "en_GB.UTF-8",
@@ -91,9 +80,6 @@ class TestInstallTemplateFromDict:
         }
         tmpl = InstallTemplate.from_dict(data)
         assert tmpl.name == "Test"
-        assert tmpl.disk.filesystem == "btrfs"
-        assert tmpl.disk.subvolumes == ["@", "@home"]
-        assert tmpl.bootloader.snapshot_boot is True
         assert tmpl.system.timezone == "Europe/London"
         assert tmpl.services == ["sshd"]
         assert tmpl.ansible.chroot_roles == ["base"]
@@ -106,6 +92,20 @@ class TestInstallTemplateFromDict:
         tmpl = InstallTemplate.from_dict(data)
         assert tmpl.name == "Test"
 
+    def test_legacy_disk_and_bootloader_ignored(self) -> None:
+        """Templates with legacy [disk] and [bootloader] sections should still load."""
+        data = {
+            "meta": {"name": "Legacy"},
+            "disk": {"filesystem": "btrfs", "subvolumes": ["@"]},
+            "bootloader": {"type": "limine", "snapshot_boot": True},
+            "system": {"packages": ["git"]},
+        }
+        tmpl = InstallTemplate.from_dict(data)
+        assert tmpl.name == "Legacy"
+        assert not hasattr(tmpl, "disk")
+        assert not hasattr(tmpl, "bootloader")
+        assert tmpl.system.packages == ["git"]
+
     def test_kernel_in_system_ignored(self) -> None:
         """Templates with a legacy kernel field should still load (ignored)."""
         data = {
@@ -117,16 +117,3 @@ class TestInstallTemplateFromDict:
         tmpl = InstallTemplate.from_dict(data)
         assert not hasattr(tmpl.system, "kernel")
         assert tmpl.system.packages == ["git"]
-
-
-class TestDiskConfig:
-    """Test DiskConfig dataclass defaults."""
-
-    def test_defaults(self) -> None:
-        from arches_installer.core.template import DiskConfig
-
-        dc = DiskConfig(filesystem="ext4")
-        assert dc.mount_options == "noatime"
-        assert dc.subvolumes == []
-        assert dc.esp_size_mib == 512
-        assert dc.swap == "zram"

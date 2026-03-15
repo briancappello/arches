@@ -1,8 +1,8 @@
 """Load and validate install templates from TOML files.
 
-Templates define the workload built on top of a platform: filesystem layout,
-desktop/server packages, services, and Ansible roles. The kernel and base
-platform packages come from the platform config, not the template.
+Templates define the userspace workload: packages, services, Ansible roles,
+timezone, and locale. They are platform-independent — disk layout, bootloader,
+kernel, and base packages all come from the platform config.
 """
 
 from __future__ import annotations
@@ -12,21 +12,6 @@ from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 from typing import Any
-
-
-@dataclass
-class DiskConfig:
-    filesystem: str  # "btrfs" or "ext4"
-    mount_options: str = "noatime"
-    subvolumes: list[str] = field(default_factory=list)
-    esp_size_mib: int = 512
-    swap: str = "zram"
-
-
-@dataclass
-class BootloaderConfig:
-    type: str = "limine"
-    snapshot_boot: bool = False
 
 
 @dataclass
@@ -46,8 +31,6 @@ class AnsibleConfig:
 class InstallTemplate:
     name: str
     description: str
-    disk: DiskConfig
-    bootloader: BootloaderConfig
     system: SystemConfig
     services: list[str] = field(default_factory=list)
     ansible: AnsibleConfig = field(default_factory=AnsibleConfig)
@@ -56,8 +39,6 @@ class InstallTemplate:
     def from_dict(cls, data: dict[str, Any]) -> InstallTemplate:
         """Build an InstallTemplate from a parsed TOML dict."""
         meta = data.get("meta", {})
-        disk_raw = data.get("disk", {})
-        boot_raw = data.get("bootloader", {})
         sys_raw = data.get("system", {})
         svc_raw = data.get("services", {})
         ans_raw = data.get("ansible", {})
@@ -65,17 +46,6 @@ class InstallTemplate:
         return cls(
             name=meta.get("name", "Unknown"),
             description=meta.get("description", ""),
-            disk=DiskConfig(
-                filesystem=disk_raw.get("filesystem", "ext4"),
-                mount_options=disk_raw.get("mount_options", "noatime"),
-                subvolumes=disk_raw.get("subvolumes", []),
-                esp_size_mib=disk_raw.get("esp_size_mib", 512),
-                swap=disk_raw.get("swap", "zram"),
-            ),
-            bootloader=BootloaderConfig(
-                type=boot_raw.get("type", "limine"),
-                snapshot_boot=boot_raw.get("snapshot_boot", False),
-            ),
             system=SystemConfig(
                 timezone=sys_raw.get("timezone", "America/New_York"),
                 locale=sys_raw.get("locale", "en_US.UTF-8"),

@@ -43,10 +43,6 @@ ansible
 base-devel
 git
 
-# ─── Snapshot support ─────────────────────────────────
-snapper
-snap-pac
-
 # ─── Recovery / rescue tools ─────────────────────────
 testdisk
 ddrescue

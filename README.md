@@ -2,15 +2,15 @@
 
 A personal Arch-based Linux distribution with a declarative, template-driven installer and configurable platform support.
 
-Arches uses a **platform + template matrix** design. A *platform* defines the hardware foundation — kernel, repos, bootloader, hardware detection — while a *template* defines the workload on top — filesystem, packages, services, Ansible roles. You build an ISO for a specific platform (`make iso-x86-64`), and at install time you select a template. Templates are platform-independent.
+Arches uses a **platform + template matrix** design. A *platform* defines the hardware foundation — kernel, repos, bootloader, disk layout, hardware detection — while a *template* defines the userspace workload on top — packages, services, Ansible roles. You build an ISO for a specific platform (`make iso-x86-64`), and at install time you select a template. Templates are platform-independent and contain no hardware or disk configuration.
 
 Currently supported platforms:
 
-| Platform | Base | Kernel | Status |
-|----------|------|--------|--------|
-| `x86-64` | CachyOS v3 (AVX2/SSE4.2) | `linux-cachyos` | Fully implemented |
-| `aarch64-generic` | Arch Linux ARM | `linux-aarch64` | Stub |
-| `aarch64-apple` | Asahi Linux | `linux-asahi` | Stub |
+| Platform | Base | Kernel | Bootloader | Filesystem | Status |
+|----------|------|--------|------------|------------|--------|
+| `x86-64` | CachyOS v3 (AVX2/SSE4.2) | `linux-cachyos` | Limine | btrfs + subvolumes | Fully implemented |
+| `aarch64-generic` | Arch Linux ARM | `linux-aarch64` | GRUB | ext4 (4-partition) | Platform configs complete |
+| `aarch64-apple` | Asahi Linux | `linux-asahi` | GRUB (m1n1→U-Boot chain) | ext4 (4-partition) | Platform configs complete |
 
 ## Quickstart
 
@@ -73,8 +73,8 @@ Tests are split into two suites:
 
 | Suite | Path | What it tests | Dependencies |
 |-------|------|---------------|-------------|
-| **Core** | `tests/core/` | Template loading, platform config, auto-install config, validation | Standard library only |
-| **TUI** | `tests/tui/` | Screen rendering, navigation, input validation | `textual`, `pytest-asyncio` |
+| **Core** | `tests/core/` | Template/platform loading, bootloader dispatch, disk partitioning, mount detection, auto-install config | Standard library only |
+| **TUI** | `tests/tui/` | Screen rendering, navigation, input validation, partition flow (manual + auto) | `textual`, `pytest-asyncio` |
 
 TUI tests use Textual's `run_test()` framework to run the full app headlessly — no terminal or VM required. System calls (`lsblk`, `pacstrap`, etc.) are mocked so tests run anywhere.
 
@@ -98,12 +98,14 @@ When the ISO boots, you're presented with a choice:
 The installer is a Python/Textual TUI that walks through:
 
 1. **Disk selection** — detects available block devices
-2. **Partitioning** — auto-partition (GPT: ESP + root) or drop to a shell for manual setup
+2. **Disk setup** — drop to a shell to partition, format, and mount disks onto `/mnt`. The installer detects ESP, root, boot, and home partitions from the mounts. An auto-partition option is available for VMs
 3. **Template selection** — pick from pre-defined install profiles (TOML files)
 4. **User setup** — hostname, username, password
-5. **Confirmation** — review summary, then install
+5. **Confirmation** — review summary (including detected mounts for manual setup), then install
 
-The install pipeline runs: `partition` → `pacstrap` (platform base packages + kernel + template packages) → `genfstab` → `chroot config` → `hardware detection` (if platform enables it) → `mkinitcpio` → `bootloader` → `Snapper` (if template uses btrfs snapshots) → `Ansible (chroot phase)` → `first-boot service`.
+The install pipeline runs: `pacstrap` (platform base packages + kernel + template packages) → `genfstab` → `chroot config` → `hardware detection` (if platform enables it) → `mkinitcpio` → `bootloader` → `Snapper` (if platform uses btrfs + snapshots) → `Ansible (chroot phase)` → `first-boot service`.
+
+For auto-partition mode (VMs only), the disk setup phase also wipes and partitions the target disk using the platform's `disk_layout` config before the install pipeline.
 
 ### Unattended Install (`--auto`)
 
@@ -216,12 +218,12 @@ For packages that work out of the box with no configuration (e.g., `htop`, `git`
 
 ## Install Templates
 
-Templates are declarative TOML files in `installer/arches_installer/templates/`. Each defines a workload — filesystem layout, packages, services, and Ansible roles. Templates are **platform-independent**: the kernel, repo keyrings, and hardware detection come from the platform, not the template.
+Templates are declarative TOML files in `installer/arches_installer/templates/`. Each defines a **userspace workload** — packages, services, and Ansible roles. Templates are **platform-independent**: the kernel, repo keyrings, bootloader, disk layout, and hardware detection all come from the platform, not the template.
 
-| Template | Filesystem | Desktop | Snapshots |
-|----------|-----------|---------|-----------|
-| **Dev Workstation** | btrfs (`@`, `@home`, `@var`, `@snapshots`) | KDE Plasma | Yes (Snapper + limine-snapper-sync) |
-| **VM Server** | ext4 | None (headless) | No |
+| Template | Desktop | Use Case |
+|----------|---------|----------|
+| **Dev Workstation** | KDE Plasma | Full development environment with desktop |
+| **VM Server** | None (headless) | Server workloads (nginx, postgres, redis) |
 
 To add a new template, create a `.toml` file in the templates directory. The installer discovers all `.toml` files automatically:
 
@@ -229,17 +231,6 @@ To add a new template, create a `.toml` file in the templates directory. The ins
 [meta]
 name = "My Template"
 description = "Description shown in the installer"
-
-[disk]
-filesystem = "btrfs"             # "btrfs" or "ext4"
-subvolumes = ["@", "@home"]      # btrfs only
-mount_options = "compress=zstd:1,noatime"
-esp_size_mib = 2048
-swap = "zram"
-
-[bootloader]
-type = "limine"
-snapshot_boot = true
 
 [system]
 timezone = "America/New_York"
@@ -253,6 +244,8 @@ enable = ["NetworkManager"]      # enabled via systemctl enable
 chroot_roles = ["base"]          # run during install (in chroot)
 firstboot_roles = ["dotfiles"]   # run on first boot
 ```
+
+Disk layout (filesystem, partition scheme, subvolumes, ESP size) and bootloader configuration (Limine vs GRUB, snapshot boot) are defined by the **platform**, not the template. This means the same template works on x86-64 (btrfs + Limine) and aarch64 (ext4 + GRUB) without modification.
 
 ## Post-Install Automation
 
@@ -279,13 +272,17 @@ arches/
 │
 ├── platforms/                            # Platform definitions (hardware layer)
 │   ├── x86-64/
-│   │   ├── platform.toml                 # Kernel, repos, bootloader, base packages
+│   │   ├── platform.toml                 # Kernel, repos, bootloader, disk layout
 │   │   ├── pacman.conf                   # CachyOS v3 + Arch repos
 │   │   └── packages                      # Platform-specific ISO packages
 │   ├── aarch64-generic/
-│   │   └── platform.toml                 # Stub — Arch Linux ARM
+│   │   ├── platform.toml                 # GRUB + ext4 + 4-partition layout
+│   │   ├── pacman.conf                   # Arch Linux ARM repos
+│   │   └── packages                      # Platform-specific ISO packages
 │   └── aarch64-apple/
-│       └── platform.toml                 # Stub — Asahi Linux
+│       ├── platform.toml                 # GRUB + ext4 + Asahi firmware
+│       ├── pacman.conf                   # Asahi + ALARM repos
+│       └── packages                      # Platform-specific ISO packages
 │
 ├── iso/                                  # archiso profile
 │   ├── profiledef.sh                     # ISO identity, boot modes (parameterized)
@@ -304,31 +301,33 @@ arches/
 │   │   │   ├── platform.py               # Platform config loader + dataclasses
 │   │   │   ├── auto.py                   # Unattended install runner
 │   │   │   ├── template.py               # TOML template loader + dataclasses
-│   │   │   ├── disk.py                   # Partition, format, mount (btrfs + ext4)
+│   │   │   ├── disk.py                   # Partition, format, mount, detect mounts
 │   │   │   ├── install.py                # pacstrap, genfstab, chroot config, hw detect
-│   │   │   ├── bootloader.py             # Limine install + config (UEFI/BIOS auto)
+│   │   │   ├── bootloader.py             # Limine + GRUB install (dispatched by platform)
 │   │   │   ├── snapper.py                # Snapper + limine-snapper-sync setup
 │   │   │   └── firstboot.py              # systemd oneshot for post-install Ansible
 │   │   ├── tui/
-│   │   │   ├── app.py                    # Textual app + screen routing
+│   │   │   ├── app.py                    # Textual app + screen routing + install state
 │   │   │   ├── welcome.py                # Disk detection + selection
-│   │   │   ├── partition.py              # Auto-partition or drop to shell
+│   │   │   ├── partition.py              # Shell-first partitioning + mount validation
 │   │   │   ├── template_select.py        # Template picker with detail preview
 │   │   │   ├── user_setup.py             # Hostname, username, password
-│   │   │   ├── confirm.py                # Summary review (platform + template)
-│   │   │   └── progress.py               # Threaded install with live log output
+│   │   │   ├── confirm.py                # Summary review (manual mounts or auto layout)
+│   │   │   └── progress.py               # Threaded install (manual or auto partition)
 │   │   └── templates/
 │   │       ├── dev-workstation.toml      # KDE + btrfs + snapshots + dev tools
 │   │       └── vm-server.toml            # Headless + ext4 + nginx/postgres/redis
 │   └── tests/
 │       ├── conftest.py                   # Shared fixtures (platform, templates, mocks)
 │       ├── core/
-│       │   ├── test_platform.py          # Platform config loading + validation
+│       │   ├── test_platform.py          # Platform config loading (x86-64 + aarch64)
 │       │   ├── test_template.py          # Template loading + validation tests
-│       │   └── test_auto.py              # Auto-install config tests
+│       │   ├── test_auto.py              # Auto-install config tests
+│       │   ├── test_bootloader.py        # Bootloader dispatch, GRUB + Limine tests
+│       │   └── test_disk.py              # Partition, mount detection, validation tests
 │       └── tui/
 │           ├── test_welcome.py           # Disk selection screen tests
-│           ├── test_partition.py         # Partition screen tests
+│           ├── test_partition.py         # Partition screen (shell-first + auto) tests
 │           ├── test_template_select.py   # Template picker tests
 │           ├── test_user_setup.py        # Input validation tests
 │           └── test_confirm.py           # Confirmation summary tests
@@ -355,11 +354,12 @@ arches/
 
 ## Key Technical Decisions
 
-- **Platform/template matrix** — Hardware concerns (kernel, repos, bootloader EFI paths, GPU detection) are separated from workload concerns (filesystem, packages, services, Ansible roles). Platforms are selected at ISO build time; templates are selected at install time. Templates work on any platform without modification.
+- **Platform/template matrix** — Hardware concerns (kernel, repos, bootloader, disk layout, GPU detection) are separated from workload concerns (packages, services, Ansible roles). Platforms are selected at ISO build time; templates are selected at install time. Templates work on any platform without modification.
+- **Shell-first partitioning** — The default install flow drops the user to a shell to partition, format, and mount disks. The installer detects the mount layout on return. Auto-partition is available for VMs.
 - **CachyOS v3 repos** (x86-64 platform) — Full Arch package set recompiled with AVX2/SSE4.2 optimizations. Covers all x86-64 hardware from 2011 onward. The CachyOS custom pacman fork is intentionally excluded to maintain standard Arch pacman semantics.
-- **Limine bootloader** — Supports both BIOS and UEFI. Firmware type is auto-detected at install time. EFI binary paths are platform-specific (`BOOTX64.EFI` vs `BOOTAA64.EFI`). Snapshot boot entries are managed by `limine-snapper-sync`.
-- **Btrfs layout** — `@ / @home / @var / @snapshots` with `compress=zstd:1,noatime,ssd,discard=async`. The `@var` subvolume is separated to exclude logs/cache from snapshots.
-- **ESP sizing** — 2 GiB for templates with snapshot booting (each bootable snapshot copies its kernel/initramfs into the ESP), 512 MiB otherwise.
+- **Bootloader dispatch** — The platform config determines the bootloader. x86-64 uses Limine (BIOS + UEFI, snapshot boot entries via `limine-snapper-sync`). aarch64 platforms use GRUB (UEFI-only). Firmware type is auto-detected at install time.
+- **Disk layout per platform** — x86-64: ESP (2G, doubles as /boot) + btrfs root with subvolumes (`@`, `@home`, `@var`, `@snapshots`). aarch64: ESP (512M) + separate /boot (ext4, 1G) + root (ext4) + /home (ext4). No btrfs on aarch64.
+- **ESP sizing** — 2 GiB on x86-64 for snapshot booting (each bootable snapshot copies its kernel/initramfs into the ESP), 512 MiB on aarch64.
 - **Hardware detection** — Controlled by the platform config. The x86-64 platform uses CachyOS `chwd` (Rust-based, replaces Manjaro's `mhwd`) to auto-install GPU drivers. ARM platforms disable it. Failures are always non-fatal.
 - **Recovery mode** — The ISO doubles as a recovery environment with `btrfs-progs`, `testdisk`, `ddrescue`, `nvme-cli`, `smartmontools`, `nmap`, and more.
 

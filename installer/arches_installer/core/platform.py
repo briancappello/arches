@@ -1,8 +1,9 @@
 """Load and validate platform configuration from TOML files.
 
 A platform defines the hardware-level foundation: kernel, package repos,
-bootloader, hardware detection, and base packages. Templates build on top
-of the platform to define workload-specific packages and configuration.
+bootloader, disk layout, hardware detection, and base packages. Templates
+build on top of the platform to define workload-specific packages and
+configuration.
 """
 
 from __future__ import annotations
@@ -28,6 +29,24 @@ class BootloaderPlatformConfig:
     efi_binary: str = "BOOTX64.EFI"
     efi_fallback_path: str = "EFI/BOOT/BOOTX64.EFI"
     supports_bios: bool = True
+    snapshot_boot: bool = False
+
+
+@dataclass
+class DiskLayoutConfig:
+    """Default disk layout for auto-install.
+
+    On x86-64 (Limine): ESP doubles as /boot, btrfs root with subvolumes.
+    On aarch64 (GRUB): separate ESP, /boot (ext4), root (ext4), /home (ext4).
+    """
+
+    filesystem: str = "ext4"
+    mount_options: str = "noatime"
+    subvolumes: list[str] = field(default_factory=list)
+    esp_size_mib: int = 512
+    boot_size_mib: int = 0  # 0 = no separate /boot (ESP is /boot)
+    home_partition: bool = False  # separate /home partition
+    swap: str = "zram"
 
 
 @dataclass
@@ -47,6 +66,7 @@ class PlatformConfig:
     arch: str
     kernel: KernelConfig
     bootloader: BootloaderPlatformConfig
+    disk_layout: DiskLayoutConfig
     hardware_detection: HardwareDetectionConfig
     base_packages: list[str] = field(default_factory=list)
 
@@ -56,6 +76,7 @@ class PlatformConfig:
         plat = data.get("platform", {})
         kern = data.get("kernel", {})
         boot = data.get("bootloader", {})
+        disk = data.get("disk_layout", {})
         hw = data.get("hardware_detection", {})
         base = data.get("base_packages", {})
 
@@ -72,6 +93,16 @@ class PlatformConfig:
                 efi_binary=boot.get("efi_binary", "BOOTX64.EFI"),
                 efi_fallback_path=boot.get("efi_fallback_path", "EFI/BOOT/BOOTX64.EFI"),
                 supports_bios=boot.get("supports_bios", True),
+                snapshot_boot=boot.get("snapshot_boot", False),
+            ),
+            disk_layout=DiskLayoutConfig(
+                filesystem=disk.get("filesystem", "ext4"),
+                mount_options=disk.get("mount_options", "noatime"),
+                subvolumes=disk.get("subvolumes", []),
+                esp_size_mib=disk.get("esp_size_mib", 512),
+                boot_size_mib=disk.get("boot_size_mib", 0),
+                home_partition=disk.get("home_partition", False),
+                swap=disk.get("swap", "zram"),
             ),
             hardware_detection=HardwareDetectionConfig(
                 enabled=hw.get("enabled", False),

@@ -9,14 +9,13 @@ from textual.widgets import Input, Label, OptionList
 from arches_installer.core.disk import BlockDevice
 from arches_installer.core.platform import (
     BootloaderPlatformConfig,
+    DiskLayoutConfig,
     HardwareDetectionConfig,
     KernelConfig,
     PlatformConfig,
 )
 from arches_installer.core.template import (
     AnsibleConfig,
-    BootloaderConfig,
-    DiskConfig,
     InstallTemplate,
     SystemConfig,
 )
@@ -31,8 +30,6 @@ FAKE_TEMPLATES = [
     InstallTemplate(
         name="Dev Workstation",
         description="KDE + btrfs",
-        disk=DiskConfig(filesystem="btrfs"),
-        bootloader=BootloaderConfig(snapshot_boot=True),
         system=SystemConfig(packages=["git"]),
     ),
 ]
@@ -43,6 +40,7 @@ TEST_PLATFORM = PlatformConfig(
     arch="x86_64",
     kernel=KernelConfig(package="linux-cachyos", headers="linux-cachyos-headers"),
     bootloader=BootloaderPlatformConfig(),
+    disk_layout=DiskLayoutConfig(),
     hardware_detection=HardwareDetectionConfig(),
 )
 

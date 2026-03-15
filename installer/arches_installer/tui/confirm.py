@@ -17,9 +17,7 @@ class ConfirmScreen(Screen):
                 yield Label("Confirm Installation", classes="title")
                 yield Static(id="summary")
                 yield Label("")
-                yield Label(
-                    "[bold red]WARNING: This will ERASE the target disk![/bold red]"
-                )
+                yield Static(id="disk-warning")
                 yield Label("")
                 yield Button(
                     "Install",
@@ -39,22 +37,38 @@ class ConfirmScreen(Screen):
             summary.update("Error: no template selected")
             return
 
+        layout = platform.disk_layout
+        mode = self.app.partition_mode
+        parts = self.app.partition_map
+
         text = (
             f"  Platform:    {platform.name}\n"
             f"  Template:    {tmpl.name}\n"
             f"  Device:      {self.app.selected_device}\n"
-            f"  Filesystem:  {tmpl.disk.filesystem}\n"
+            f"  Partitions:  {'manual' if mode == 'manual' else 'auto'}\n"
             f"  Kernel:      {platform.kernel.package}\n"
-            f"  Bootloader:  {tmpl.bootloader.type}\n"
-            f"  Snapshots:   {'Yes' if tmpl.bootloader.snapshot_boot else 'No'}\n"
+            f"  Bootloader:  {platform.bootloader.type}\n"
+        )
+
+        if mode == "manual" and parts:
+            text += f"  Root:        {parts.root}\n"
+            text += f"  ESP:         {parts.esp}\n"
+            if parts.boot:
+                text += f"  Boot:        {parts.boot}\n"
+            if parts.home:
+                text += f"  Home:        {parts.home}\n"
+        else:
+            text += f"  Filesystem:  {layout.filesystem}\n"
+            if layout.filesystem == "btrfs" and layout.subvolumes:
+                text += f"  Subvolumes:  {', '.join(layout.subvolumes)}\n"
+
+        text += (
+            f"  Snapshots:   {'Yes' if platform.bootloader.snapshot_boot else 'No'}\n"
             f"  Hostname:    {self.app.hostname}\n"
             f"  User:        {self.app.username}\n"
             f"  Packages:    {len(tmpl.system.packages)} packages\n"
             f"  Services:    {len(tmpl.services)} services\n"
         )
-
-        if tmpl.disk.filesystem == "btrfs" and tmpl.disk.subvolumes:
-            text += f"  Subvolumes:  {', '.join(tmpl.disk.subvolumes)}\n"
 
         if tmpl.ansible.chroot_roles:
             text += f"  Ansible (chroot):  {', '.join(tmpl.ansible.chroot_roles)}\n"
@@ -62,6 +76,18 @@ class ConfirmScreen(Screen):
             text += f"  Ansible (1st boot): {', '.join(tmpl.ansible.firstboot_roles)}\n"
 
         summary.update(text)
+
+        # Set appropriate warning based on partition mode
+        warning = self.query_one("#disk-warning", Static)
+        if mode == "manual":
+            warning.update(
+                "[bold yellow]WARNING: The system will be installed onto "
+                "your mounted partitions![/bold yellow]"
+            )
+        else:
+            warning.update(
+                "[bold red]WARNING: This will ERASE the target disk![/bold red]"
+            )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-install":

@@ -19,7 +19,7 @@ class TestAutoInstallConfig:
         assert config.username == "testuser"
         assert config.password == "testpass"
         assert config.template.name == "Dev Workstation"
-        assert config.template.disk.filesystem == "btrfs"
+        assert "git" in config.template.system.packages
 
     def test_missing_device(self, tmp_path: Path, templates_dir: Path) -> None:
         config_file = tmp_path / "bad.toml"
@@ -106,7 +106,7 @@ password = "pass"
         config = AutoInstallConfig.from_dict(data)
         assert config.device == "/dev/nvme0n1"
         assert config.hostname == "mybox"
-        assert config.template.disk.filesystem == "btrfs"
+        assert config.template.name == "Dev Workstation"
 
 
 class TestLogStdout:

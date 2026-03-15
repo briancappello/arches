@@ -1,0 +1,13 @@
+# Platform-specific ISO packages — aarch64-generic (Arch Linux ARM)
+#
+# These are combined with iso/packages.common at build time
+# to produce the final ISO package list.
+
+# ─── Kernel ───────────────────────────────────────────
+linux-aarch64
+linux-aarch64-headers
+linux-firmware
+
+# ─── Bootloader ───────────────────────────────────────
+grub
+efibootmgr

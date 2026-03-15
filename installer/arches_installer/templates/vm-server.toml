@@ -2,16 +2,6 @@
 name = "VM Server"
 description = "Headless server — nginx, postgres, redis, SSH"
 
-[disk]
-filesystem = "ext4"
-mount_options = "noatime"
-esp_size_mib = 512
-swap = "zram"
-
-[bootloader]
-type = "limine"
-snapshot_boot = false
-
 [system]
 timezone = "America/New_York"
 locale = "en_US.UTF-8"

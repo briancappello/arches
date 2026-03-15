@@ -1,0 +1,247 @@
+"""Tests for bootloader installation and configuration."""
+
+from __future__ import annotations
+
+import subprocess
+from unittest.mock import MagicMock, call, patch
+
+import pytest
+
+from arches_installer.core.bootloader import (
+    _install_grub,
+    _install_limine,
+    detect_firmware,
+    generate_limine_conf,
+    get_root_partuuid,
+    get_root_uuid,
+    install_bootloader,
+)
+from arches_installer.core.platform import (
+    BootloaderPlatformConfig,
+    PlatformConfig,
+)
+
+
+# ─── detect_firmware ──────────────────────────────────────
+
+
+def test_detect_firmware_uefi():
+    with patch("arches_installer.core.bootloader.Path") as mock_path_cls:
+        mock_path_cls.return_value.exists.return_value = True
+        assert detect_firmware() == "uefi"
+        mock_path_cls.assert_called_with("/sys/firmware/efi")
+
+
+def test_detect_firmware_bios():
+    with patch("arches_installer.core.bootloader.Path") as mock_path_cls:
+        mock_path_cls.return_value.exists.return_value = False
+        assert detect_firmware() == "bios"
+
+
+# ─── get_root_uuid / get_root_partuuid ───────────────────
+
+
+def test_get_root_uuid():
+    fake_result = MagicMock()
+    fake_result.stdout = "abcd-1234-efgh-5678\n"
+    with patch(
+        "arches_installer.core.bootloader.subprocess.run", return_value=fake_result
+    ) as mock_run:
+        uuid = get_root_uuid("/dev/sda2")
+        assert uuid == "abcd-1234-efgh-5678"
+        mock_run.assert_called_once_with(
+            ["blkid", "-s", "UUID", "-o", "value", "/dev/sda2"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+
+def test_get_root_partuuid():
+    fake_result = MagicMock()
+    fake_result.stdout = "part-uuid-1234\n"
+    with patch(
+        "arches_installer.core.bootloader.subprocess.run", return_value=fake_result
+    ) as mock_run:
+        partuuid = get_root_partuuid("/dev/sda2")
+        assert partuuid == "part-uuid-1234"
+        mock_run.assert_called_once_with(
+            ["blkid", "-s", "PARTUUID", "-o", "value", "/dev/sda2"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+
+# ─── generate_limine_conf ────────────────────────────────
+
+
+@patch(
+    "arches_installer.core.bootloader.get_root_uuid",
+    return_value="fake-uuid-1234",
+)
+def test_generate_limine_conf_btrfs_with_snapshots(mock_uuid, x86_64_platform):
+    """Btrfs platform should have rootflags=subvol=@ and a snapshots section."""
+    conf = generate_limine_conf(x86_64_platform, "/dev/sda2")
+
+    assert "root=UUID=fake-uuid-1234" in conf
+    assert "rootflags=subvol=@" in conf
+    assert "vmlinuz-linux-cachyos" in conf
+    assert "initramfs-linux-cachyos.img" in conf
+    assert "initramfs-linux-cachyos-fallback.img" in conf
+    assert "/+Snapshots" in conf
+    assert "limine-snapper-sync" in conf
+
+
+@patch(
+    "arches_installer.core.bootloader.get_root_uuid",
+    return_value="fake-uuid-5678",
+)
+def test_generate_limine_conf_ext4_no_snapshots(mock_uuid, aarch64_platform):
+    """Ext4 platform should have no rootflags and no snapshots section."""
+    conf = generate_limine_conf(aarch64_platform, "/dev/sda2")
+
+    assert "root=UUID=fake-uuid-5678" in conf
+    assert "rootflags" not in conf
+    assert "vmlinuz-linux-aarch64" in conf
+    assert "/+Snapshots" not in conf
+
+
+@patch(
+    "arches_installer.core.bootloader.get_root_uuid",
+    return_value="fake-uuid-0000",
+)
+def test_generate_limine_conf_contains_kernel_params(mock_uuid, x86_64_platform):
+    """Common kernel parameters should be present."""
+    conf = generate_limine_conf(x86_64_platform, "/dev/sda2")
+
+    assert "quiet" in conf
+    assert "loglevel=3" in conf
+    assert "systemd.show_status=auto" in conf
+    assert "rd.udev.log_level=3" in conf
+    assert "timeout: 5" in conf
+
+
+# ─── install_bootloader dispatch ──────────────────────────
+
+
+@patch("arches_installer.core.bootloader._install_limine")
+def test_install_bootloader_dispatches_limine(mock_limine, x86_64_platform):
+    install_bootloader(x86_64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+    mock_limine.assert_called_once_with(
+        x86_64_platform,
+        "/dev/sda",
+        "/dev/sda1",
+        "/dev/sda2",
+        None,
+    )
+
+
+@patch("arches_installer.core.bootloader._install_grub")
+def test_install_bootloader_dispatches_grub(mock_grub, aarch64_platform):
+    install_bootloader(aarch64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+    mock_grub.assert_called_once_with(
+        aarch64_platform,
+        "/dev/sda",
+        "/dev/sda1",
+        "/dev/sda2",
+        None,
+    )
+
+
+def test_install_bootloader_unknown_type(x86_64_platform):
+    x86_64_platform.bootloader = BootloaderPlatformConfig(type="systemd-boot")
+    with pytest.raises(ValueError, match="Unknown bootloader type: systemd-boot"):
+        install_bootloader(x86_64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+
+
+# ─── _install_grub ────────────────────────────────────────
+
+
+@patch("arches_installer.core.bootloader.chroot_run")
+@patch("arches_installer.core.bootloader.detect_firmware", return_value="uefi")
+def test_install_grub_aarch64_uefi(mock_fw, mock_chroot, aarch64_platform):
+    """GRUB on aarch64 should use arm64-efi target."""
+    _install_grub(aarch64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+
+    grub_install_call = mock_chroot.call_args_list[0]
+    cmd = grub_install_call[0][0]
+    assert "grub-install" in cmd
+    assert "--target" in cmd
+    target_idx = cmd.index("--target") + 1
+    assert cmd[target_idx] == "arm64-efi"
+
+    grub_mkconfig_call = mock_chroot.call_args_list[1]
+    cmd2 = grub_mkconfig_call[0][0]
+    assert "grub-mkconfig" in cmd2
+    assert "-o" in cmd2
+
+
+@patch("arches_installer.core.bootloader.chroot_run")
+@patch("arches_installer.core.bootloader.detect_firmware", return_value="uefi")
+def test_install_grub_x86_64_uefi(mock_fw, mock_chroot, x86_64_platform):
+    """GRUB on x86_64 should use x86_64-efi target."""
+    _install_grub(x86_64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+
+    grub_install_call = mock_chroot.call_args_list[0]
+    cmd = grub_install_call[0][0]
+    target_idx = cmd.index("--target") + 1
+    assert cmd[target_idx] == "x86_64-efi"
+
+
+@patch("arches_installer.core.bootloader.detect_firmware", return_value="bios")
+def test_install_grub_bios_raises(mock_fw, aarch64_platform):
+    """GRUB should raise RuntimeError when firmware is BIOS."""
+    with pytest.raises(RuntimeError, match="requires UEFI firmware"):
+        _install_grub(aarch64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+
+
+# ─── _install_limine ─────────────────────────────────────
+
+
+@patch("arches_installer.core.bootloader.install_limine_uefi")
+@patch(
+    "arches_installer.core.bootloader.generate_limine_conf", return_value="timeout: 5\n"
+)
+@patch("arches_installer.core.bootloader.detect_firmware", return_value="uefi")
+def test_install_limine_uefi_path(
+    mock_fw, mock_conf, mock_uefi, x86_64_platform, tmp_path
+):
+    """UEFI firmware should call install_limine_uefi."""
+    conf_path = tmp_path / "boot" / "limine.conf"
+    with patch("arches_installer.core.bootloader.MOUNT_ROOT", tmp_path):
+        (tmp_path / "boot").mkdir(parents=True, exist_ok=True)
+        _install_limine(x86_64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+
+    mock_uefi.assert_called_once_with(x86_64_platform, "/dev/sda1", None)
+    assert conf_path.read_text() == "timeout: 5\n"
+
+
+@patch("arches_installer.core.bootloader.install_limine_bios")
+@patch(
+    "arches_installer.core.bootloader.generate_limine_conf", return_value="timeout: 5\n"
+)
+@patch("arches_installer.core.bootloader.detect_firmware", return_value="bios")
+def test_install_limine_bios_path(
+    mock_fw, mock_conf, mock_bios, x86_64_platform, tmp_path
+):
+    """BIOS firmware with supports_bios=True should call install_limine_bios."""
+    with patch("arches_installer.core.bootloader.MOUNT_ROOT", tmp_path):
+        (tmp_path / "boot").mkdir(parents=True, exist_ok=True)
+        _install_limine(x86_64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+
+    mock_bios.assert_called_once_with("/dev/sda", None)
+
+
+@patch(
+    "arches_installer.core.bootloader.generate_limine_conf", return_value="timeout: 5\n"
+)
+@patch("arches_installer.core.bootloader.detect_firmware", return_value="bios")
+def test_install_limine_bios_unsupported_raises(
+    mock_fw, mock_conf, aarch64_platform, tmp_path
+):
+    """BIOS firmware with supports_bios=False should raise RuntimeError."""
+    with patch("arches_installer.core.bootloader.MOUNT_ROOT", tmp_path):
+        (tmp_path / "boot").mkdir(parents=True, exist_ok=True)
+        with pytest.raises(RuntimeError, match="does not support BIOS boot"):
+            _install_limine(aarch64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")

@@ -77,20 +77,25 @@ def _run_auto(
         return 1
 
     if dry_run:
+        layout = platform.disk_layout
         print("== Arches Auto Install (dry run) ==")
         print(f"  Platform:   {platform.name} ({platform.arch})")
         print(f"  Kernel:     {platform.kernel.package}")
+        print(f"  Bootloader: {platform.bootloader.type}")
+        print(f"  Filesystem: {layout.filesystem}")
+        print(f"  Snapshots:  {platform.bootloader.snapshot_boot}")
         print(f"  Device:     {config.device}")
         print(f"  Template:   {config.template.name}")
-        print(f"  Filesystem: {config.template.disk.filesystem}")
-        print(f"  Bootloader: {config.template.bootloader.type}")
-        print(f"  Snapshots:  {config.template.bootloader.snapshot_boot}")
         print(f"  Hostname:   {config.hostname}")
         print(f"  User:       {config.username}")
         print(f"  Packages:   {len(config.template.system.packages)}")
         print(f"  Services:   {len(config.template.services)}")
-        if config.template.disk.subvolumes:
-            print(f"  Subvolumes: {', '.join(config.template.disk.subvolumes)}")
+        if layout.subvolumes:
+            print(f"  Subvolumes: {', '.join(layout.subvolumes)}")
+        if layout.boot_size_mib > 0:
+            print(f"  /boot:      {layout.boot_size_mib}M (ext4)")
+        if layout.home_partition:
+            print("  /home:      separate partition")
         if config.template.ansible.chroot_roles:
             print(
                 f"  Ansible (chroot):    {', '.join(config.template.ansible.chroot_roles)}"

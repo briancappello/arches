@@ -1,4 +1,9 @@
-"""Limine bootloader installation and configuration."""
+"""Bootloader installation and configuration.
+
+Supports multiple bootloader backends via the platform config:
+- Limine (x86-64): UEFI + BIOS, snapshot boot entries
+- GRUB (aarch64): UEFI-only, standard boot
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,6 @@ from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
 from arches_installer.core.platform import PlatformConfig
-from arches_installer.core.template import InstallTemplate
 
 LogCallback = Callable[[str], None]
 
@@ -62,19 +66,22 @@ def get_root_partuuid(root_partition: str) -> str:
     return result.stdout.strip()
 
 
+# ─── Limine ───────────────────────────────────────────────
+
+
 def generate_limine_conf(
     platform: PlatformConfig,
-    template: InstallTemplate,
     root_partition: str,
 ) -> str:
     """Generate limine.conf content."""
     root_uuid = get_root_uuid(root_partition)
     kernel_pkg = platform.kernel.package
+    layout = platform.disk_layout
 
     # Build kernel cmdline
     cmdline_parts = [f"root=UUID={root_uuid}", "rw"]
 
-    if template.disk.filesystem == "btrfs" and template.disk.subvolumes:
+    if layout.filesystem == "btrfs" and layout.subvolumes:
         cmdline_parts.append("rootflags=subvol=@")
 
     # Add common kernel parameters
@@ -104,7 +111,7 @@ def generate_limine_conf(
     module_path: boot():/initramfs-{kernel_pkg}-fallback.img
 """
 
-    if template.bootloader.snapshot_boot:
+    if platform.bootloader.snapshot_boot:
         conf += """
 /+Snapshots
     comment: Auto-populated by limine-snapper-sync
@@ -175,20 +182,19 @@ def install_limine_bios(
     chroot_run(["limine", "bios-install", device], log=log)
 
 
-def install_bootloader(
+def _install_limine(
     platform: PlatformConfig,
-    template: InstallTemplate,
     device: str,
     esp_partition: str,
     root_partition: str,
     log: LogCallback | None = None,
 ) -> None:
-    """Full bootloader installation pipeline."""
+    """Full Limine install pipeline."""
     firmware = detect_firmware()
     _log(f"Detected firmware: {firmware}", log)
 
     # Generate and write limine.conf
-    conf = generate_limine_conf(platform, template, root_partition)
+    conf = generate_limine_conf(platform, root_partition)
     conf_path = MOUNT_ROOT / "boot" / "limine.conf"
     conf_path.write_text(conf)
     _log("Wrote limine.conf", log)
@@ -203,5 +209,76 @@ def install_bootloader(
             f"Platform {platform.name} does not support BIOS boot, "
             "but no UEFI firmware was detected."
         )
+
+
+# ─── GRUB ─────────────────────────────────────────────────
+
+
+def _install_grub(
+    platform: PlatformConfig,
+    device: str,
+    esp_partition: str,
+    root_partition: str,
+    log: LogCallback | None = None,
+) -> None:
+    """Full GRUB install pipeline (UEFI-only)."""
+    firmware = detect_firmware()
+    _log(f"Detected firmware: {firmware}", log)
+
+    if firmware != "uefi":
+        raise RuntimeError(
+            f"Platform {platform.name} uses GRUB and requires UEFI firmware, "
+            "but no UEFI firmware was detected."
+        )
+
+    # Determine GRUB target based on architecture
+    if platform.arch == "aarch64":
+        grub_target = "arm64-efi"
+    else:
+        grub_target = "x86_64-efi"
+
+    _log(f"Installing GRUB ({grub_target})...", log)
+
+    # grub-install into the chroot
+    chroot_run(
+        [
+            "grub-install",
+            "--target",
+            grub_target,
+            "--efi-directory",
+            "/boot/efi",
+            "--bootloader-id",
+            "Arches",
+            "--removable",
+        ],
+        log=log,
+    )
+
+    # Generate grub.cfg
+    _log("Generating GRUB config...", log)
+    chroot_run(["grub-mkconfig", "-o", "/boot/grub/grub.cfg"], log=log)
+
+    _log("GRUB installation complete.", log)
+
+
+# ─── Public API ───────────────────────────────────────────
+
+
+def install_bootloader(
+    platform: PlatformConfig,
+    device: str,
+    esp_partition: str,
+    root_partition: str,
+    log: LogCallback | None = None,
+) -> None:
+    """Install the bootloader specified by the platform config."""
+    bootloader_type = platform.bootloader.type
+
+    if bootloader_type == "limine":
+        _install_limine(platform, device, esp_partition, root_partition, log)
+    elif bootloader_type == "grub":
+        _install_grub(platform, device, esp_partition, root_partition, log)
+    else:
+        raise ValueError(f"Unknown bootloader type: {bootloader_type}")
 
     _log("Bootloader installation complete.", log)

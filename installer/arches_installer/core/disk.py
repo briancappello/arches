@@ -7,8 +7,6 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from arches_installer.core.template import DiskConfig
-
 MOUNT_ROOT = Path("/mnt")
 
 
@@ -85,27 +83,50 @@ def wipe_disk(device: str) -> None:
     run(["sgdisk", "--clear", device])
 
 
-def partition_disk(device: str, config: DiskConfig) -> tuple[str, str]:
-    """Partition a disk with ESP + root. Returns (esp_part, root_part).
-
-    Handles both /dev/sdX and /dev/nvmeXnY naming conventions.
-    """
-    esp_size = config.esp_size_mib
-
-    # Create ESP partition
-    run(["sgdisk", "-n", f"1:0:+{esp_size}M", "-t", "1:EF00", device])
-    # Create root partition (rest of disk)
-    run(["sgdisk", "-n", "2:0:0", "-t", "2:8300", device])
-
-    # Determine partition naming convention
+def _part_name(device: str, num: int) -> str:
+    """Return partition device path (handles nvme/mmcblk 'p' convention)."""
     if "nvme" in device or "mmcblk" in device:
-        esp_part = f"{device}p1"
-        root_part = f"{device}p2"
-    else:
-        esp_part = f"{device}1"
-        root_part = f"{device}2"
+        return f"{device}p{num}"
+    return f"{device}{num}"
 
-    return esp_part, root_part
+
+@dataclass
+class PartitionMap:
+    """Maps partition roles to device paths."""
+
+    esp: str
+    root: str
+    boot: str = ""  # empty if ESP doubles as /boot
+    home: str = ""  # empty if no separate /home
+
+
+def partition_disk_x86(device: str, esp_size_mib: int) -> PartitionMap:
+    """Partition for x86-64 (Limine): ESP + root. ESP doubles as /boot."""
+    run(["sgdisk", "-n", f"1:0:+{esp_size_mib}M", "-t", "1:EF00", device])
+    run(["sgdisk", "-n", "2:0:0", "-t", "2:8300", device])
+    return PartitionMap(
+        esp=_part_name(device, 1),
+        root=_part_name(device, 2),
+    )
+
+
+def partition_disk_aarch64(
+    device: str,
+    esp_size_mib: int,
+    boot_size_mib: int,
+) -> PartitionMap:
+    """Partition for aarch64 (GRUB): ESP + /boot + root + /home."""
+    run(["sgdisk", "-n", f"1:0:+{esp_size_mib}M", "-t", "1:EF00", device])
+    run(["sgdisk", "-n", f"2:0:+{boot_size_mib}M", "-t", "2:8300", device])
+    # Root gets 50% of remaining space, /home gets the rest
+    run(["sgdisk", "-n", "3:0:+50%", "-t", "3:8300", device])
+    run(["sgdisk", "-n", "4:0:0", "-t", "4:8300", device])
+    return PartitionMap(
+        esp=_part_name(device, 1),
+        boot=_part_name(device, 2),
+        root=_part_name(device, 3),
+        home=_part_name(device, 4),
+    )
 
 
 def format_esp(partition: str) -> None:
@@ -185,24 +206,146 @@ def mount_esp(partition: str) -> None:
     run(["mount", partition, str(boot)])
 
 
-def prepare_disk(device: str, config: DiskConfig) -> tuple[str, str]:
-    """Full disk preparation pipeline. Returns (esp_part, root_part)."""
+def mount_boot(partition: str) -> None:
+    """Mount a separate /boot partition at MOUNT_ROOT/boot."""
+    boot = MOUNT_ROOT / "boot"
+    boot.mkdir(parents=True, exist_ok=True)
+    run(["mount", partition, str(boot)])
+
+
+def mount_boot_efi(partition: str) -> None:
+    """Mount ESP at MOUNT_ROOT/boot/efi (when /boot is a separate partition)."""
+    efi = MOUNT_ROOT / "boot" / "efi"
+    efi.mkdir(parents=True, exist_ok=True)
+    run(["mount", partition, str(efi)])
+
+
+def mount_home(partition: str) -> None:
+    """Mount /home partition at MOUNT_ROOT/home."""
+    home = MOUNT_ROOT / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    run(["mount", partition, str(home)])
+
+
+def detect_mounts() -> PartitionMap | None:
+    """Detect partitions currently mounted under MOUNT_ROOT.
+
+    Inspects /proc/mounts for MOUNT_ROOT, MOUNT_ROOT/boot, MOUNT_ROOT/boot/efi,
+    and MOUNT_ROOT/home to build a PartitionMap. Returns None if root is not
+    mounted at MOUNT_ROOT.
+
+    This is used by the manual partitioning flow — the user partitions, formats,
+    and mounts everything themselves, then the installer inspects what's there.
+    """
+    mounts: dict[str, str] = {}  # mountpoint -> device
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    device_path, mountpoint = parts[0], parts[1]
+                    mounts[mountpoint] = device_path
+    except OSError:
+        return None
+
+    root_str = str(MOUNT_ROOT)
+    root_dev = mounts.get(root_str)
+    if not root_dev:
+        return None
+
+    # Detect ESP: could be at /mnt/boot or /mnt/boot/efi
+    boot_efi_dev = mounts.get(f"{root_str}/boot/efi", "")
+    boot_dev = mounts.get(f"{root_str}/boot", "")
+    home_dev = mounts.get(f"{root_str}/home", "")
+
+    if boot_efi_dev:
+        # Separate /boot and /boot/efi — GRUB-style (aarch64)
+        return PartitionMap(
+            esp=boot_efi_dev,
+            root=root_dev,
+            boot=boot_dev,
+            home=home_dev,
+        )
+    elif boot_dev:
+        # ESP mounted at /boot — Limine-style (x86-64)
+        return PartitionMap(
+            esp=boot_dev,
+            root=root_dev,
+            home=home_dev,
+        )
+    else:
+        # No boot mount detected — return just root
+        return PartitionMap(
+            esp="",
+            root=root_dev,
+            home=home_dev,
+        )
+
+
+def validate_mounts(parts: PartitionMap) -> list[str]:
+    """Validate a detected PartitionMap, returning a list of error messages.
+
+    Empty list means the mounts are valid.
+    """
+    errors = []
+    if not parts.root:
+        errors.append("No root filesystem mounted at /mnt")
+    if not parts.esp:
+        errors.append(
+            "No ESP detected. Mount your EFI System Partition at "
+            "/mnt/boot (Limine) or /mnt/boot/efi (GRUB)."
+        )
+    return errors
+
+
+def prepare_disk(device: str, platform) -> PartitionMap:
+    """Full disk preparation pipeline for auto-install.
+
+    Uses the platform's disk_layout config to determine the partition scheme.
+    Returns a PartitionMap with device paths for each partition role.
+    """
+    from arches_installer.core.platform import PlatformConfig
+
+    assert isinstance(platform, PlatformConfig)
+    layout = platform.disk_layout
+
     wipe_disk(device)
-    esp_part, root_part = partition_disk(device, config)
 
-    format_esp(esp_part)
+    if layout.boot_size_mib > 0:
+        # aarch64-style: ESP + /boot + root + /home
+        parts = partition_disk_aarch64(
+            device, layout.esp_size_mib, layout.boot_size_mib
+        )
+    else:
+        # x86-64-style: ESP (doubles as /boot) + root
+        parts = partition_disk_x86(device, layout.esp_size_mib)
 
-    if config.filesystem == "btrfs":
-        format_root_btrfs(root_part)
-        if config.subvolumes:
-            create_btrfs_subvolumes(root_part, config.subvolumes)
-            mount_btrfs(root_part, config.subvolumes, config.mount_options)
+    # Format and mount
+    format_esp(parts.esp)
+
+    if layout.filesystem == "btrfs":
+        format_root_btrfs(parts.root)
+        if layout.subvolumes:
+            create_btrfs_subvolumes(parts.root, layout.subvolumes)
+            mount_btrfs(parts.root, layout.subvolumes, layout.mount_options)
         else:
             MOUNT_ROOT.mkdir(parents=True, exist_ok=True)
-            run(["mount", "-o", config.mount_options, root_part, str(MOUNT_ROOT)])
-    elif config.filesystem == "ext4":
-        format_root_ext4(root_part)
-        mount_ext4(root_part, config.mount_options)
+            run(["mount", "-o", layout.mount_options, parts.root, str(MOUNT_ROOT)])
+    elif layout.filesystem == "ext4":
+        format_root_ext4(parts.root)
+        mount_ext4(parts.root, layout.mount_options)
 
-    mount_esp(esp_part)
-    return esp_part, root_part
+    # Mount /boot (separate) or ESP as /boot
+    if parts.boot:
+        run(["mkfs.ext4", "-L", "archboot", parts.boot])
+        mount_boot(parts.boot)
+        mount_boot_efi(parts.esp)
+    else:
+        mount_esp(parts.esp)
+
+    # Mount /home if separate
+    if parts.home:
+        run(["mkfs.ext4", "-L", "archhome", parts.home])
+        mount_home(parts.home)
+
+    return parts

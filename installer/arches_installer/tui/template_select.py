@@ -56,10 +56,11 @@ class TemplateSelectScreen(Screen):
             tmpl = self._templates[event.option_index]
             info = (
                 f"{tmpl.description}\n\n"
-                f"  Filesystem: {tmpl.disk.filesystem}\n"
                 f"  Packages:   {len(tmpl.system.packages)} packages\n"
-                f"  Snapshots:  {'Yes' if tmpl.bootloader.snapshot_boot else 'No'}"
+                f"  Services:   {len(tmpl.services)} services"
             )
+            if tmpl.ansible.chroot_roles:
+                info += f"\n  Ansible:    {', '.join(tmpl.ansible.chroot_roles)}"
             desc.update(info)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

@@ -6,6 +6,7 @@ from textual.app import App
 from textual.binding import Binding
 from textual.screen import Screen
 
+from arches_installer.core.disk import PartitionMap
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.template import InstallTemplate
 from arches_installer.tui.welcome import WelcomeScreen
@@ -60,6 +61,8 @@ class ArchesApp(App):
     # Install state — populated as user progresses through screens
     selected_device: str = ""
     selected_template: InstallTemplate | None = None
+    partition_mode: str = ""  # "auto" or "manual"
+    partition_map: PartitionMap | None = None  # set by manual flow or progress
     hostname: str = ""
     username: str = ""
     password: str = ""

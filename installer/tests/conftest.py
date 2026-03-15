@@ -9,14 +9,13 @@ import pytest
 
 from arches_installer.core.platform import (
     BootloaderPlatformConfig,
+    DiskLayoutConfig,
     HardwareDetectionConfig,
     KernelConfig,
     PlatformConfig,
 )
 from arches_installer.core.template import (
     AnsibleConfig,
-    BootloaderConfig,
-    DiskConfig,
     InstallTemplate,
     SystemConfig,
 )
@@ -38,6 +37,14 @@ def x86_64_platform() -> PlatformConfig:
             efi_binary="BOOTX64.EFI",
             efi_fallback_path="EFI/BOOT/BOOTX64.EFI",
             supports_bios=True,
+            snapshot_boot=True,
+        ),
+        disk_layout=DiskLayoutConfig(
+            filesystem="btrfs",
+            mount_options="compress=zstd:1,noatime,ssd,discard=async",
+            subvolumes=["@", "@home", "@var", "@snapshots"],
+            esp_size_mib=2048,
+            swap="zram",
         ),
         hardware_detection=HardwareDetectionConfig(
             enabled=True,
@@ -55,19 +62,41 @@ def x86_64_platform() -> PlatformConfig:
 
 
 @pytest.fixture
-def btrfs_template() -> InstallTemplate:
-    """A dev-workstation-style template with btrfs + snapshots."""
-    return InstallTemplate(
-        name="Dev Workstation",
-        description="KDE + btrfs + snapshots",
-        disk=DiskConfig(
-            filesystem="btrfs",
-            mount_options="compress=zstd:1,noatime,ssd,discard=async",
-            subvolumes=["@", "@home", "@var", "@snapshots"],
-            esp_size_mib=2048,
+def aarch64_platform() -> PlatformConfig:
+    """An aarch64-generic ARM platform config for testing."""
+    return PlatformConfig(
+        name="aarch64-generic",
+        description="Generic ARM64 with Arch Linux ARM",
+        arch="aarch64",
+        kernel=KernelConfig(
+            package="linux-aarch64",
+            headers="linux-aarch64-headers",
+        ),
+        bootloader=BootloaderPlatformConfig(
+            type="grub",
+            efi_binary="BOOTAA64.EFI",
+            efi_fallback_path="EFI/BOOT/BOOTAA64.EFI",
+            supports_bios=False,
+        ),
+        disk_layout=DiskLayoutConfig(
+            filesystem="ext4",
+            mount_options="noatime",
+            esp_size_mib=512,
+            boot_size_mib=1024,
+            home_partition=True,
             swap="zram",
         ),
-        bootloader=BootloaderConfig(type="limine", snapshot_boot=True),
+        hardware_detection=HardwareDetectionConfig(enabled=False),
+        base_packages=[],
+    )
+
+
+@pytest.fixture
+def dev_workstation_template() -> InstallTemplate:
+    """A dev-workstation-style template."""
+    return InstallTemplate(
+        name="Dev Workstation",
+        description="KDE Plasma desktop with full development toolchain",
         system=SystemConfig(
             timezone="America/New_York",
             locale="en_US.UTF-8",
@@ -82,19 +111,11 @@ def btrfs_template() -> InstallTemplate:
 
 
 @pytest.fixture
-def ext4_template() -> InstallTemplate:
-    """A VM-server-style template with ext4, no snapshots."""
+def vm_server_template() -> InstallTemplate:
+    """A VM-server-style template."""
     return InstallTemplate(
         name="VM Server",
         description="Headless server — ext4",
-        disk=DiskConfig(
-            filesystem="ext4",
-            mount_options="noatime",
-            subvolumes=[],
-            esp_size_mib=512,
-            swap="zram",
-        ),
-        bootloader=BootloaderConfig(type="limine", snapshot_boot=False),
         system=SystemConfig(
             timezone="America/New_York",
             locale="en_US.UTF-8",
@@ -106,6 +127,17 @@ def ext4_template() -> InstallTemplate:
             firstboot_roles=[],
         ),
     )
+
+
+# Keep old fixture names as aliases for backward compat in tests
+@pytest.fixture
+def btrfs_template(dev_workstation_template) -> InstallTemplate:
+    return dev_workstation_template
+
+
+@pytest.fixture
+def ext4_template(vm_server_template) -> InstallTemplate:
+    return vm_server_template
 
 
 @pytest.fixture
@@ -127,6 +159,14 @@ type = "limine"
 efi_binary = "BOOTX64.EFI"
 efi_fallback_path = "EFI/BOOT/BOOTX64.EFI"
 supports_bios = true
+snapshot_boot = true
+
+[disk_layout]
+filesystem = "btrfs"
+mount_options = "compress=zstd:1,noatime,ssd,discard=async"
+subvolumes = ["@", "@home", "@var", "@snapshots"]
+esp_size_mib = 2048
+swap = "zram"
 
 [hardware_detection]
 enabled = true
@@ -154,18 +194,7 @@ def templates_dir(tmp_path: Path) -> Path:
     (d / "dev-workstation.toml").write_text("""\
 [meta]
 name = "Dev Workstation"
-description = "KDE + btrfs + snapshots"
-
-[disk]
-filesystem = "btrfs"
-subvolumes = ["@", "@home", "@var", "@snapshots"]
-mount_options = "compress=zstd:1,noatime"
-esp_size_mib = 2048
-swap = "zram"
-
-[bootloader]
-type = "limine"
-snapshot_boot = true
+description = "KDE Plasma desktop with full development toolchain"
 
 [system]
 timezone = "America/New_York"
@@ -184,16 +213,6 @@ firstboot_roles = ["dotfiles"]
 [meta]
 name = "VM Server"
 description = "Headless server"
-
-[disk]
-filesystem = "ext4"
-mount_options = "noatime"
-esp_size_mib = 512
-swap = "zram"
-
-[bootloader]
-type = "limine"
-snapshot_boot = false
 
 [system]
 packages = ["openssh", "nginx"]
@@ -264,10 +283,10 @@ def mock_detect_block_devices():
 
 
 @pytest.fixture
-def mock_discover_templates(btrfs_template, ext4_template):
+def mock_discover_templates(dev_workstation_template, vm_server_template):
     """Mock template discovery to return test templates."""
     with patch(
         "arches_installer.core.template.discover_templates",
-        return_value=[btrfs_template, ext4_template],
+        return_value=[dev_workstation_template, vm_server_template],
     ) as m:
         yield m

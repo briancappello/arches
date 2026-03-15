@@ -56,6 +56,7 @@ class InstallProgressScreen(Screen):
         template = self.app.selected_template
         device = self.app.selected_device
         platform = self.app.platform
+        partition_mode = self.app.partition_mode
 
         if template is None:
             self.log_msg("[red]ERROR: No template selected![/red]")
@@ -64,8 +65,25 @@ class InstallProgressScreen(Screen):
         try:
             # Phase 1: Disk preparation
             self.log_msg("[bold cyan]── Phase 1: Disk Setup ──[/bold cyan]")
-            esp_part, root_part = prepare_disk(device, template.disk)
-            self.log_msg("[green]Disk prepared successfully.[/green]")
+            if partition_mode == "manual":
+                parts = self.app.partition_map
+                if parts is None:
+                    self.log_msg(
+                        "[red]ERROR: No partition map from manual setup![/red]"
+                    )
+                    return
+                self.log_msg(f"Using manually prepared mounts:")
+                self.log_msg(f"  Root: {parts.root}")
+                self.log_msg(f"  ESP:  {parts.esp}")
+                if parts.boot:
+                    self.log_msg(f"  Boot: {parts.boot}")
+                if parts.home:
+                    self.log_msg(f"  Home: {parts.home}")
+                self.log_msg("[green]Manual mounts verified.[/green]")
+            else:
+                parts = prepare_disk(device, platform)
+                self.log_msg("[green]Disk prepared successfully.[/green]")
+            self.app.partition_map = parts
 
             # Phase 2: System installation
             self.log_msg("[bold cyan]── Phase 2: System Install ──[/bold cyan]")
@@ -83,18 +101,17 @@ class InstallProgressScreen(Screen):
             self.log_msg("[bold cyan]── Phase 3: Bootloader ──[/bold cyan]")
             install_bootloader(
                 platform,
-                template,
                 device,
-                esp_part,
-                root_part,
+                parts.esp,
+                parts.root,
                 log=self.log_msg,
             )
             self.log_msg("[green]Bootloader installed.[/green]")
 
-            # Phase 4: Snapshots (if btrfs + snapshot_boot)
-            if template.disk.filesystem == "btrfs":
+            # Phase 4: Snapshots (if btrfs platform)
+            if platform.disk_layout.filesystem == "btrfs":
                 self.log_msg("[bold cyan]── Phase 4: Snapshots ──[/bold cyan]")
-                setup_snapshots(template, log=self.log_msg)
+                setup_snapshots(platform, log=self.log_msg)
                 self.log_msg("[green]Snapshot support configured.[/green]")
 
             # Phase 5: First-boot service

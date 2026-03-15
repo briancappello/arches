@@ -6,7 +6,7 @@ import subprocess
 from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
-from arches_installer.core.template import InstallTemplate
+from arches_installer.core.platform import PlatformConfig
 
 LogCallback = Callable[[str], None]
 
@@ -62,11 +62,11 @@ ALLOW_GROUPS="wheel"
 
 
 def configure_snapper(
-    template: InstallTemplate,
+    platform: PlatformConfig,
     log: LogCallback | None = None,
 ) -> None:
     """Set up snapper for btrfs snapshot management."""
-    if template.disk.filesystem != "btrfs":
+    if platform.disk_layout.filesystem != "btrfs":
         _log("Filesystem is not btrfs, skipping snapper setup.", log)
         return
 
@@ -97,11 +97,11 @@ def configure_snapper(
 
 
 def configure_snapshot_boot(
-    template: InstallTemplate,
+    platform: PlatformConfig,
     log: LogCallback | None = None,
 ) -> None:
     """Set up limine-snapper-sync for bootable snapshots."""
-    if not template.bootloader.snapshot_boot:
+    if not platform.bootloader.snapshot_boot:
         _log("Snapshot boot not enabled, skipping.", log)
         return
 
@@ -125,9 +125,9 @@ def configure_snapshot_boot(
 
 
 def setup_snapshots(
-    template: InstallTemplate,
+    platform: PlatformConfig,
     log: LogCallback | None = None,
 ) -> None:
     """Full snapshot setup pipeline."""
-    configure_snapper(template, log)
-    configure_snapshot_boot(template, log)
+    configure_snapper(platform, log)
+    configure_snapshot_boot(platform, log)
