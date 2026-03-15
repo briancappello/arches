@@ -1,0 +1,24 @@
+{# ======================================================================== #}
+{# kglobalshortcutsrc — KDE Global Shortcuts                               #}
+{# ======================================================================== #}
+{#                                                                          #}
+{# Format per entry (3 columns separated by literal TAB characters):        #}
+{#   key_sequence \t default_key_sequence \t friendly_name                  #}
+{#                                                                          #}
+{# - Column 1: the active key binding (what the user wants)                #}
+{# - Column 2: the "default" key (used by KDE's "Defaults" button)         #}
+{# - Column 3: human-readable name shown in System Settings                #}
+{#                                                                          #}
+{# We set column 2 = column 1 (our desired binding IS the default for      #}
+{# this install) and column 3 = the action name.                           #}
+{#                                                                          #}
+{# Only the shortcuts we explicitly configure are written here. KDE will    #}
+{# merge missing actions with its compiled-in defaults on first boot.       #}
+{# ======================================================================== #}
+{% for component, actions in kde_shortcuts.items() %}
+[{{ component }}]
+{% for action, keys in actions.items() %}
+{{ action }}={{ keys }}	{{ keys }}	{{ action }}
+{% endfor %}
+
+{% endfor %}

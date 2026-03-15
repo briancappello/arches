@@ -1,7 +1,30 @@
 ---
-# KDE Plasma desktop configuration
+# ============================================================================
+# KDE Plasma — Declarative Configuration
+# ============================================================================
+#
+# Runs in chroot during install (cold filesystem, no running Plasma/D-Bus).
+# All settings are written via kwriteconfig6 or direct file templates.
+# No D-Bus notifications needed — Plasma will read these on first boot.
+# ============================================================================
 
-- name: Set SDDM as default display manager
+# --------------------------------------------------------------------------
+# 0. Install extra packages
+# --------------------------------------------------------------------------
+- name: Install KDE extra packages
+  pacman:
+    name: "{{ kde_extra_packages }}"
+    state: present
+
+- name: Install custom plasmoid packages (from local repo)
+  pacman:
+    name: "{{ kde_custom_plasmoid_packages }}"
+    state: present
+
+# --------------------------------------------------------------------------
+# 1. Display Manager (SDDM)
+# --------------------------------------------------------------------------
+- name: Enable SDDM
   systemd:
     name: sddm
     enabled: yes
@@ -10,10 +33,12 @@
   file:
     path: /etc/sddm.conf.d
     state: directory
+    mode: "0755"
 
 - name: Configure SDDM
   copy:
     dest: /etc/sddm.conf.d/arches.conf
+    mode: "0644"
     content: |
       [Theme]
       Current=breeze
@@ -21,9 +46,485 @@
       [General]
       Numlock=on
 
-# TODO: Add KDE-specific configurations
-# - Default panel layout
-# - Window decoration settings
-# - Konsole profile
-# - File associations
-# - Default applications
+# --------------------------------------------------------------------------
+# 2. Ensure config directories exist
+# --------------------------------------------------------------------------
+- name: Create KDE config directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0700"
+  loop:
+    - "{{ kde_config }}"
+    - "{{ kde_config }}/konsolerc"    # not a dir — we'll make the parent
+    - "{{ kde_local_share }}/konsole"
+    - "{{ kde_config }}/autostart"
+    - "{{ kde_config }}/libinput-gestures.conf"  # handled as file below
+
+# Fix: konsolerc and libinput-gestures.conf are files not dirs — remove the
+# erroneous dirs if they were created (idempotent guard).
+- name: Remove accidental directories for file targets
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ kde_config }}/konsolerc"
+    - "{{ kde_config }}/libinput-gestures.conf"
+
+- name: Ensure real config directories exist
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0700"
+  loop:
+    - "{{ kde_config }}"
+    - "{{ kde_local_share }}/konsole"
+    - "{{ kde_config }}/autostart"
+
+# --------------------------------------------------------------------------
+# 3. KWin — Virtual Desktops
+# --------------------------------------------------------------------------
+- name: "KWin: set number of virtual desktops"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kwinrc
+    --group Desktops --key Number
+    {{ kde_kwin.virtual_desktops.number }}
+
+- name: "KWin: set virtual desktop rows"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kwinrc
+    --group Desktops --key Rows
+    {{ kde_kwin.virtual_desktops.rows }}
+
+- name: "KWin: set virtual desktop names"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kwinrc
+    --group Desktops --key Id_{{ idx + 1 }}
+    {{ item }}
+  loop: "{{ kde_kwin.virtual_desktops.names }}"
+  loop_control:
+    index_var: idx
+
+# --------------------------------------------------------------------------
+# 4. KWin — Tiling
+# --------------------------------------------------------------------------
+- name: "KWin: set tiling padding"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kwinrc
+    --group Tiling --key padding
+    {{ kde_kwin.tiling.padding }}
+
+# --------------------------------------------------------------------------
+# 5. KWin — Titlebar
+# --------------------------------------------------------------------------
+- name: "KWin: titlebar double-click action"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kwinrc
+    --group Windows --key TitlebarDoubleClickCommand
+    {{ kde_kwin.titlebar.double_click_action }}
+
+# --------------------------------------------------------------------------
+# 6. KWin — Xwayland scale
+# --------------------------------------------------------------------------
+- name: "KWin: Xwayland global scale"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kwinrc
+    --group Xwayland --key Scale
+    {{ kde_kwin.xwayland.scale }}
+
+# --------------------------------------------------------------------------
+# 7. Power / Energy — powerdevil
+# --------------------------------------------------------------------------
+- name: "Power: AC profile"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/powerdevilrc
+    --group AC --key {{ item.key }}
+    {{ item.value }}
+  loop:
+    - { key: "DimDisplayIdleTimeoutSec",  value: "{{ kde_power.ac.dim_display_timeout }}" }
+    - { key: "DPMSIdleTimeoutSec",        value: "{{ kde_power.ac.dpms_timeout }}" }
+    - { key: "SuspendAndPowerButtonAction", value: "0" }
+    - { key: "AutoSuspendIdleTimeoutSec",  value: "{{ kde_power.ac.suspend_timeout }}" }
+    - { key: "AutoSuspendAction",          value: "0" }
+
+- name: "Power: Battery profile"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/powerdevilrc
+    --group Battery --key {{ item.key }}
+    {{ item.value }}
+  loop:
+    - { key: "DimDisplayIdleTimeoutSec",  value: "{{ kde_power.battery.dim_display_timeout }}" }
+    - { key: "DPMSIdleTimeoutSec",        value: "{{ kde_power.battery.dpms_timeout }}" }
+    - { key: "AutoSuspendIdleTimeoutSec",  value: "{{ kde_power.battery.suspend_timeout }}" }
+    - { key: "AutoSuspendAction",          value: "0" }
+
+- name: "Power: Low Battery profile"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/powerdevilrc
+    --group LowBattery --key {{ item.key }}
+    {{ item.value }}
+  loop:
+    - { key: "DimDisplayIdleTimeoutSec",  value: "{{ kde_power.low_battery.dim_display_timeout }}" }
+    - { key: "DPMSIdleTimeoutSec",        value: "{{ kde_power.low_battery.dpms_timeout }}" }
+    - { key: "AutoSuspendIdleTimeoutSec",  value: "{{ kde_power.low_battery.suspend_timeout }}" }
+    - { key: "AutoSuspendAction",          value: "0" }
+
+- name: "Power: Critical battery level and action"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/powerdevilrc
+    --group BatteryCritical --key {{ item.key }}
+    {{ item.value }}
+  loop:
+    - { key: "CriticalBatteryLevel",       value: "{{ kde_power.critical_battery.level }}" }
+    - { key: "CriticalBatteryAction",      value: "{{ kde_power.critical_battery.action }}" }
+
+- name: "Power: Lid close action"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/powerdevilrc
+    --group LidAction --key {{ item.key }}
+    {{ item.value }}
+  loop:
+    - { key: "InhibitLidActionWhenExternalMonitorPresent", value: "false" }
+    - { key: "LidAction",                  value: "0" }
+
+# --------------------------------------------------------------------------
+# 8. Input — Touchpad (kcminputrc)
+# --------------------------------------------------------------------------
+- name: "Input: touchpad settings"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kcminputrc
+    --group Libinput --group "{{ kde_input.touchpad.name }}" --group "Touchpad"
+    --key {{ item.key }}
+    {{ item.value }}
+  loop:
+    - { key: "NaturalScroll",         value: "{{ kde_input.touchpad.natural_scroll | lower }}" }
+    - { key: "TapToClick",            value: "{{ kde_input.touchpad.tap_to_click | lower }}" }
+    - { key: "ClickMethod",           value: "{{ kde_input.touchpad.click_method }}" }
+    - { key: "DisableWhileTyping",    value: "{{ kde_input.touchpad.disable_while_typing | lower }}" }
+    - { key: "PointerAcceleration",   value: "{{ kde_input.touchpad.pointer_acceleration }}" }
+    - { key: "PointerAccelerationProfile", value: "{{ kde_input.touchpad.pointer_acceleration_profile }}" }
+
+# --------------------------------------------------------------------------
+# 9. Input — Keyboard
+# --------------------------------------------------------------------------
+- name: "Input: keyboard settings"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kcminputrc
+    --group Keyboard --key {{ item.key }}
+    {{ item.value }}
+  loop:
+    - { key: "NumLock",       value: "{{ kde_input.keyboard.numlock_on_startup }}" }
+    - { key: "RepeatDelay",   value: "{{ kde_input.keyboard.repeat_delay }}" }
+    - { key: "RepeatRate",    value: "{{ kde_input.keyboard.repeat_rate }}" }
+
+# --------------------------------------------------------------------------
+# 10. Input — Cursor
+# --------------------------------------------------------------------------
+- name: "Input: cursor theme and size"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kcminputrc
+    --group Mouse --key {{ item.key }}
+    {{ item.value }}
+  loop:
+    - { key: "cursorTheme", value: "{{ kde_input.cursor.theme }}" }
+    - { key: "cursorSize",  value: "{{ kde_input.cursor.size }}" }
+
+# --------------------------------------------------------------------------
+# 11. Session — logout, lock, KRunner
+# --------------------------------------------------------------------------
+- name: "Session: disable logout confirmation"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/ksmserverrc
+    --group General --key confirmLogout
+    false
+  when: not kde_session.logout_confirm
+
+- name: "Session: set shutdown type"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/ksmserverrc
+    --group General --key shutdownType
+    {{ kde_session.logout_prompt }}
+
+# --------------------------------------------------------------------------
+# 12. Screen Locker
+# --------------------------------------------------------------------------
+- name: "Screen locker: disable autolock"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kscreenlockerrc
+    --group Daemon --key {{ item.key }}
+    {{ item.value }}
+  loop:
+    - { key: "Autolock",   value: "false" }
+    - { key: "LockOnResume", value: "false" }
+    - { key: "Timeout",    value: "0" }
+  when: not kde_screenlocker.autolock
+
+# --------------------------------------------------------------------------
+# 13. Disable delete confirmation (KIO)
+# --------------------------------------------------------------------------
+- name: "KIO: disable delete confirmation"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kiorc
+    --group Confirmations --key ConfirmDelete
+    false
+  when: not kde_kded.delete_confirmation
+
+- name: "KIO: disable trash confirmation"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kiorc
+    --group Confirmations --key ConfirmTrash
+    false
+  when: not kde_kded.delete_confirmation
+
+# --------------------------------------------------------------------------
+# 14. KRunner — disable desktop search typing
+# --------------------------------------------------------------------------
+- name: "KRunner: disable free-floating activation"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/krunnerrc
+    --group General --key FreeFloating
+    false
+  when: not kde_krunner.desktop_search_typing
+
+# --------------------------------------------------------------------------
+# 15. Theme / Appearance (plasma-apply-* tools)
+# --------------------------------------------------------------------------
+# plasma-apply-* commands write the correct KDE config files.
+# In chroot, they won't reload Plasma but the files will be correct for
+# first boot.
+
+- name: "Theme: apply color scheme"
+  command: >-
+    plasma-apply-colorscheme {{ kde_theme.color_scheme }}
+  environment:
+    HOME: "{{ kde_home }}"
+  ignore_errors: true
+
+- name: "Theme: apply Plasma visual style"
+  command: >-
+    plasma-apply-desktoptheme {{ kde_theme.plasma_theme }}
+  environment:
+    HOME: "{{ kde_home }}"
+  ignore_errors: true
+
+- name: "Theme: apply cursor theme"
+  command: >-
+    plasma-apply-cursortheme {{ kde_theme.cursor_theme }} --size {{ kde_theme.cursor_size }}
+  environment:
+    HOME: "{{ kde_home }}"
+  ignore_errors: true
+
+# --------------------------------------------------------------------------
+# 16. Fonts (kdeglobals)
+# --------------------------------------------------------------------------
+- name: "Fonts: configure system fonts"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kdeglobals
+    --group General --key {{ item.key }}
+    "{{ item.value }}"
+  loop:
+    - { key: "font",        value: "{{ kde_theme.font.general }}" }
+    - { key: "fixed",       value: "{{ kde_theme.font.fixed }}" }
+    - { key: "smallestReadableFont", value: "{{ kde_theme.font.small }}" }
+    - { key: "toolBarFont", value: "{{ kde_theme.font.toolbar }}" }
+    - { key: "menuFont",    value: "{{ kde_theme.font.menu }}" }
+
+# --------------------------------------------------------------------------
+# 17. Window Decoration
+# --------------------------------------------------------------------------
+- name: "Window decoration: set plugin"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kwinrc
+    --group org.kde.kdecoration2 --key library
+    {{ kde_theme.window_decoration }}
+
+# --------------------------------------------------------------------------
+# 18. Icon theme
+# --------------------------------------------------------------------------
+- name: "Icons: set icon theme"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/kdeglobals
+    --group Icons --key Theme
+    {{ kde_theme.icon_theme }}
+
+# --------------------------------------------------------------------------
+# 19. Shortcuts — deploy kglobalshortcutsrc via Jinja2 template
+# --------------------------------------------------------------------------
+- name: "Shortcuts: deploy kglobalshortcutsrc"
+  template:
+    src: kglobalshortcutsrc.j2
+    dest: "{{ kde_config }}/kglobalshortcutsrc"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0600"
+
+# --------------------------------------------------------------------------
+# 20. Konsole profile
+# --------------------------------------------------------------------------
+- name: "Konsole: create profile"
+  template:
+    src: konsole-profile.j2
+    dest: "{{ kde_local_share }}/konsole/{{ kde_konsole.default_profile }}"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0644"
+
+- name: "Konsole: set default profile"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/konsolerc
+    --group "Desktop Entry" --key DefaultProfile
+    {{ kde_konsole.default_profile }}
+
+- name: "Konsole: set tab bar position"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/konsolerc
+    --group TabBar --key TabBarPosition
+    {{ kde_konsole.tab_bar_position }}
+
+# --------------------------------------------------------------------------
+# 21. Panel / Widgets — generate appletsrc via Python script
+# --------------------------------------------------------------------------
+- name: "Panel: deploy panel config JSON for generator"
+  copy:
+    dest: "{{ kde_config }}/arches-panel-config.json"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0600"
+    content: "{{ kde_panel | to_json }}"
+
+- name: "Panel: generate appletsrc"
+  script: >-
+    ../files/generate_appletsrc.py
+    --output {{ kde_config }}/plasma-org.kde.plasma.desktop-appletsrc
+    --config {{ kde_config }}/arches-panel-config.json
+  args:
+    executable: python3
+
+- name: "Panel: fix appletsrc ownership"
+  file:
+    path: "{{ kde_config }}/plasma-org.kde.plasma.desktop-appletsrc"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0600"
+
+- name: "Panel: clean up temporary config JSON"
+  file:
+    path: "{{ kde_config }}/arches-panel-config.json"
+    state: absent
+
+# --------------------------------------------------------------------------
+# 22. XDG User Directories
+# --------------------------------------------------------------------------
+- name: "XDG: deploy user-dirs.dirs"
+  template:
+    src: user-dirs.dirs.j2
+    dest: "{{ kde_config }}/user-dirs.dirs"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0644"
+
+- name: "XDG: disable automatic directory creation"
+  copy:
+    dest: "{{ kde_config }}/user-dirs.conf"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0644"
+    content: |
+      enabled=False
+
+# --------------------------------------------------------------------------
+# 23. libinput-gestures
+# --------------------------------------------------------------------------
+- name: "Gestures: deploy config"
+  template:
+    src: libinput-gestures.conf.j2
+    dest: "{{ kde_config }}/libinput-gestures.conf"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0644"
+
+- name: "Gestures: add user to input group"
+  user:
+    name: "{{ kde_user }}"
+    groups: input
+    append: yes
+
+- name: "Gestures: create autostart entry"
+  copy:
+    dest: "{{ kde_config }}/autostart/libinput-gestures.desktop"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0644"
+    content: |
+      [Desktop Entry]
+      Type=Application
+      Name=libinput-gestures
+      Exec=libinput-gestures
+      X-GNOME-Autostart-enabled=true
+  when: kde_libinput_gestures.autostart
+
+# --------------------------------------------------------------------------
+# 24. ~/dotfiles/env.sh — user-editable environment variables
+# --------------------------------------------------------------------------
+# The env.sh stub lives in ~/dotfiles/ and is symlinked into Plasma's
+# env autoload directory.  The user edits ~/dotfiles/env.sh directly
+# for PATH additions, API keys, etc.  Ansible only creates the initial
+# stub — it is NOT overwritten on subsequent runs (creates: yes).
+# --------------------------------------------------------------------------
+- name: "Dotfiles: create ~/dotfiles directory"
+  file:
+    path: "{{ kde_dotfiles_dir }}"
+    state: directory
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0755"
+
+- name: "Dotfiles: create env.sh stub (will not overwrite)"
+  copy:
+    dest: "{{ kde_dotfiles_dir }}/env.sh"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0700"
+    force: no
+    content: "{{ kde_env_sh_content }}"
+
+- name: "Env: create Plasma env directory"
+  file:
+    path: "{{ kde_config }}/plasma-workspace/env"
+    state: directory
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    mode: "0700"
+
+- name: "Env: symlink ~/dotfiles/env.sh into Plasma env autoload"
+  file:
+    src: "{{ kde_dotfiles_dir }}/env.sh"
+    dest: "{{ kde_config }}/plasma-workspace/env/env.sh"
+    state: link
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+
+# --------------------------------------------------------------------------
+# 25. Generic kwriteconfig6 entries (catch-all)
+# --------------------------------------------------------------------------
+- name: "Generic kwriteconfig6 entries"
+  command: >-
+    kwriteconfig6 --file {{ kde_config }}/{{ item.file }}
+    --group {{ item.group }} --key {{ item.key }}
+    {{ item.value }}
+  loop: "{{ kde_kwriteconfig_entries }}"
+  when: kde_kwriteconfig_entries | length > 0
+
+# --------------------------------------------------------------------------
+# 26. Fix ownership of entire config tree
+# --------------------------------------------------------------------------
+- name: "Fix ownership of KDE config"
+  file:
+    path: "{{ kde_config }}"
+    owner: "{{ kde_user }}"
+    group: "{{ kde_user }}"
+    recurse: yes

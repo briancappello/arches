@@ -1,0 +1,317 @@
+---
+# ============================================================================
+# Declarative KDE Plasma Configuration
+# ============================================================================
+#
+# This file defines the complete KDE desktop configuration declaratively.
+# Ansible tasks consume these values via kwriteconfig6, plasma-apply-* CLI
+# tools, Jinja2 templates, and a Python appletsrc generator.
+#
+# Override any value per-host or per-group in the usual Ansible variable
+# precedence chain.  Every leaf value here maps 1:1 to a KDE config entry.
+# ============================================================================
+
+# ---------- target user (set by the installer at runtime) ----------
+kde_user: "{{ install_user }}"
+kde_home: "/home/{{ kde_user }}"
+kde_config: "{{ kde_home }}/.config"
+kde_local_share: "{{ kde_home }}/.local/share"
+
+# ==========================================================================
+# Extra packages needed beyond plasma-meta
+# ==========================================================================
+kde_extra_packages:
+  - libinput-gestures            # touchpad gesture daemon
+  - ttf-dejavu-nerd              # DejaVu Nerd Font (Powerline glyphs)
+  - noto-fonts
+  - noto-fonts-cjk
+  - noto-fonts-emoji
+  - xdotool                      # used by libinput-gestures to emit key events
+  - zsh-theme-powerlevel10k      # oh-my-zsh theme (optional, pulled by chezmoi)
+
+# ==========================================================================
+# Custom plasmoids — pre-built into the local AUR repo
+# ==========================================================================
+# These are built by scripts/build-aur-repo.sh from sibling git repos and
+# packaged as local pacman packages embedded in the ISO.
+#
+# kde-task-manager:
+#   Patched plasma-desktop task manager applet. Full-height launcher icons on
+#   multi-row panels, grouping off, manual sorting, maxStripes=2 by default.
+#   Installs to the system Qt plugin path, overriding the stock applet.
+#   Source: ../kde-task-manager  (plasma-desktop 6.6.0 + fullheight-launchers.patch)
+#
+# plasma-ai-usage-monitor:
+#   Custom plasmoid (com.github.loofi.aiusagemonitor) — monitors AI API token
+#   usage, rate limits, costs, and budgets across multiple providers.
+#   Source: ../plasma-ai-usage-monitor
+# ==========================================================================
+kde_custom_plasmoid_packages:
+  - arches-taskmanager-patched   # local repo pkg built from ../kde-task-manager
+  - plasma-ai-usage-monitor      # local repo pkg built from ../plasma-ai-usage-monitor
+
+# ==========================================================================
+# KWin — Window Manager
+# ==========================================================================
+kde_kwin:
+  # --- Virtual desktops ---
+  virtual_desktops:
+    number: 2
+    rows: 2
+    names:
+      - "Desktop 1"
+      - "Desktop 2"
+
+  # --- Tiling (KWin tiling, Plasma 6) ---
+  tiling:
+    padding: 4                    # gap between tiled windows (px)
+    # Default layout: 25% / 50% / 25% (three-column)
+    # Tiling layouts are stored in kwinrc [Tiling][<screen>] but the
+    # built-in 3-column is id "3col" with ratios below.
+    layouts:
+      - name: "3col"
+        ratios: [0.25, 0.50, 0.25]
+
+  # --- Titlebar ---
+  titlebar:
+    double_click_action: "MaximizeVerticalOnly"   # MaximizeVerticalOnly | Maximize | Shade | Close | Nothing
+
+  # --- Xwayland ---
+  xwayland:
+    scale: 1.55                   # HighDPI scale for X11 apps under Wayland
+
+# ==========================================================================
+# Power / Energy — powerdevil
+# ==========================================================================
+kde_power:
+  ac:
+    dim_display: false
+    dim_display_timeout: 0        # seconds; 0 = never
+    dpms_timeout: 0               # seconds; 0 = never turn off screen
+    suspend_timeout: 0            # seconds; 0 = never
+    suspend_type: "None"          # None | Sleep | Hibernate
+  battery:
+    dim_display: false
+    dim_display_timeout: 0
+    dpms_timeout: 0
+    suspend_timeout: 0
+    suspend_type: "None"
+  low_battery:
+    dim_display: false
+    dim_display_timeout: 0
+    dpms_timeout: 0
+    suspend_timeout: 0
+    suspend_type: "None"
+  critical_battery:
+    level: 2                      # percent
+    action: "Shutdown"            # Shutdown | Hibernate | Sleep | Nothing
+  lid:
+    close_action: "Nothing"       # Nothing | Sleep | Hibernate | Shutdown | LockScreen
+  brightness:
+    on_ac: 100
+    on_battery: 100
+    keyboard_on_ac: 0
+    keyboard_on_battery: 0
+
+# ==========================================================================
+# Input Devices
+# ==========================================================================
+kde_input:
+  touchpad:
+    # Apple Magic Trackpad (MTP) via Bluetooth
+    name: "Apple MTP Touchpad"
+    natural_scroll: false
+    tap_to_click: false
+    click_method: "ClickMethodAreas"  # ClickMethodAreas = LMR zones; ClickMethodClickfinger = finger count
+    disable_while_typing: true
+    pointer_acceleration: 0.0
+    pointer_acceleration_profile: "Flat"
+
+  keyboard:
+    # Apple Aluminum (ANSI)
+    numlock_on_startup: 0         # 0=off, 1=on, 2=unchanged
+    repeat_delay: 250
+    repeat_rate: 40
+
+  cursor:
+    theme: "breeze_cursors"
+    size: 30
+
+# ==========================================================================
+# Shortcuts — kglobalshortcutsrc
+# ==========================================================================
+# Format:  component -> action -> key sequence
+# The Jinja2 template handles the 3-column tab-separated encoding:
+#   key_sequence \t default_key_sequence \t friendly_name
+# We only need to declare the desired key; the template fills defaults.
+# ==========================================================================
+kde_shortcuts:
+  kwin:
+    "Expose":                "Ctrl+F9"
+    "ExposeAll":             "Ctrl+F10"
+    "ExposeClass":           "Ctrl+F7"
+    "Switch to Desktop 1":   "Ctrl+F1"
+    "Switch to Desktop 2":   "Ctrl+F2"
+    "Switch to Desktop 3":   "Ctrl+F3"
+    "Switch to Desktop 4":   "Ctrl+F4"
+    "Walk Through Windows":  "Alt+Tab"
+
+# ==========================================================================
+# Session / Security / Lock Screen
+# ==========================================================================
+kde_session:
+  logout_confirm: false
+  logout_prompt: "ShutdownTypeNone"     # ShutdownTypeNone = go straight to logout
+
+kde_screenlocker:
+  autolock: false
+  lock_on_resume: false
+  timeout: 0                            # minutes; 0 = never
+
+kde_kded:
+  delete_confirmation: false            # kio / file manager delete confirmation
+
+kde_krunner:
+  desktop_search_typing: false          # "free floating" KRunner triggered by typing on desktop
+
+# ==========================================================================
+# Theme / Appearance
+# ==========================================================================
+kde_theme:
+  color_scheme: "BreezeLight"
+  plasma_theme: "breeze-dark"
+  icon_theme: "breeze"
+  cursor_theme: "breeze_cursors"
+  cursor_size: 30
+  window_decoration: "org.kde.breeze"
+  font:
+    general: "Noto Sans,10,-1,5,50,0,0,0,0,0"
+    fixed: "DejaVuSansM Nerd Font Mono,10,-1,5,50,0,0,0,0,0"
+    small: "Noto Sans,8,-1,5,50,0,0,0,0,0"
+    toolbar: "Noto Sans,10,-1,5,50,0,0,0,0,0"
+    menu: "Noto Sans,10,-1,5,50,0,0,0,0,0"
+
+# ==========================================================================
+# Konsole
+# ==========================================================================
+kde_konsole:
+  profile:
+    name: "Arches"
+    command: "/bin/zsh"
+    color_scheme: "GreenOnBlack"
+    font: "DejaVuSansM Nerd Font Mono,10,-1,5,50,0,0,0,0,0,Regular"
+    scrollback_lines: 10000
+  default_profile: "Arches.profile"
+  tab_bar_position: "Bottom"      # Top | Bottom
+
+# ==========================================================================
+# Panel / Widgets — consumed by the Python appletsrc generator
+# ==========================================================================
+kde_panel:
+  location: "bottom"              # top | bottom | left | right
+  height: 40
+  floating: false
+  alignment: "center"             # left | center | right
+  hiding: "none"                  # none | autohide | dodgewindows | windowsgobelow
+  widgets:
+    - plugin: "org.kde.plasma.kickoff"
+      config: {}
+    - plugin: "org.kde.plasma.pager"
+      config:
+        General:
+          displayedText: "Number"
+          showWindowIcons: "true"
+    # Uses patched task manager (arches-taskmanager-patched package).
+    # Config below matches the patch's main.xml defaults so the applet
+    # starts correctly even without a prior config file.
+    - plugin: "org.kde.plasma.taskmanager"
+      config:
+        General:
+          showOnlyCurrentScreen: "true"
+          groupingStrategy: "0"           # 0 = Do Not Group
+          sortingStrategy: "0"            # 0 = Do Not Sort (manual)
+          hideLauncherOnStart: "false"
+          maxStripes: "2"
+          forceStripes: "true"
+          launchers: ""
+    - plugin: "org.kde.plasma.systemtray"
+      config: {}
+    - plugin: "com.github.loofi.aiusagemonitor"
+      config: {}
+    - plugin: "org.kde.plasma.digitalclock"
+      config:
+        Appearance:
+          showDate: "true"
+          dateFormat: "isoDate"
+    - plugin: "org.kde.plasma.lock_logout"
+      config: {}
+
+# ==========================================================================
+# Touchpad Gestures — libinput-gestures
+# ==========================================================================
+kde_libinput_gestures:
+  gestures:
+    - gesture: "swipe up 3"
+      action: "xdotool key ctrl+F9"       # Present Windows (current desktop)
+    - gesture: "swipe down 3"
+      action: "xdotool key ctrl+F10"      # Present Windows (all desktops)
+    - gesture: "swipe left 3"
+      action: "xdotool key ctrl+F2"       # Next desktop
+    - gesture: "swipe right 3"
+      action: "xdotool key ctrl+F1"       # Prev desktop
+  autostart: true
+
+# ==========================================================================
+# XDG User Directories
+# ==========================================================================
+kde_xdg_dirs:
+  DESKTOP: "$HOME"
+  DOCUMENTS: "$HOME"
+  DOWNLOAD: "$HOME"
+  MUSIC: "$HOME"
+  PICTURES: "$HOME"
+  PUBLICSHARE: "$HOME"
+  TEMPLATES: "$HOME"
+  VIDEOS: "$HOME"
+
+# ==========================================================================
+# User dotfiles directory
+# ==========================================================================
+# The installer creates ~/dotfiles on the target machine with user-editable
+# shell config files.  env.sh is symlinked into the Plasma env autoload dir
+# so it runs at every Plasma login.  The user manages secrets (API keys etc.)
+# by editing ~/dotfiles/env.sh directly — no encryption tooling required.
+# ==========================================================================
+kde_dotfiles_dir: "{{ kde_home }}/dotfiles"
+
+kde_env_sh_content: |
+  #!/bin/sh
+  # ~/dotfiles/env.sh — sourced by Plasma at login via symlink.
+  # Edit this file to add PATH entries, API keys, and other env vars.
+  # This file is NOT managed by Ansible after initial creation.
+
+  export EDITOR=vi
+
+  # ── PATH additions ──────────────────────────────────────────────────
+  # export PATH="$HOME/.local/bin:$PATH"
+
+  # ── NVM ─────────────────────────────────────────────────────────────
+  # export NVM_DIR="$HOME/.nvm"
+  # [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
+  # ── Poetry ──────────────────────────────────────────────────────────
+  # export PATH="$HOME/.local/bin:$PATH"
+
+  # ── API Keys ────────────────────────────────────────────────────────
+  # export ANTHROPIC_API_KEY=""
+  # export OPENAI_API_KEY=""
+  # export GITHUB_TOKEN=""
+
+# ==========================================================================
+# kwriteconfig6 settings map
+# ==========================================================================
+# Generic KDE config entries that don't fit the above categories.
+# Each item: { file, group, key, value }
+# Tasks iterate this list directly with kwriteconfig6.
+# ==========================================================================
+kde_kwriteconfig_entries: []

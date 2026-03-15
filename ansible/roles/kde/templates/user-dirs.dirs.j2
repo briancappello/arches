@@ -1,0 +1,5 @@
+# This file is written by Arches installer (Ansible kde role).
+# To change, edit ansible/roles/kde/defaults/main.yml and re-run.
+{% for dir_name, dir_path in kde_xdg_dirs.items() %}
+XDG_{{ dir_name }}_DIR="{{ dir_path }}"
+{% endfor %}
