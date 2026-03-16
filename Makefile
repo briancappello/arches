@@ -123,7 +123,12 @@ stage-bootconfig: ## Generate mkinitcpio preset and substitute kernel name in bo
 	\
 	echo "  Substituting kernel name in boot configs"; \
 	sed -i "s/vmlinuz-[a-zA-Z0-9_%-]\{1,\}/vmlinuz-$$KERNEL/g; s/initramfs-[a-zA-Z0-9_%-]\{1,\}\.img/initramfs-$$KERNEL.img/g" \
-		$(ISO_PROFILE)/grub/grub.cfg $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg
+		$(ISO_PROFILE)/grub/grub.cfg $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg; \
+	\
+	echo "  Copying mkinitcpio archiso.conf from platform"; \
+	mkdir -p $(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d; \
+	cp $(PLATFORMS)/$(PLATFORM)/archiso.conf \
+		$(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d/archiso.conf
 
 assemble-packages: ## Assemble ISO package list from common + platform
 	@echo "══ Assembling package list ($(PLATFORM)) ══"
@@ -275,6 +280,7 @@ clean: ## Remove staged files from ISO airootfs
 	rm -f  $(ISO_PROFILE)/packages.x86_64
 	rm -f  $(ISO_PROFILE)/packages.aarch64
 	rm -f  $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook
+	rm -f  $(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d/archiso.conf
 	@# Restore %KERNEL% placeholders in boot configs (undo stage-bootconfig)
 	@sed -i 's/vmlinuz-[a-zA-Z0-9_%-]\{1,\}/vmlinuz-%KERNEL%/g; s/initramfs-[a-zA-Z0-9_%-]\{1,\}\.img/initramfs-%KERNEL%.img/g' \
 		$(ISO_PROFILE)/grub/grub.cfg $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg 2>/dev/null || true

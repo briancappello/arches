@@ -69,6 +69,7 @@ wireguard-tools
 nfs-utils
 
 # ─── Misc ────────────────────────────────────────────
+pv
 sudo
 zsh
 man-db
