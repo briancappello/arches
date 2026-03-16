@@ -9,26 +9,51 @@ Currently supported platforms:
 | Platform          | Base                     | Kernel          | Bootloader               | Filesystem         | Status                    |
 |-------------------|--------------------------|-----------------|--------------------------|--------------------|---------------------------|
 | `x86-64`          | CachyOS v3 (AVX2/SSE4.2) | `linux-cachyos` | Limine                   | btrfs + subvolumes | Fully implemented         |
-| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64` | GRUB                     | ext4 (4-partition) | Fully implemented         |
-| `aarch64-apple`   | Asahi Linux              | `linux-asahi`   | GRUB (m1n1→U-Boot chain) | ext4 (4-partition) | Not implemented or tested |
+| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64` | GRUB                     | btrfs + subvolumes | Fully implemented         |
+| `aarch64-apple`   | Asahi Linux              | `linux-asahi`   | GRUB (m1n1→U-Boot chain) | TBD                | Not implemented or tested |
 
 ## Quickstart
 
 ### Prerequisites
 
-You need an Arch Linux (or Arch-based) system with:
+**ISO build (x86-64, native on Arch/CachyOS):**
 
 ```bash
-sudo pacman -S archiso base-devel git qemu-full edk2-ovmf
+sudo pacman -S archiso squashfs-tools base-devel git
 ```
-
-On `aarch64` we use a containerized build with `podman` that should work from any Linux host.
 
 CachyOS signing key must be trusted in your build environment:
 
 ```bash
 sudo pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com
 sudo pacman-key --lsign-key F3B607488DB35A47
+```
+
+**ISO build (aarch64, containerized):**
+
+Runs inside a Podman container — works from any Linux host (Fedora, Arch, etc.):
+
+```bash
+# Fedora/RHEL:
+sudo dnf install podman
+# Arch:
+sudo pacman -S podman
+```
+
+**QEMU testing (optional):**
+
+```bash
+# x86-64:
+sudo pacman -S qemu-full edk2-ovmf
+# aarch64 (Fedora):
+sudo dnf install qemu-system-aarch64 edk2-aarch64
+```
+
+**Development:**
+
+```bash
+# Install uv (Python package manager) — https://docs.astral.sh/uv/
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ### Templates
@@ -40,7 +65,7 @@ VM Server
 
 #### Auto Install
 
-`iso/aiorootfs/root/auto-install.toml`
+`iso/airootfs/root/auto-install.toml`
 
 The installer checks for `/root/auto-install.toml` in the running ISO. If this file exists, it will auto install the declared template. 
 
@@ -73,7 +98,7 @@ make clean-all         # Remove all build artifacts + output
 Install dev dependencies:
 
 ```bash
-cd installer && pip install -e '.[dev]'
+uv sync --dev
 ```
 
 Run `make` with no arguments to see all targets.

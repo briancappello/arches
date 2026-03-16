@@ -299,13 +299,18 @@ check-root:
 
 check-deps:
 	@missing=""; \
-	for cmd in mkarchiso pacman-key mksquashfs grub-mkstandalone; do \
+	for cmd in mkarchiso pacman-key mksquashfs; do \
 		if ! command -v $$cmd &>/dev/null; then \
 			missing="$$missing $$cmd"; \
 		fi; \
 	done; \
+	if echo "$(PLATFORM)" | grep -q aarch64 || [ -z "$(PLATFORM)" ]; then \
+		if ! command -v grub-mkstandalone &>/dev/null; then \
+			missing="$$missing grub-mkstandalone"; \
+		fi; \
+	fi; \
 	if [ -n "$$missing" ]; then \
 		echo "ERROR: Missing required commands:$$missing"; \
-		echo "Install prerequisites: sudo pacman -S archiso grub"; \
+		echo "Install prerequisites: sudo pacman -S archiso squashfs-tools grub"; \
 		exit 1; \
 	fi
