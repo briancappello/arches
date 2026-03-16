@@ -1,8 +1,8 @@
 """Bootloader installation and configuration.
 
 Supports multiple bootloader backends via the platform config:
-- Limine (x86-64): UEFI + BIOS, snapshot boot entries
-- GRUB (aarch64): UEFI-only, standard boot
+- Limine (x86-64): UEFI + BIOS, snapshot boot entries via limine-snapper-sync
+- GRUB (aarch64): UEFI-only, snapshot boot entries via grub-btrfs
 """
 
 from __future__ import annotations
@@ -71,9 +71,9 @@ def write_limine_defaults(
 
     cmdline = " ".join(cmdline_parts)
 
-    default_conf = f'ESP_PATH="/boot"\n'
+    default_conf = 'ESP_PATH="/boot"\n'
     default_conf += f'KERNEL_CMDLINE[default]+="{cmdline}"\n'
-    default_conf += f'BOOT_ORDER="*, *lts, *fallback'
+    default_conf += 'BOOT_ORDER="*, *lts, *fallback'
     if platform.bootloader.snapshot_boot:
         default_conf += ", Snapshots"
     default_conf += '"\n'
@@ -270,6 +270,71 @@ def _setup_memtest_limine(log: LogCallback | None = None) -> None:
 # ─── GRUB ─────────────────────────────────────────────────
 
 
+def write_grub_defaults(
+    platform: PlatformConfig,
+    log: LogCallback | None = None,
+) -> None:
+    """Write /etc/default/grub with kernel cmdline parameters."""
+    cmdline_parts = []
+
+    # aarch64 kernels may default to serial console only; ensure
+    # framebuffer console is enabled so output is visible on screen.
+    if platform.arch == "aarch64":
+        cmdline_parts.append("console=tty0")
+
+    cmdline_parts.append("systemd.show_status=auto")
+
+    cmdline = " ".join(cmdline_parts)
+
+    grub_default = MOUNT_ROOT / "etc" / "default" / "grub"
+    if grub_default.exists():
+        import re
+
+        content = grub_default.read_text()
+        # Update GRUB_CMDLINE_LINUX_DEFAULT
+        content = re.sub(
+            r"^GRUB_CMDLINE_LINUX_DEFAULT=.*$",
+            f'GRUB_CMDLINE_LINUX_DEFAULT="{cmdline}"',
+            content,
+            flags=re.MULTILINE,
+        )
+        grub_default.write_text(content)
+    else:
+        grub_default.parent.mkdir(parents=True, exist_ok=True)
+        grub_default.write_text(
+            f'GRUB_CMDLINE_LINUX_DEFAULT="{cmdline}"\nGRUB_TIMEOUT=5\n'
+        )
+    _log("Wrote /etc/default/grub", log)
+
+
+def _install_alarm_vmlinuz_hook(
+    kernel_pkg: str, log: LogCallback | None = None
+) -> None:
+    """Install a pacman hook that maintains the vmlinuz-* symlink.
+
+    Arch Linux ARM kernels install /boot/Image instead of /boot/vmlinuz-*.
+    GRUB's grub-mkconfig only searches for vmlinuz-*, so we need a persistent
+    symlink. This hook recreates it after every kernel upgrade.
+    """
+    hooks_dir = MOUNT_ROOT / "etc" / "pacman.d" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    hook_content = f"""[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = {kernel_pkg}
+
+[Action]
+Description = Creating vmlinuz symlink for {kernel_pkg}...
+When = PostTransaction
+Depends = coreutils
+Exec = /bin/ln -sf Image /boot/vmlinuz-{kernel_pkg}
+"""
+    (hooks_dir / "90-vmlinuz-symlink.hook").write_text(hook_content)
+    _log("Installed pacman hook for vmlinuz symlink.", log)
+
+
 def _install_grub(
     platform: PlatformConfig,
     device: str,
@@ -293,6 +358,36 @@ def _install_grub(
     else:
         grub_target = "x86_64-efi"
 
+    # Determine EFI directory: with btrfs, ESP is at /boot/efi (GRUB reads
+    # kernels from btrfs natively). With ext4 + separate /boot, ESP is also
+    # at /boot/efi. In both cases the EFI directory is /boot/efi.
+    efi_directory = "/boot/efi"
+
+    # Arch Linux ARM kernels install /boot/Image instead of /boot/vmlinuz-*.
+    # GRUB's grub-mkconfig only searches for vmlinuz-*/vmlinux-*, so create
+    # a symlink. This also needs a pacman hook to maintain it across upgrades.
+    if platform.arch == "aarch64":
+        kernel_pkg = platform.kernel.package
+        vmlinuz = MOUNT_ROOT / "boot" / f"vmlinuz-{kernel_pkg}"
+        if not vmlinuz.exists() and (MOUNT_ROOT / "boot" / "Image").exists():
+            _log(f"Creating vmlinuz symlink for {kernel_pkg}...", log)
+            vmlinuz.symlink_to("Image")
+        _install_alarm_vmlinuz_hook(kernel_pkg, log)
+
+    # On aarch64, remove efi_uga from grub's video setup script.
+    # efi_uga is an x86-only module that doesn't exist on arm64-efi;
+    # its absence causes a "not found" error and a "Press any key" pause.
+    if platform.arch == "aarch64":
+        header = MOUNT_ROOT / "etc" / "grub.d" / "00_header"
+        if header.exists():
+            content = header.read_text()
+            content = content.replace("    insmod efi_uga\n", "")
+            header.write_text(content)
+            _log("Removed efi_uga from GRUB 00_header (not available on arm64).", log)
+
+    # Write /etc/default/grub
+    write_grub_defaults(platform, log)
+
     _log(f"Installing GRUB ({grub_target})...", log)
 
     # grub-install into the chroot
@@ -302,7 +397,7 @@ def _install_grub(
             "--target",
             grub_target,
             "--efi-directory",
-            "/boot/efi",
+            efi_directory,
             "--bootloader-id",
             "Arches",
             "--removable",
@@ -310,7 +405,8 @@ def _install_grub(
         log=log,
     )
 
-    # Generate grub.cfg
+    # Generate grub.cfg — grub-mkconfig auto-detects btrfs subvolumes
+    # and adds the correct rootflags=subvol=/@ to the boot entry.
     _log("Generating GRUB config...", log)
     chroot_run(["grub-mkconfig", "-o", "/boot/grub/grub.cfg"], log=log)
 

@@ -3,6 +3,9 @@
 # These are combined with iso/packages.common at build time
 # to produce the final ISO package list.
 
+# ─── Keyring ──────────────────────────────────────────
+archlinuxarm-keyring
+
 # ─── Kernel ───────────────────────────────────────────
 linux-aarch64
 linux-aarch64-headers
@@ -11,3 +14,6 @@ linux-firmware
 # ─── Bootloader ───────────────────────────────────────
 grub
 efibootmgr
+
+# ─── Filesystem ──────────────────────────────────────
+btrfs-progs

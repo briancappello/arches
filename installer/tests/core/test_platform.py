@@ -165,11 +165,11 @@ class TestLoadAarch64Platforms:
         assert platform.kernel.package == "linux-aarch64"
         assert platform.kernel.headers == "linux-aarch64-headers"
         assert platform.bootloader.type == "grub"
-        assert platform.bootloader.snapshot_boot is False
-        assert platform.disk_layout.filesystem == "ext4"
-        assert platform.disk_layout.boot_size_mib == 1024
-        assert platform.disk_layout.home_partition is True
-        assert platform.disk_layout.subvolumes == []
+        assert platform.bootloader.snapshot_boot is True
+        assert platform.disk_layout.filesystem == "btrfs"
+        assert platform.disk_layout.boot_size_mib == 0
+        assert platform.disk_layout.home_partition is False
+        assert platform.disk_layout.subvolumes == ["@", "@home", "@var"]
 
     def test_load_aarch64_apple(self) -> None:
         toml_path = self.PROJECT_ROOT / "platforms" / "aarch64-apple" / "platform.toml"
@@ -188,12 +188,12 @@ class TestLoadAarch64Platforms:
         )
         platform = load_platform(toml_path)
         dl = platform.disk_layout
-        assert dl.filesystem == "ext4"
+        assert dl.filesystem == "btrfs"
         assert dl.esp_size_mib == 512
-        assert dl.boot_size_mib == 1024
-        assert dl.home_partition is True
+        assert dl.boot_size_mib == 0
+        assert dl.home_partition is False
         assert dl.swap == "zram"
-        assert dl.subvolumes == []
+        assert dl.subvolumes == ["@", "@home", "@var"]
 
     def test_aarch64_apple_disk_layout(self) -> None:
         toml_path = self.PROJECT_ROOT / "platforms" / "aarch64-apple" / "platform.toml"

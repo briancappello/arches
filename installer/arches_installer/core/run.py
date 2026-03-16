@@ -7,7 +7,6 @@ output is streamed line-by-line to the log callback for real-time feedback.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT

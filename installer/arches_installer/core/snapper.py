@@ -73,11 +73,51 @@ def configure_snapshot_boot(
     platform: PlatformConfig,
     log: LogCallback | None = None,
 ) -> None:
-    """Set up limine-snapper-sync for bootable snapshots."""
+    """Set up bootable snapshot entries.
+
+    Dispatches based on bootloader type:
+    - Limine: uses limine-snapper-sync to copy kernels and write boot entries
+    - GRUB: uses grub-btrfs to auto-regenerate grub.cfg with snapshot entries
+    """
     if not platform.bootloader.snapshot_boot:
         _log("Snapshot boot not enabled, skipping.", log)
         return
 
+    if platform.bootloader.type == "grub":
+        _configure_snapshot_boot_grub(platform, log)
+    else:
+        _configure_snapshot_boot_limine(platform, log)
+
+
+def _configure_snapshot_boot_grub(
+    platform: PlatformConfig,
+    log: LogCallback | None = None,
+) -> None:
+    """Set up grub-btrfs for bootable snapshots via GRUB.
+
+    grub-btrfs watches /.snapshots for new snapper snapshots and
+    auto-regenerates grub.cfg to include snapshot boot entries.
+    """
+    _log("Configuring snapshot boot (grub-btrfs)...", log)
+
+    # Enable grub-btrfsd — the daemon that watches for snapshot changes
+    # and regenerates grub.cfg automatically.
+    try:
+        chroot_run(
+            ["systemctl", "enable", "grub-btrfsd.service"],
+            log=log,
+        )
+        _log("Enabled grub-btrfsd service.", log)
+    except subprocess.CalledProcessError:
+        _log("WARNING: Could not enable grub-btrfsd service.", log)
+        _log("You may need to install grub-btrfs and enable it manually.", log)
+
+
+def _configure_snapshot_boot_limine(
+    platform: PlatformConfig,
+    log: LogCallback | None = None,
+) -> None:
+    """Set up limine-snapper-sync for bootable snapshots via Limine."""
     _log("Configuring snapshot boot (limine-snapper-sync)...", log)
 
     # Update limine-snapper-sync config for our OS name.

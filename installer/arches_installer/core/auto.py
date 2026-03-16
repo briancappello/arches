@@ -39,6 +39,7 @@ class AutoInstallConfig:
     username: str
     password: str
     reboot: bool
+    shutdown: bool
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AutoInstallConfig:
@@ -61,6 +62,7 @@ class AutoInstallConfig:
             raise ValueError("install.password is required")
 
         reboot = install.get("reboot", False)
+        shutdown = install.get("shutdown", False)
 
         return cls(
             template=template,
@@ -68,6 +70,7 @@ class AutoInstallConfig:
             username=username,
             password=password,
             reboot=reboot,
+            shutdown=shutdown,
         )
 
     @classmethod
@@ -108,6 +111,7 @@ def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int
     log(f"  Hostname: {config.hostname}")
     log(f"  User:     {config.username}")
     log(f"  Reboot:   {config.reboot}")
+    log(f"  Shutdown: {config.shutdown}")
     log("")
 
     try:
@@ -163,7 +167,10 @@ def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int
         log("")
         log("== Installation complete ==")
 
-        if config.reboot:
+        if config.shutdown:
+            log("Shutting down...")
+            subprocess.run(["systemctl", "poweroff"], check=False)
+        elif config.reboot:
             log("Rebooting into installed system...")
             subprocess.run(["systemctl", "reboot"], check=False)
 

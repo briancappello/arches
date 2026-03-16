@@ -1,5 +1,6 @@
 # Build artifacts
 out/
+.pkg-cache/
 
 # ─── Staged into ISO airootfs by Makefile ─────────────
 # These are copies of source files (installer/, ansible/, platforms/)
@@ -22,9 +23,7 @@ iso/airootfs/opt/arches/build-host.pub
 iso/pacman.conf
 iso/packages.x86_64
 iso/packages.aarch64
-
-# ─── mkarchiso work directory ─────────────────────────
-/tmp/arches-work/
+iso/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook
 
 # ─── Python ───────────────────────────────────────────
 __pycache__/
@@ -35,7 +34,6 @@ dist/
 build/
 .eggs/
 .venv/
-/tmp/textual-venv/
 
 # ─── Testing ─────────────────────────────────────────
 .pytest_cache/

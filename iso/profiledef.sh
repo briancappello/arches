@@ -35,7 +35,13 @@ fi
 
 pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"
-airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' '15' '-b' '1M')
+
+# The ALARM linux-aarch64 kernel lacks CONFIG_SQUASHFS_ZSTD; use xz instead.
+if [[ "$arch" == "aarch64" ]]; then
+    airootfs_image_tool_options=('-comp' 'xz' '-b' '1M')
+else
+    airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' '15' '-b' '1M')
+fi
 file_permissions=(
     ["/etc/shadow"]="0:0:400"
     ["/root"]="0:0:750"

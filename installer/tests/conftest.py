@@ -78,17 +78,22 @@ def aarch64_platform() -> PlatformConfig:
             efi_binary="BOOTAA64.EFI",
             efi_fallback_path="EFI/BOOT/BOOTAA64.EFI",
             supports_bios=False,
+            snapshot_boot=True,
         ),
         disk_layout=DiskLayoutConfig(
-            filesystem="ext4",
-            mount_options="noatime",
+            filesystem="btrfs",
+            mount_options="compress=zstd:1,noatime",
+            subvolumes=["@", "@home", "@var"],
             esp_size_mib=512,
-            boot_size_mib=1024,
-            home_partition=True,
             swap="zram",
         ),
         hardware_detection=HardwareDetectionConfig(enabled=False),
-        base_packages=[],
+        base_packages=[
+            "grub",
+            "efibootmgr",
+            "grub-btrfs",
+            "btrfs-progs",
+        ],
     )
 
 

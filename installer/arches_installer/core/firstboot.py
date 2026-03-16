@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from arches_installer.core.disk import MOUNT_ROOT
 from arches_installer.core.run import LogCallback, _log

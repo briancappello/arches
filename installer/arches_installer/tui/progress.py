@@ -7,17 +7,17 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Center, Vertical, VerticalScroll
+from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Label, RichLog
 
-INSTALL_LOG = Path("/var/log/arches-install.log")
-
-from arches_installer.core.disk import prepare_disk
-from arches_installer.core.install import install_system
 from arches_installer.core.bootloader import install_bootloader
-from arches_installer.core.snapper import setup_snapshots
+from arches_installer.core.disk import prepare_disk
 from arches_installer.core.firstboot import inject_firstboot_service
+from arches_installer.core.install import install_system
+from arches_installer.core.snapper import setup_snapshots
+
+INSTALL_LOG = Path("/var/log/arches-install.log")
 
 
 class InstallProgressScreen(Screen):
@@ -34,13 +34,20 @@ class InstallProgressScreen(Screen):
                         wrap=True,
                         id="install-log",
                     )
-                yield Button(
-                    "Reboot",
-                    variant="primary",
-                    id="btn-reboot",
-                    classes="btn-primary",
-                    disabled=True,
-                )
+                with Horizontal(classes="button-row"):
+                    yield Button(
+                        "Reboot",
+                        variant="primary",
+                        id="btn-reboot",
+                        classes="btn-primary",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Shutdown",
+                        variant="default",
+                        id="btn-shutdown",
+                        disabled=True,
+                    )
 
     def log_msg(self, msg: str) -> None:
         """Thread-safe log message to the RichLog widget and log file."""
@@ -62,7 +69,7 @@ class InstallProgressScreen(Screen):
         # Initialize the log file
         try:
             INSTALL_LOG.parent.mkdir(parents=True, exist_ok=True)
-            INSTALL_LOG.write_text(f"=== Arches Install Log ===\n")
+            INSTALL_LOG.write_text("=== Arches Install Log ===\n")
         except OSError:
             pass
         thread = threading.Thread(target=self._run_install, daemon=True)
@@ -89,7 +96,7 @@ class InstallProgressScreen(Screen):
                         "[red]ERROR: No partition map from manual setup![/red]"
                     )
                     return
-                self.log_msg(f"Using manually prepared mounts:")
+                self.log_msg("Using manually prepared mounts:")
                 self.log_msg(f"  Root: {parts.root}")
                 self.log_msg(f"  ESP:  {parts.esp}")
                 if parts.boot:
@@ -152,15 +159,19 @@ class InstallProgressScreen(Screen):
             self.app.call_from_thread(self._enable_reboot)
 
     def _enable_reboot(self) -> None:
-        """Enable the reboot button and focus it."""
+        """Enable the reboot/shutdown buttons and focus reboot."""
         title = self.query_one("#title", Label)
         title.update("Complete")
-        btn = self.query_one("#btn-reboot", Button)
-        btn.disabled = False
-        btn.focus()
+        btn_reboot = self.query_one("#btn-reboot", Button)
+        btn_reboot.disabled = False
+        btn_reboot.focus()
+        btn_shutdown = self.query_one("#btn-shutdown", Button)
+        btn_shutdown.disabled = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-reboot":
-            import subprocess
+        import subprocess
 
-            subprocess.run(["reboot"])
+        if event.button.id == "btn-reboot":
+            subprocess.run(["systemctl", "reboot"])
+        elif event.button.id == "btn-shutdown":
+            subprocess.run(["systemctl", "poweroff"])

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -17,7 +16,6 @@ from arches_installer.core.bootloader import (
 )
 from arches_installer.core.platform import (
     BootloaderPlatformConfig,
-    PlatformConfig,
 )
 
 
@@ -109,10 +107,36 @@ def test_install_bootloader_unknown_type(x86_64_platform):
 
 
 @patch("arches_installer.core.bootloader.chroot_run")
+@patch("arches_installer.core.bootloader.write_grub_defaults")
 @patch("arches_installer.core.bootloader.detect_firmware", return_value="uefi")
-def test_install_grub_aarch64_uefi(mock_fw, mock_chroot, aarch64_platform):
-    """GRUB on aarch64 should use arm64-efi target."""
-    _install_grub(aarch64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+def test_install_grub_aarch64_uefi(
+    mock_fw, mock_defaults, mock_chroot, aarch64_platform, tmp_path
+):
+    """GRUB on aarch64 should use arm64-efi target and write defaults."""
+    # Set up filesystem stubs for aarch64-specific steps
+    (tmp_path / "boot").mkdir()
+    (tmp_path / "boot" / "Image").touch()
+    grub_header = tmp_path / "etc" / "grub.d"
+    grub_header.mkdir(parents=True)
+    (grub_header / "00_header").write_text("    insmod efi_uga\n    insmod efi_gop\n")
+
+    with patch("arches_installer.core.bootloader.MOUNT_ROOT", tmp_path):
+        _install_grub(aarch64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
+
+    # vmlinuz symlink created
+    assert (tmp_path / "boot" / "vmlinuz-linux-aarch64").is_symlink()
+
+    # pacman hook for vmlinuz persistence
+    assert (
+        tmp_path / "etc" / "pacman.d" / "hooks" / "90-vmlinuz-symlink.hook"
+    ).exists()
+
+    # efi_uga removed from 00_header
+    header_content = (grub_header / "00_header").read_text()
+    assert "efi_uga" not in header_content
+    assert "efi_gop" in header_content
+
+    mock_defaults.assert_called_once_with(aarch64_platform, None)
 
     grub_install_call = mock_chroot.call_args_list[0]
     cmd = grub_install_call[0][0]
@@ -121,6 +145,10 @@ def test_install_grub_aarch64_uefi(mock_fw, mock_chroot, aarch64_platform):
     target_idx = cmd.index("--target") + 1
     assert cmd[target_idx] == "arm64-efi"
 
+    # Verify --efi-directory is /boot/efi
+    efi_idx = cmd.index("--efi-directory") + 1
+    assert cmd[efi_idx] == "/boot/efi"
+
     grub_mkconfig_call = mock_chroot.call_args_list[1]
     cmd2 = grub_mkconfig_call[0][0]
     assert "grub-mkconfig" in cmd2
@@ -128,8 +156,9 @@ def test_install_grub_aarch64_uefi(mock_fw, mock_chroot, aarch64_platform):
 
 
 @patch("arches_installer.core.bootloader.chroot_run")
+@patch("arches_installer.core.bootloader.write_grub_defaults")
 @patch("arches_installer.core.bootloader.detect_firmware", return_value="uefi")
-def test_install_grub_x86_64_uefi(mock_fw, mock_chroot, x86_64_platform):
+def test_install_grub_x86_64_uefi(mock_fw, mock_defaults, mock_chroot, x86_64_platform):
     """GRUB on x86_64 should use x86_64-efi target."""
     _install_grub(x86_64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
 

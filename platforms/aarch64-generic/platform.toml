@@ -1,7 +1,7 @@
 # Arches platform config — aarch64 (generic ARM64)
 #
-# Stub — not yet implemented.
 # Target: Arch Linux ARM on generic ARM64 hardware (RPi, server boards, etc.)
+# Uses GRUB (UEFI-only) with btrfs and grub-btrfs for snapshot boot entries.
 
 [platform]
 name = "aarch64-generic"
@@ -17,22 +17,30 @@ type = "grub"
 efi_binary = "BOOTAA64.EFI"
 efi_fallback_path = "EFI/BOOT/BOOTAA64.EFI"
 supports_bios = false
-snapshot_boot = false
+snapshot_boot = true
 
 [disk_layout]
-# Default auto-install layout: ESP + /boot (ext4) + root (ext4) + /home (ext4)
-filesystem = "ext4"
-mount_options = "noatime"
+# ESP + btrfs root with subvolumes. GRUB reads btrfs natively so
+# /boot lives on the @ subvolume — no separate /boot partition needed.
+# ESP mounts at /boot/efi for GRUB's EFI binary only.
+filesystem = "btrfs"
+mount_options = "compress=zstd:1,noatime"
+subvolumes = ["@", "@home", "@var"]
 esp_size_mib = 512
-boot_size_mib = 1024
-home_partition = true
 swap = "zram"
 
 [hardware_detection]
 enabled = false
 
 [base_packages]
-install = []
+# Always installed by pacstrap regardless of template.
+install = [
+    "archlinuxarm-keyring",
+    "grub",
+    "efibootmgr",
+    "grub-btrfs",
+    "btrfs-progs",
+]
 
 [aur_packages]
 build = []

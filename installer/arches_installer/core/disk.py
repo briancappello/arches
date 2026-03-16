@@ -27,8 +27,19 @@ class BlockDevice:
 
 
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
-    """Run a command, raising on failure."""
-    return subprocess.run(cmd, check=True, capture_output=True, text=True, **kwargs)
+    """Run a command, raising on failure with stderr in the exception."""
+    try:
+        return subprocess.run(cmd, check=True, capture_output=True, text=True, **kwargs)
+    except subprocess.CalledProcessError as e:
+        # Re-raise with stderr visible so failures aren't silently swallowed
+        msg = f"Command {e.cmd!r} returned non-zero exit status {e.returncode}."
+        if e.stderr:
+            msg += f"\nstderr: {e.stderr.strip()}"
+        if e.stdout:
+            msg += f"\nstdout: {e.stdout.strip()}"
+        raise subprocess.CalledProcessError(
+            e.returncode, e.cmd, output=msg, stderr=e.stderr
+        ) from None
 
 
 def detect_block_devices() -> list[BlockDevice]:
@@ -281,7 +292,8 @@ def detect_mounts() -> PartitionMap | None:
     home_dev = mounts.get(f"{root_str}/home", "")
 
     if boot_efi_dev:
-        # Separate /boot and /boot/efi — GRUB-style (aarch64)
+        # ESP at /boot/efi — GRUB-style. /boot may be a separate partition
+        # (ext4 layout) or a directory on the root filesystem (btrfs layout).
         return PartitionMap(
             esp=boot_efi_dev,
             root=root_dev,
@@ -315,7 +327,7 @@ def validate_mounts(parts: PartitionMap) -> list[str]:
     if not parts.esp:
         errors.append(
             "No ESP detected. Mount your EFI System Partition at "
-            "/mnt/boot (Limine) or /mnt/boot/efi (GRUB)."
+            "/mnt/boot (Limine) or /mnt/boot/efi (GRUB/btrfs)."
         )
     return errors
 
@@ -342,6 +354,12 @@ def prepare_disk(device: str, platform) -> PartitionMap:
         # x86-64-style: ESP (doubles as /boot) + root
         parts = partition_disk_x86(device, layout.esp_size_mib)
 
+    # Wait for the kernel to create partition device nodes.
+    # partprobe forces a re-read of the partition table; udevadm settle
+    # waits for udev to finish creating all /dev nodes.
+    run(["partprobe", device])
+    run(["udevadm", "settle", "--timeout=10"])
+
     # Format and mount
     format_esp(parts.esp)
 
@@ -359,10 +377,16 @@ def prepare_disk(device: str, platform) -> PartitionMap:
 
     # Mount /boot (separate) or ESP as /boot
     if parts.boot:
+        # Separate /boot partition (ext4) + ESP at /boot/efi — legacy GRUB+ext4
         run(["mkfs.ext4", "-L", "archboot", parts.boot])
         mount_boot(parts.boot)
         mount_boot_efi(parts.esp)
+    elif platform.bootloader.type == "grub":
+        # GRUB+btrfs: /boot lives on btrfs (@ subvolume), ESP at /boot/efi only.
+        # GRUB reads kernels from btrfs natively.
+        mount_boot_efi(parts.esp)
     else:
+        # Limine: ESP doubles as /boot
         mount_esp(parts.esp)
 
     # Mount /home if separate

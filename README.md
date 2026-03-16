@@ -2,15 +2,15 @@
 
 A personal Arch-based Linux distribution with a declarative, template-driven installer and configurable platform support.
 
-Arches uses a **platform + template matrix** design. A *platform* defines the hardware foundation — kernel, repos, bootloader, disk layout, hardware detection — while a *template* defines the userspace workload on top — packages, services, Ansible roles. You build an ISO for a specific platform (`make iso-x86-64`), and at install time you select a template. Templates are platform-independent and contain no hardware or disk configuration.
+Arches uses a **platform + template matrix** design. A *platform* defines the hardware foundation — kernel, repos, bootloader, disk layout, hardware detection — while a *template* defines the userspace on top — packages, services, Ansible roles. Templates are platform-independent. You build an ISO for a specific platform (`make iso-x86-64`), and at install time you select a template.
 
 Currently supported platforms:
 
 | Platform          | Base                     | Kernel          | Bootloader               | Filesystem         | Status                    |
 |-------------------|--------------------------|-----------------|--------------------------|--------------------|---------------------------|
 | `x86-64`          | CachyOS v3 (AVX2/SSE4.2) | `linux-cachyos` | Limine                   | btrfs + subvolumes | Fully implemented         |
-| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64` | GRUB                     | ext4 (4-partition) | Platform configs complete |
-| `aarch64-apple`   | Asahi Linux              | `linux-asahi`   | GRUB (m1n1→U-Boot chain) | ext4 (4-partition) | Platform configs complete |
+| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64` | GRUB                     | ext4 (4-partition) | Fully implemented         |
+| `aarch64-apple`   | Asahi Linux              | `linux-asahi`   | GRUB (m1n1→U-Boot chain) | ext4 (4-partition) | Not implemented or tested |
 
 ## Quickstart
 
@@ -22,6 +22,8 @@ You need an Arch Linux (or Arch-based) system with:
 sudo pacman -S archiso base-devel git qemu-full edk2-ovmf
 ```
 
+On `aarch64` we use a containerized build with `podman` that should work from any Linux host.
+
 CachyOS signing key must be trusted in your build environment:
 
 ```bash
@@ -29,18 +31,30 @@ sudo pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com
 sudo pacman-key --lsign-key F3B607488DB35A47
 ```
 
+### Templates
+
+See `installer/arches_installer/templates`. Two are included:
+
+Dev Workstation
+VM Server
+
+#### Auto Install
+
+`iso/aiorootfs/root/auto-install.toml`
+
+The installer checks for `/root/auto-install.toml` in the running ISO. If this file exists, it will auto install the declared template. 
+
 ### Build
 
 ```bash
-# 1. Build the ISO for x86-64 (requires root — mkarchiso needs it)
-#    This also pre-builds AUR packages, stages the platform config,
-#    and assembles the package list from common + platform-specific lists.
+# 1. Build the ISO (requires root for mkarchiso)
 sudo make iso-x86-64
+# or
+sudo make container-iso-aarch64
 
 # 2. Create a QEMU test disk and boot the ISO
 make test-disk
 make test-iso          # UEFI mode
-make test-iso-bios     # BIOS mode
 ```
 
 The built ISO is written to `out/arches-<date>.iso`. Each platform has its own make target (`iso-x86-64`, `iso-aarch64-generic`). The platform config is baked into the ISO at `/opt/arches/platform/platform.toml` so the installer knows which kernel, repos, and bootloader settings to use.
@@ -48,11 +62,8 @@ The built ISO is written to `out/arches-<date>.iso`. Each platform has its own m
 ### Development
 
 ```bash
-make lint              # Lint Python with ruff
-make format            # Auto-format Python with ruff
+make fmt               # Auto-format Python with ruff
 make test              # Run all tests (unit + TUI)
-make test-unit         # Run core unit tests only (no Textual needed)
-make test-tui          # Run Textual TUI tests only
 make test-template     # Validate all TOML templates parse
 make dry-run           # Dry-run the example auto-install config (x86-64)
 make clean             # Remove staged files from ISO airootfs
@@ -131,12 +142,12 @@ See `examples/auto-install.toml` for a full example.
 
 Customizing what software lands on the system happens at three layers:
 
-| Layer | File | What it controls |
-|-------|------|-----------------|
-| **Platform `[base_packages]`** | `platforms/*/platform.toml` | Platform-specific packages always installed (repo keyrings, settings, kernel) |
-| **Template `[system] packages`** | `templates/*.toml` | Workload-specific packages installed via `pacstrap` |
-| **Template `[services] enable`** | `templates/*.toml` | Which systemd services get enabled at boot |
-| **Ansible role** | `ansible/roles/*/tasks/main.yml` | How those packages are configured after install |
+| Layer                            | File                             | What it controls                                                              |
+|----------------------------------|----------------------------------|-------------------------------------------------------------------------------|
+| **Platform `[base_packages]`**   | `platforms/*/platform.toml`      | Platform-specific packages always installed (repo keyrings, settings, kernel) |
+| **Template `[system] packages`** | `templates/*.toml`               | Workload-specific packages installed via `pacstrap`                           |
+| **Template `[services] enable`** | `templates/*.toml`               | Which systemd services get enabled at boot                                    |
+| **Ansible role**                 | `ansible/roles/*/tasks/main.yml` | How those packages are configured after install                               |
 
 The platform provides the hardware foundation (kernel, repo keys, GPU detection tools). The template says **what** workload to install on top. The Ansible role says **how** to configure it. All three are declarative and version-controlled.
 
@@ -213,10 +224,10 @@ For packages that work out of the box with no configuration (e.g., `htop`, `git`
 
 Templates are declarative TOML files in `installer/arches_installer/templates/`. Each defines a **userspace workload** — packages, services, and Ansible roles. Templates are **platform-independent**: the kernel, repo keyrings, bootloader, disk layout, and hardware detection all come from the platform, not the template.
 
-| Template | Desktop | Use Case |
-|----------|---------|----------|
-| **Dev Workstation** | KDE Plasma | Full development environment with desktop |
-| **VM Server** | None (headless) | Server workloads (nginx, postgres, redis) |
+| Template            | Desktop         | Use Case                                  |
+|---------------------|-----------------|-------------------------------------------|
+| **Dev Workstation** | KDE Plasma      | Full development environment with desktop |
+| **VM Server**       | None (headless) | Server workloads (nginx, postgres, redis) |
 
 To add a new template, create a `.toml` file in the templates directory. The installer discovers all `.toml` files automatically:
 
@@ -237,14 +248,14 @@ enable = ["NetworkManager"]      # enabled via systemctl enable
 firstboot_roles = ["base", "zsh"]  # run on first boot
 ```
 
-Disk layout (filesystem, partition scheme, subvolumes, ESP size) and bootloader configuration (Limine vs GRUB, snapshot boot) are defined by the **platform**, not the template. This means the same template works on x86-64 (btrfs + Limine) and aarch64 (ext4 + GRUB) without modification.
+Disk layout (filesystem, partition scheme, subvolumes, ESP size) and bootloader configuration (Limine vs GRUB, snapshot boot) are defined by the **platform**, not the template. This means the same template works on x86-64 (btrfs + Limine) and aarch64 (btrfs + GRUB) without modification.
 
 ## Post-Install Automation
 
 Configuration is applied in two phases:
 
-| Phase | When | Mechanism | Roles |
-|-------|------|-----------|-------|
+| Phase          | When        | Mechanism                                    | Roles                                                          |
+|----------------|-------------|----------------------------------------------|----------------------------------------------------------------|
 | **First boot** | First login | systemd oneshot service → `ansible-playbook` | `base`, `zsh`, `kde`, `dev-tools`, `vm-server` (as applicable) |
 
 The first-boot service runs once and removes its sentinel file (`/opt/arches/firstboot-pending`), so it won't re-run on subsequent boots.
@@ -340,9 +351,9 @@ arches/
 - **Platform/template matrix** — Hardware concerns (kernel, repos, bootloader, disk layout, GPU detection) are separated from workload concerns (packages, services, Ansible roles). Platforms are selected at ISO build time; templates are selected at install time. Templates work on any platform without modification.
 - **Shell-first partitioning** — The default install flow drops the user to a shell to partition, format, and mount disks. The installer detects the mount layout on return. Auto-partition is available for VMs.
 - **CachyOS v3 repos** (x86-64 platform) — Full Arch package set recompiled with AVX2/SSE4.2 optimizations. Covers all x86-64 hardware from 2011 onward. The CachyOS custom pacman fork is intentionally excluded to maintain standard Arch pacman semantics.
-- **Bootloader dispatch** — The platform config determines the bootloader. x86-64 uses Limine (BIOS + UEFI, snapshot boot entries via `limine-snapper-sync`). aarch64 platforms use GRUB (UEFI-only). Firmware type is auto-detected at install time.
-- **Disk layout per platform** — x86-64: ESP (2G, doubles as /boot) + btrfs root with subvolumes (`@`, `@home`, `@var`, `@snapshots`). aarch64: ESP (512M) + separate /boot (ext4, 1G) + root (ext4) + /home (ext4). No btrfs on aarch64.
-- **ESP sizing** — 2 GiB on x86-64 for snapshot booting (each bootable snapshot copies its kernel/initramfs into the ESP), 512 MiB on aarch64.
+- **Bootloader dispatch** — The platform config determines the bootloader. x86-64 uses Limine (BIOS + UEFI, snapshot boot entries via `limine-snapper-sync`). aarch64-generic uses GRUB (UEFI-only, snapshot boot entries via `grub-btrfs`). Firmware type is auto-detected at install time.
+- **Disk layout per platform** — x86-64: ESP (2G, doubles as /boot) + btrfs root with subvolumes (`@`, `@home`, `@var`). aarch64-generic: ESP (512M, at /boot/efi) + btrfs root with subvolumes (`@`, `@home`, `@var`). GRUB reads kernels from btrfs natively — no separate /boot partition needed.
+- **ESP sizing** — 2 GiB on x86-64 for snapshot booting (each bootable snapshot copies its kernel/initramfs into the ESP via `limine-snapper-sync`). 512 MiB on aarch64 (`grub-btrfs` reads snapshots directly from btrfs, no kernel copies needed).
 - **Hardware detection** — Controlled by the platform config. The x86-64 platform uses CachyOS `chwd` (Rust-based, replaces Manjaro's `mhwd`) to auto-install GPU drivers. ARM platforms disable it. Failures are always non-fatal.
 - **Recovery mode** — The ISO doubles as a recovery environment with `btrfs-progs`, `testdisk`, `ddrescue`, `nvme-cli`, `smartmontools`, `nmap`, and more.
 

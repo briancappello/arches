@@ -60,11 +60,6 @@ while IFS= read -r line; do
     fi
 done < "$PLATFORM_DIR/platform.toml"
 
-if [[ ${#AUR_PACKAGES[@]} -eq 0 ]]; then
-    echo "No AUR packages defined for platform $PLATFORM. Skipping."
-    exit 0
-fi
-
 # Custom plasmoids built from local sibling repos.
 # Each entry: local_dir:package_name
 # Build deps beyond the base set are declared per-package below.
@@ -91,10 +86,10 @@ declare -A CUSTOM_EXTRA_DEPS=(
 # When called from `sudo make iso-x86-64`, avoid re-building packages that
 # are already present.  Pass --force to rebuild regardless.
 if [[ "$FORCE" == false && -f "$REPO_DIR/${REPO_NAME}.db.tar.gz" ]] \
-   && compgen -G "$REPO_DIR"/*.pkg.tar.zst &>/dev/null; then
+   && compgen -G "$REPO_DIR"/*.pkg.tar.* &>/dev/null; then
     echo "=== AUR repo already populated at $REPO_DIR — skipping build ==="
     echo "    (use --force to rebuild)"
-    ls -1 "$REPO_DIR"/*.pkg.tar.zst
+    ls -1 "$REPO_DIR"/*.pkg.tar.*
     exit 0
 fi
 
@@ -106,12 +101,15 @@ if [[ $EUID -eq 0 ]]; then
     if [[ -z "${SUDO_USER:-}" || "${SUDO_USER:-}" == "root" ]]; then
         echo "ERROR: Running as root without SUDO_USER set."
         echo "       Run via sudo so the build can drop privileges:"
-        echo "         sudo make iso-x86-64"
+        echo "         sudo make iso-x86-64  (or iso-aarch64-generic)"
         echo "       Or build the AUR repo first as a normal user:"
-        echo "         make aur-repo-x86-64"
+        echo "         make aur-repo-x86-64  (or aur-repo-aarch64)"
         exit 1
     fi
     echo "  (running as root — will drop to $SUDO_USER for makepkg)"
+    # Create repo dir as root (the unprivileged user may not be able to)
+    mkdir -p "$REPO_DIR"
+    chown "$SUDO_USER":"$(id -g "$SUDO_USER")" "$REPO_DIR"
     # Re-exec the entire script as the original user, preserving --force
     FORCE_FLAG=""
     [[ "$FORCE" == true ]] && FORCE_FLAG="--force"
@@ -126,7 +124,7 @@ echo "=== Arches AUR Repo Builder ==="
 echo "Platform:   $PLATFORM"
 echo "Build dir:  $BUILD_DIR"
 echo "Repo dir:   $REPO_DIR"
-echo "AUR:        ${AUR_PACKAGES[*]}"
+echo "AUR:        ${AUR_PACKAGES[*]:-(none)}"
 echo "Custom:     ${CUSTOM_CMAKE_PACKAGES[*]}"
 echo ""
 
@@ -135,17 +133,21 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR" "$REPO_DIR"
 
 # --------------------------------------------------------------------------
-# 1. Build AUR packages
+# 1. Build AUR packages (skip if none defined for this platform)
 # --------------------------------------------------------------------------
-for pkg in "${AUR_PACKAGES[@]}"; do
-    echo "── Building AUR: $pkg ──"
-    cd "$BUILD_DIR"
-    git clone "https://aur.archlinux.org/${pkg}.git"
-    cd "$pkg"
-    makepkg -s --noconfirm --needed
-    cp ./*.pkg.tar.zst "$REPO_DIR/"
-    echo "  Built: $pkg"
-done
+if [[ ${#AUR_PACKAGES[@]} -gt 0 ]]; then
+    for pkg in "${AUR_PACKAGES[@]}"; do
+        echo "── Building AUR: $pkg ──"
+        cd "$BUILD_DIR"
+        git clone "https://aur.archlinux.org/${pkg}.git"
+        cd "$pkg"
+        makepkg -s --noconfirm --needed
+        cp ./*.pkg.tar.* "$REPO_DIR/"
+        echo "  Built: $pkg"
+    done
+else
+    echo "── No AUR packages for $PLATFORM — skipping AUR builds ──"
+fi
 
 # --------------------------------------------------------------------------
 # 2. Build custom cmake plasmoids into pacman packages
@@ -269,7 +271,7 @@ EOF
     echo "── Building custom: $pkg_name ($version) ──"
     cd "$pkg_build_dir"
     makepkg -s --noconfirm --skipchecksums
-    cp ./*.pkg.tar.zst "$REPO_DIR/"
+    cp ./*.pkg.tar.* "$REPO_DIR/"
     echo "  Built: $pkg_name"
 }
 
@@ -284,9 +286,9 @@ done
 echo ""
 echo "── Creating repo database ──"
 cd "$REPO_DIR"
-repo-add "${REPO_NAME}.db.tar.gz" ./*.pkg.tar.zst
+repo-add "${REPO_NAME}.db.tar.gz" ./*.pkg.tar.*
 
 echo ""
 echo "=== AUR repo built at $REPO_DIR ==="
 echo "Packages:"
-ls -1 "$REPO_DIR"/*.pkg.tar.zst 2>/dev/null || echo "  (none)"
+ls -1 "$REPO_DIR"/*.pkg.tar.* 2>/dev/null || echo "  (none)"

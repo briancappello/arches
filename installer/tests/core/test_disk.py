@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-import subprocess
-from unittest.mock import MagicMock, call, mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -171,7 +170,7 @@ def test_detect_mounts_limine_style() -> None:
 
 
 def test_detect_mounts_grub_style() -> None:
-    """Root at /mnt + /boot at /mnt/boot + ESP at /mnt/boot/efi → GRUB-style."""
+    """Root at /mnt + /boot at /mnt/boot + ESP at /mnt/boot/efi → GRUB ext4-style."""
     content = _proc_mounts(
         [
             "/dev/sda3 /mnt ext4 rw,noatime 0 0",
@@ -186,6 +185,24 @@ def test_detect_mounts_grub_style() -> None:
     assert result.esp == "/dev/sda1"
     assert result.root == "/dev/sda3"
     assert result.boot == "/dev/sda2"
+    assert result.home == ""
+
+
+def test_detect_mounts_grub_btrfs_style() -> None:
+    """Root at /mnt (btrfs) + ESP at /mnt/boot/efi, no separate /boot → GRUB+btrfs."""
+    content = _proc_mounts(
+        [
+            "/dev/sda2 /mnt btrfs rw,noatime,compress=zstd:1,subvol=/@ 0 0",
+            "/dev/sda1 /mnt/boot/efi vfat rw 0 0",
+        ]
+    )
+    with patch("builtins.open", mock_open(read_data=content)):
+        result = detect_mounts()
+
+    assert result is not None
+    assert result.esp == "/dev/sda1"
+    assert result.root == "/dev/sda2"
+    assert result.boot == ""
     assert result.home == ""
 
 

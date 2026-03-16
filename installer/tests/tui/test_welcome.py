@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from textual.widgets import Button, OptionList
+from textual.widgets import OptionList
 
 from arches_installer.core.disk import BlockDevice
 from arches_installer.core.platform import (

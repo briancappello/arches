@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from textual.widgets import Input, Label, OptionList
+from textual.widgets import Input, OptionList
 
 from arches_installer.core.disk import BlockDevice
 from arches_installer.core.platform import (
@@ -15,7 +15,6 @@ from arches_installer.core.platform import (
     PlatformConfig,
 )
 from arches_installer.core.template import (
-    AnsibleConfig,
     InstallPhases,
     InstallTemplate,
     SystemConfig,

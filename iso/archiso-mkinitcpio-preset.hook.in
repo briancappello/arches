@@ -1,0 +1,14 @@
+# remove from airootfs!
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = @KERNEL@
+
+[Action]
+Description = Configuring @KERNEL@ for archiso (vmlinuz symlink + preset)...
+When = PostTransaction
+Depends = sh
+Depends = coreutils
+Depends = mkinitcpio
+Exec = /bin/sh -c 'test -f /boot/Image && ln -sf Image /boot/vmlinuz-@KERNEL@; printf "PRESETS=(archiso)\nALL_kver=/boot/vmlinuz-@KERNEL@\narchiso_config=/etc/mkinitcpio.conf.d/archiso.conf\narchiso_image=/boot/initramfs-@KERNEL@.img\n" > /etc/mkinitcpio.d/@KERNEL@.preset && mkinitcpio -p @KERNEL@'

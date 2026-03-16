@@ -88,6 +88,47 @@ password = "pass"
         with pytest.raises(FileNotFoundError):
             AutoInstallConfig.from_file(tmp_path / "nope.toml")
 
+    def test_default_shutdown_false(self, tmp_path: Path, templates_dir: Path) -> None:
+        config_file = tmp_path / "noshutdown.toml"
+        config_file.write_text("""\
+[install]
+template = "vm-server.toml"
+username = "user"
+password = "pass"
+""")
+        config = AutoInstallConfig.from_file(config_file)
+        assert config.shutdown is False
+
+    def test_shutdown_true(self, tmp_path: Path, templates_dir: Path) -> None:
+        config_file = tmp_path / "shutdown.toml"
+        config_file.write_text("""\
+[install]
+template = "vm-server.toml"
+username = "user"
+password = "pass"
+shutdown = true
+""")
+        config = AutoInstallConfig.from_file(config_file)
+        assert config.shutdown is True
+
+    def test_shutdown_overrides_reboot(
+        self, tmp_path: Path, templates_dir: Path
+    ) -> None:
+        config_file = tmp_path / "both.toml"
+        config_file.write_text("""\
+[install]
+template = "vm-server.toml"
+username = "user"
+password = "pass"
+reboot = true
+shutdown = true
+""")
+        config = AutoInstallConfig.from_file(config_file)
+        assert config.shutdown is True
+        assert (
+            config.reboot is True
+        )  # both parsed, shutdown takes precedence at runtime
+
     def test_from_dict_directly(self, templates_dir: Path) -> None:
         data = {
             "install": {
@@ -101,6 +142,7 @@ password = "pass"
         config = AutoInstallConfig.from_dict(data)
         assert config.hostname == "mybox"
         assert config.reboot is True
+        assert config.shutdown is False
         assert config.template.name == "Dev Workstation"
 
 

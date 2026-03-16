@@ -111,11 +111,12 @@ def _run_auto(
         print(f"  Bootloader: {platform.bootloader.type}")
         print(f"  Filesystem: {layout.filesystem}")
         print(f"  Snapshots:  {platform.bootloader.snapshot_boot}")
-        print(f"  Device:     (auto-detect at install time)")
+        print("  Device:     (auto-detect at install time)")
         print(f"  Template:   {config.template.name}")
         print(f"  Hostname:   {config.hostname}")
         print(f"  User:       {config.username}")
         print(f"  Reboot:     {config.reboot}")
+        print(f"  Shutdown:   {config.shutdown}")
         print(f"  Packages:   {len(config.template.install.all_packages)}")
         print(f"  Services:   {len(config.template.services)}")
         if layout.subvolumes:

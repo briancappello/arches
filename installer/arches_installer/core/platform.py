@@ -37,7 +37,8 @@ class DiskLayoutConfig:
     """Default disk layout for auto-install.
 
     On x86-64 (Limine): ESP doubles as /boot, btrfs root with subvolumes.
-    On aarch64 (GRUB): separate ESP, /boot (ext4), root (ext4), /home (ext4).
+    On aarch64 (GRUB): ESP at /boot/efi, btrfs root with subvolumes.
+        GRUB reads kernels from btrfs natively — no separate /boot needed.
     """
 
     filesystem: str = "ext4"
