@@ -148,18 +148,18 @@ cache-packages: ## Pre-download template packages into ISO for offline install
 
 # ─── Development ──────────────────────────────────────
 
-fmt: ## Auto-format Python code with ruff
+fmt: ## Auto-format and lint Python code with ruff
 	@echo "══ Linting ══"
-	ruff format $(INSTALLER)
-	ruff check --fix $(INSTALLER)
+	uv run ruff format installer/
+	uv run ruff check --fix installer/
 
 test: ## Run all tests (unit + TUI)
 	@echo "══ Running all tests ══"
-	python -m pytest $(INSTALLER)/tests/ -v
+	uv run pytest -v
 
 test-template: ## Validate all TOML templates parse correctly
 	@echo "══ Validating templates ══"
-	PYTHONPATH=$(INSTALLER) python -c "\
+	uv run python -c "\
 from arches_installer.core.template import discover_templates; \
 templates = discover_templates(); \
 print(f'Loaded {len(templates)} templates:'); \
@@ -167,7 +167,7 @@ print(f'Loaded {len(templates)} templates:'); \
 
 dry-run: ## Dry-run the example auto-install config
 	@echo "══ Dry run ══"
-	PYTHONPATH=$(INSTALLER) python -m arches_installer \
+	uv run python -m arches_installer \
 		--auto examples/auto-install.toml \
 		--platform platforms/x86-64/platform.toml \
 		--dry-run

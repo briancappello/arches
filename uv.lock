@@ -148,7 +148,7 @@ dependencies = [
     { name = "textual" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -158,14 +158,17 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "rich", specifier = ">=13.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "textual", specifier = ">=0.85.0" },
-    { name = "textual-dev", marker = "extra == 'dev'", specifier = ">=1.0" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "ruff", specifier = ">=0.4" },
+    { name = "textual-dev", specifier = ">=1.0" },
+]
 
 [[package]]
 name = "attrs"
