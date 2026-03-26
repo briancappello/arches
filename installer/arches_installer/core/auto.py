@@ -105,6 +105,15 @@ def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int
     """Run the full install pipeline without TUI. Returns exit code."""
     log = log_stdout
 
+    if not platform.allow_auto_install:
+        log(
+            f"ERROR: Auto-install is disabled for platform '{platform.name}'.\n"
+            "This platform's disk layout is managed externally and must not\n"
+            "be wiped. Use host-install (make host-install) or manual\n"
+            "partitioning in the TUI instead."
+        )
+        return 1
+
     log("== Arches Auto Install ==")
     log(f"  Platform: {platform.name} ({platform.arch})")
     log(f"  Template: {config.template.name}")

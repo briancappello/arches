@@ -70,6 +70,11 @@ class PlatformConfig:
     disk_layout: DiskLayoutConfig
     hardware_detection: HardwareDetectionConfig
     base_packages: list[str] = field(default_factory=list)
+    # When False, auto-install and auto-partition are disabled. This
+    # prevents destructive whole-disk wipes on platforms where the
+    # partition table is managed externally (e.g. Apple Silicon, where
+    # Asahi's m1n1/U-Boot/macOS recovery partitions must not be touched).
+    allow_auto_install: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PlatformConfig:
@@ -112,6 +117,7 @@ class PlatformConfig:
                 optional=hw.get("optional", True),
             ),
             base_packages=base.get("install", []),
+            allow_auto_install=plat.get("allow_auto_install", True),
         )
 
 

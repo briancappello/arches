@@ -1,0 +1,51 @@
+# Arches host-install config — Apple Silicon (alongside existing system)
+#
+# Installs Arches into btrfs subvolumes on the existing Linux partition,
+# creating a dual-boot setup with the current OS (e.g. Fedora).
+#
+# Usage:
+#   sudo make host-install CONFIG=examples/host-install.toml
+#   sudo make host-install-dry CONFIG=examples/host-install.toml
+#
+# Before running:
+# 1. Identify your btrfs root partition:  lsblk -f
+# 2. Identify your EFI System Partition:  lsblk -f | grep vfat
+# 3. Update the partition and esp_partition fields below
+#
+# After running, reboot and select "Arches Linux" from the GRUB menu.
+
+[install]
+template = "dev-workstation.toml"
+hostname = "arches"
+username = "brian"
+password = "changeme"
+
+# Target btrfs partition (your existing root filesystem)
+# This is where the new subvolumes will be created.
+# Find it with: findmnt -no SOURCE /
+partition = "/dev/nvme0n1p6"
+
+# Existing EFI System Partition
+# Find it with: findmnt -no SOURCE /boot/efi
+esp_partition = "/dev/nvme0n1p4"
+
+# Install mode:
+#   "alongside" — creates @arches, @arches-home, @arches-var subvolumes
+#                 next to the existing system. Safe, non-destructive.
+#   "replace"   — creates @, @home, @var subvolumes, replacing any
+#                 existing ones with those names. DESTRUCTIVE.
+mode = "alongside"
+
+# Subvolume name prefix (alongside mode only).
+# Default "@arches" creates @arches, @arches-home, @arches-var.
+# subvol_prefix = "@arches"
+
+# Whether to add a GRUB menu entry on the host for booting into Arches.
+# Default: true in alongside mode, false in replace mode.
+# add_grub_entry = true
+
+# Whether to install GRUB inside the Arches chroot (writes to the ESP).
+# Default: false in alongside mode (host GRUB is used), true in replace mode.
+# In alongside mode, set this to true only if you want Arches to own the
+# bootloader (the host's GRUB entry will still work as a fallback).
+# install_bootloader = false

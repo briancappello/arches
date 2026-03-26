@@ -332,15 +332,154 @@ def validate_mounts(parts: PartitionMap) -> list[str]:
     return errors
 
 
+def cleanup_mounts() -> None:
+    """Unmount everything under MOUNT_ROOT in reverse order.
+
+    Safe to call even if nothing is mounted — ignores errors on individual
+    unmounts so the cleanup is best-effort.
+    """
+    # Read current mounts and filter to those under MOUNT_ROOT
+    mounts: list[str] = []
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].startswith(str(MOUNT_ROOT)):
+                    mounts.append(parts[1])
+    except OSError:
+        return
+
+    # Unmount in reverse order (deepest first)
+    for mount_point in sorted(mounts, reverse=True):
+        try:
+            run(["umount", mount_point])
+        except subprocess.CalledProcessError:
+            pass  # best-effort
+
+
+def prepare_subvolume(
+    partition: str,
+    esp_partition: str,
+    platform,
+    mode: str = "alongside",
+    subvol_prefix: str = "@arches",
+) -> PartitionMap:
+    """Prepare btrfs subvolumes for host-install on an existing partition.
+
+    This is the non-destructive alternative to prepare_disk() — it creates
+    subvolumes on an existing btrfs filesystem without touching the partition
+    table. Used for installing Arches alongside (or replacing) an existing
+    Linux system on Apple Silicon.
+
+    Args:
+        partition: The btrfs partition device (e.g. /dev/nvme0n1p6).
+        esp_partition: The existing ESP device (e.g. /dev/nvme0n1p4).
+        platform: PlatformConfig with disk_layout settings.
+        mode: "alongside" creates new named subvolumes; "replace" creates
+              standard @/@home/@var subvolumes (may conflict with existing).
+        subvol_prefix: Prefix for subvolume names in alongside mode.
+                       Default "@arches" creates @arches, @arches-home, @arches-var.
+
+    Returns:
+        PartitionMap with the partition devices (root and esp).
+    """
+    from arches_installer.core.platform import PlatformConfig
+
+    assert isinstance(platform, PlatformConfig)
+    layout = platform.disk_layout
+
+    if layout.filesystem != "btrfs":
+        raise RuntimeError(
+            f"prepare_subvolume requires btrfs, but platform uses {layout.filesystem}"
+        )
+
+    # Determine subvolume names based on mode
+    if mode == "alongside":
+        root_subvol = subvol_prefix
+        subvol_map = {
+            "@home": f"{subvol_prefix}-home",
+            "@var": f"{subvol_prefix}-var",
+        }
+    elif mode == "replace":
+        root_subvol = "@"
+        subvol_map = {
+            "@home": "@home",
+            "@var": "@var",
+        }
+    else:
+        raise ValueError(f"Unknown subvolume mode: {mode}")
+
+    # Mount the btrfs top-level (subvolid=5) to create subvolumes
+    import tempfile
+
+    top_mount = Path(tempfile.mkdtemp(prefix="arches-btrfs-"))
+    top_mount.mkdir(parents=True, exist_ok=True)
+
+    run(["mount", "-o", "subvolid=5", partition, str(top_mount)])
+    try:
+        if mode == "replace":
+            # Delete existing subvolumes if they exist (destructive!)
+            for subvol in [root_subvol] + list(subvol_map.values()):
+                subvol_path = top_mount / subvol
+                if subvol_path.exists():
+                    run(["btrfs", "subvolume", "delete", str(subvol_path)])
+
+        # Create the subvolumes
+        for subvol in [root_subvol] + list(subvol_map.values()):
+            subvol_path = top_mount / subvol
+            if not subvol_path.exists():
+                run(["btrfs", "subvolume", "create", str(subvol_path)])
+    finally:
+        run(["umount", str(top_mount)])
+
+    # Mount the subvolumes at MOUNT_ROOT
+    opts = f"subvol={root_subvol},{layout.mount_options}"
+    MOUNT_ROOT.mkdir(parents=True, exist_ok=True)
+    run(["mount", "-o", opts, partition, str(MOUNT_ROOT)])
+
+    # Mount child subvolumes
+    child_mounts = {
+        "@home": MOUNT_ROOT / "home",
+        "@var": MOUNT_ROOT / "var",
+    }
+    for canonical_name, mount_point in child_mounts.items():
+        actual_name = subvol_map.get(canonical_name, canonical_name)
+        if actual_name in subvol_map.values() or mode == "replace":
+            mount_point.mkdir(parents=True, exist_ok=True)
+            opts = f"subvol={actual_name},{layout.mount_options}"
+            run(["mount", "-o", opts, partition, str(mount_point)])
+
+    # Mount ESP at /mnt/boot/efi (GRUB-style)
+    efi_dir = MOUNT_ROOT / "boot" / "efi"
+    efi_dir.mkdir(parents=True, exist_ok=True)
+    run(["mount", esp_partition, str(efi_dir)])
+
+    return PartitionMap(
+        esp=esp_partition,
+        root=partition,
+    )
+
+
 def prepare_disk(device: str, platform) -> PartitionMap:
     """Full disk preparation pipeline for auto-install.
 
     Uses the platform's disk_layout config to determine the partition scheme.
     Returns a PartitionMap with device paths for each partition role.
+
+    Raises RuntimeError if the platform disallows auto-install (e.g. Apple
+    Silicon, where the partition table is managed by the Asahi installer).
     """
     from arches_installer.core.platform import PlatformConfig
 
     assert isinstance(platform, PlatformConfig)
+
+    if not platform.allow_auto_install:
+        raise RuntimeError(
+            f"Auto-install is disabled for platform '{platform.name}'. "
+            "This platform's disk layout is managed externally and must "
+            "not be wiped. Use host-install or manual partitioning."
+        )
+
     layout = platform.disk_layout
 
     wipe_disk(device)

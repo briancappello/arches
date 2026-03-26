@@ -36,7 +36,9 @@ def generate_firstboot_script(
     """Generate the first-boot shell script."""
     lines = [
         "#!/usr/bin/env bash",
-        "set -euo pipefail",
+        "# Don't use set -e — if ansible fails, we still want to remove the",
+        "# firstboot-pending marker so the service doesn't retry every boot.",
+        "set -uo pipefail",
         "",
         'echo ""',
         'echo "╔═══════════════════════════════════════════╗"',
@@ -90,11 +92,13 @@ def inject_firstboot_service(
     service_file.write_text(FIRSTBOOT_SERVICE)
 
     # Enable the service (create symlink in graphical.target)
+    # Use the absolute path as it will appear on the booted system,
+    # NOT the path under MOUNT_ROOT.
     wants_dir = service_dir / "graphical.target.wants"
     wants_dir.mkdir(parents=True, exist_ok=True)
     symlink = wants_dir / "arches-firstboot.service"
     if not symlink.exists():
-        symlink.symlink_to(service_file)
+        symlink.symlink_to("/etc/systemd/system/arches-firstboot.service")
 
     # Write the first-boot script
     arches_dir = MOUNT_ROOT / "opt" / "arches"

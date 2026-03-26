@@ -1,0 +1,121 @@
+# Arches host-install container — aarch64-apple
+#
+# Provides a minimal Arch Linux ARM environment with the tools needed
+# to run the arches installer against a host-mounted target (/mnt).
+#
+# Unlike the full Containerfile (ISO builder), this only includes:
+#   - pacstrap + arch-install-scripts (for bootstrapping the target)
+#   - Asahi + ALARM package repos (for Apple Silicon packages)
+#   - Python (for running the installer)
+#   - The arches installer + platform config
+#
+# Pacman downloads during image build use BuildKit cache mounts so that
+# packages persist across `--rebuild` invocations. At runtime, the host
+# .pkg-cache/ directory is bind-mounted for pacstrap.
+#
+# Usage (via wrapper script):
+#   sudo make host-install CONFIG=host-install.toml
+#
+# Or directly:
+#   podman build -t arches-installer -f Containerfile.install .
+#   sudo podman run --rm --privileged \
+#       -v /mnt:/mnt \
+#       -v /dev:/dev \
+#       -v /lib/firmware/vendor:/host-firmware:ro \
+#       arches-installer \
+#       arches-install --host /opt/arches/config.toml \
+#           --platform /opt/arches/platform/platform.toml
+
+FROM --platform=linux/arm64 docker.io/lopsided/archlinux:latest
+
+# Disable Pacman's Landlock sandbox (doesn't work in containers)
+RUN sed -i '/^#\?DownloadUser/d' /etc/pacman.conf && \
+    sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+
+# Disable the package-cleanup hook — it runs `rm -rf /var/cache/pacman/pkg`
+# after every transaction, which fails on cache mounts ("device or resource
+# busy") and would wipe cached downloads we want to keep.
+RUN mkdir -p /etc/pacman.d/hooks && \
+    ln -sf /dev/null /etc/pacman.d/hooks/package-cleanup.hook
+
+# Phase 1: Add Asahi ALARM repo with relaxed sigs, install keyring.
+# We append it before [core] so it takes priority.
+RUN sed -i '/^\[core\]/i \
+[asahi-alarm]\n\
+SigLevel = Optional TrustAll\n\
+Server = https://github.com/asahi-alarm/asahi-alarm/releases/download/$arch\n' /etc/pacman.conf
+
+RUN --mount=type=cache,target=/var/cache/pacman/pkg,sharing=locked \
+    pacman-key --init && \
+    pacman-key --populate archlinuxarm && \
+    pacman -Sy --noconfirm && \
+    pacman -S --noconfirm asahi-alarm-keyring && \
+    pacman-key --populate asahi-alarm
+
+# Phase 2: Rewrite pacman.conf cleanly with proper sig level.
+# Avoids fragile sed edits — just write the whole file.
+RUN printf '%s\n' \
+    '[options]' \
+    'HoldPkg     = pacman glibc' \
+    'Architecture = aarch64' \
+    'SigLevel    = Required DatabaseOptional' \
+    'LocalFileSigLevel = Optional' \
+    'DisableSandbox' \
+    '' \
+    '[asahi-alarm]' \
+    'Server = https://github.com/asahi-alarm/asahi-alarm/releases/download/$arch' \
+    '' \
+    '[core]' \
+    'Server = http://mirror.archlinuxarm.org/$arch/$repo' \
+    '' \
+    '[extra]' \
+    'Server = http://mirror.archlinuxarm.org/$arch/$repo' \
+    '' \
+    '[alarm]' \
+    'Server = http://mirror.archlinuxarm.org/$arch/$repo' \
+    '' \
+    '[aur]' \
+    'Server = http://mirror.archlinuxarm.org/$arch/$repo' \
+    > /etc/pacman.conf
+
+# Phase 3: Install all build dependencies with proper keyring.
+# The cache mount persists across rebuilds — packages already downloaded
+# are reused. Do NOT run `pacman -Scc` — it would wipe the cache.
+RUN --mount=type=cache,target=/var/cache/pacman/pkg,sharing=locked \
+    pacman -Syu --noconfirm && \
+    pacman -S --noconfirm \
+        arch-install-scripts \
+        btrfs-progs \
+        dosfstools \
+        e2fsprogs \
+        grub \
+        efibootmgr \
+        python \
+        python-pip \
+        python-setuptools \
+        python-textual \
+        python-rich \
+        ansible \
+        git \
+        base-devel
+
+# Create an empty arches-local repo so pacstrap doesn't fail when the
+# platform pacman.conf references it. In ISO builds this contains pre-built
+# AUR packages; for host-install it starts empty (packages that aren't in
+# upstream repos will fail individually rather than blocking the whole sync).
+RUN mkdir -p /opt/arches-repo && \
+    repo-add /opt/arches-repo/arches-local.db.tar.gz
+
+# Stage the installer, platform config, and ansible playbooks
+# These are copied from the build context (the arches project directory)
+COPY installer/ /opt/arches/installer/
+COPY platforms/aarch64-apple/platform.toml /opt/arches/platform/platform.toml
+COPY platforms/aarch64-apple/pacman.conf /opt/arches/platform/pacman.conf
+COPY ansible/ /opt/arches/ansible/
+
+# Create the arches-install wrapper
+RUN printf '#!/usr/bin/env bash\ncd /opt/arches/installer\nexec python -m arches_installer "$@"\n' \
+    > /usr/local/bin/arches-install && \
+    chmod +x /usr/local/bin/arches-install
+
+WORKDIR /opt/arches

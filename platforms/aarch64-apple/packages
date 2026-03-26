@@ -1,7 +1,12 @@
-# Platform-specific ISO packages — aarch64-apple (Asahi Linux)
+# Platform-specific packages — aarch64-apple (Asahi Linux)
 #
-# These are combined with iso/packages.common at build time
-# to produce the final ISO package list.
+# For ISO builds: combined with iso/packages.common at build time.
+# For host-install: used by the containerized installer to determine
+# what packages the installer environment needs.
+
+# ─── Keyrings ─────────────────────────────────────────
+archlinuxarm-keyring
+asahi-alarm-keyring
 
 # ─── Kernel ───────────────────────────────────────────
 linux-asahi
@@ -11,6 +16,9 @@ linux-firmware
 # ─── Bootloader ───────────────────────────────────────
 grub
 efibootmgr
+
+# ─── Filesystem ───────────────────────────────────────
+btrfs-progs
 
 # ─── Asahi firmware & tools ──────────────────────────
 asahi-fwextract

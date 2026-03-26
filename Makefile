@@ -14,13 +14,16 @@ OUT_DIR     := $(PROJECT_DIR)/out
 
 # ─── Phony targets ────────────────────────────────────
 
-.PHONY: help iso-x86-64 iso-aarch64-generic aur-repo-x86-64 aur-repo-aarch64 \
-        container-iso-aarch64 clean clean-all \
+.PHONY: help iso-x86-64 iso-aarch64-generic iso-aarch64-apple \
+        aur-repo-x86-64 aur-repo-aarch64 \
+        container-iso-aarch64 container-iso-aarch64-apple \
+        usb-aarch64-apple write-usb clean clean-all \
         lint format test test-unit test-tui test-template check-root check-deps \
         stage-installer stage-ansible stage-platform stage-bootconfig \
         assemble-packages cache-packages \
         test-iso test-boot test-iso-bios test-disk dry-run \
-        ansible-dev
+        ansible-dev \
+        host-install host-install-rebuild host-install-dry host-clean
 
 # ─── Default ──────────────────────────────────────────
 
@@ -53,6 +56,49 @@ iso-aarch64-generic: check-root check-deps aur-repo-aarch64 stage-installer stag
 	@echo ""
 	@echo "══ ISO built ══"
 	@ls -lh $(OUT_DIR)/arches-*.iso 2>/dev/null
+
+iso-aarch64-apple: PLATFORM := aarch64-apple
+iso-aarch64-apple: export ARCHES_ARCH := aarch64
+iso-aarch64-apple: check-root check-deps aur-repo-aarch64 stage-installer stage-ansible stage-platform stage-bootconfig assemble-packages cache-packages ## Build ISO for aarch64-apple / Asahi (requires sudo, native)
+	@echo "══ Building Arches ISO (aarch64-apple / Asahi) ══"
+	@rm -rf $(WORK_DIR)
+	@mkdir -p $(OUT_DIR)
+	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
+	@echo ""
+	@echo "══ ISO built ══"
+	@ls -lh $(OUT_DIR)/arches-*.iso 2>/dev/null
+
+container-iso-aarch64-apple: ## Build aarch64-apple ISO inside Podman container (requires sudo)
+	$(SCRIPTS)/build-in-container.sh --platform aarch64-apple
+
+usb-aarch64-apple: container-iso-aarch64-apple ## Build aarch64-apple USB image and write to USB drive
+	@ISO=$$(ls -t $(OUT_DIR)/arches-*-aarch64.iso 2>/dev/null | head -1); \
+	if [ -z "$$ISO" ]; then \
+		echo "ERROR: No aarch64 ISO found in $(OUT_DIR)/"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	$(SCRIPTS)/iso-to-usb-image.sh "$$ISO"
+	@IMG=$$(ls -t $(OUT_DIR)/arches-*.usb.img 2>/dev/null | head -1); \
+	$(SCRIPTS)/write-usb.sh "$$IMG"
+
+write-usb: ## Write USB image to a USB drive (builds if needed, interactive)
+	@IMG=$$(ls -t $(OUT_DIR)/arches-*.usb.img 2>/dev/null | head -1); \
+	if [ -z "$$IMG" ]; then \
+		ISO=$$(ls -t $(OUT_DIR)/arches-*-aarch64.iso 2>/dev/null | head -1); \
+		if [ -n "$$ISO" ]; then \
+			echo "No USB image found — converting existing ISO..."; \
+			echo ""; \
+			$(SCRIPTS)/iso-to-usb-image.sh "$$ISO"; \
+			IMG=$$(ls -t $(OUT_DIR)/arches-*.usb.img 2>/dev/null | head -1); \
+		else \
+			echo "No USB image or ISO found — building from scratch..."; \
+			echo ""; \
+			$(MAKE) usb-aarch64-apple; \
+			exit 0; \
+		fi; \
+	fi; \
+	$(SCRIPTS)/write-usb.sh "$$IMG"
 
 aur-repo-x86-64: ## Pre-build AUR packages for x86-64 platform
 	@echo "══ Building AUR repo (x86-64) ══"
@@ -121,9 +167,11 @@ stage-bootconfig: ## Generate mkinitcpio preset and substitute kernel name in bo
 	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/archiso-mkinitcpio-preset.hook.in \
 		> $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook; \
 	\
-	echo "  Substituting kernel name in boot configs"; \
-	sed -i "s/vmlinuz-[a-zA-Z0-9_%-]\{1,\}/vmlinuz-$$KERNEL/g; s/initramfs-[a-zA-Z0-9_%-]\{1,\}\.img/initramfs-$$KERNEL.img/g" \
-		$(ISO_PROFILE)/grub/grub.cfg $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg; \
+	echo "  Generating boot configs from templates"; \
+	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/grub/grub.cfg.in \
+		> $(ISO_PROFILE)/grub/grub.cfg; \
+	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg.in \
+		> $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg; \
 	\
 	echo "  Copying mkinitcpio archiso.conf from platform"; \
 	mkdir -p $(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d; \
@@ -150,6 +198,25 @@ assemble-packages: ## Assemble ISO package list from common + platform
 cache-packages: ## Pre-download template packages into ISO for offline install
 	@echo "══ Caching template packages ══"
 	@$(SCRIPTS)/cache-template-packages.sh $(PLATFORM)
+
+# ─── Host install (Apple Silicon) ─────────────────────
+
+CONFIG ?= examples/host-install.toml
+
+host-install: check-root ## Install Arches into btrfs subvolumes from running host (CONFIG=path)
+	@echo "══ Host Install (Apple Silicon) ══"
+	$(SCRIPTS)/host-install.sh $(CONFIG)
+
+host-install-rebuild: check-root ## Rebuild container image and install (CONFIG=path)
+	@echo "══ Host Install — Rebuild ══"
+	$(SCRIPTS)/host-install.sh --rebuild $(CONFIG)
+
+host-install-dry: check-root ## Dry-run host install — validate config, print plan (CONFIG=path)
+	@echo "══ Host Install — Dry Run ══"
+	$(SCRIPTS)/host-install.sh --dry-run $(CONFIG)
+
+host-clean: check-root ## Remove Arches subvolumes and GRUB entry (CONFIG=path)
+	$(SCRIPTS)/host-clean.sh $(CONFIG)
 
 # ─── Development ──────────────────────────────────────
 
@@ -281,9 +348,8 @@ clean: ## Remove staged files from ISO airootfs
 	rm -f  $(ISO_PROFILE)/packages.aarch64
 	rm -f  $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook
 	rm -f  $(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d/archiso.conf
-	@# Restore %KERNEL% placeholders in boot configs (undo stage-bootconfig)
-	@sed -i 's/vmlinuz-[a-zA-Z0-9_%-]\{1,\}/vmlinuz-%KERNEL%/g; s/initramfs-[a-zA-Z0-9_%-]\{1,\}\.img/initramfs-%KERNEL%.img/g' \
-		$(ISO_PROFILE)/grub/grub.cfg $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg 2>/dev/null || true
+	rm -f  $(ISO_PROFILE)/grub/grub.cfg
+	rm -f  $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg
 
 clean-work: ## Remove mkarchiso work directory
 	@echo "══ Cleaning work directory ══"

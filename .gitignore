@@ -1,6 +1,8 @@
 # Build artifacts
 out/
 .pkg-cache/
+host-install.log
+container-build.log
 
 # ─── Staged into ISO airootfs by Makefile ─────────────
 # These are copies of source files (installer/, ansible/, platforms/)
@@ -25,6 +27,9 @@ iso/packages.x86_64
 iso/packages.aarch64
 iso/airootfs/etc/mkinitcpio.conf.d/archiso.conf
 iso/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook
+# Generated from .in templates by stage-bootconfig
+iso/grub/grub.cfg
+iso/syslinux/archiso_sys-linux.cfg
 
 # ─── Python ───────────────────────────────────────────
 __pycache__/

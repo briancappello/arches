@@ -1,24 +1,37 @@
 # Arches platform config — aarch64 Apple Silicon
 #
-# Stub — not yet implemented.
-# Target: Arch Linux ARM + Asahi kernel/mesa on Apple Silicon Macs.
+# Target: Arch Linux ARM + Asahi kernel/mesa on Apple Silicon Macs (M1/M2/M3/M4).
+# Uses m1n1 → U-Boot → extlinux boot chain with btrfs subvolumes.
 #
-# Note: Apple Silicon cannot boot standard ISOs. The install path
-# will differ from the ISO-based x86-64 flow (likely installed from
-# a running Asahi base or via the Asahi installer chain).
+# Three install paths are supported:
+#   1. USB boot: Write the arches USB image to a USB-C drive, interrupt U-Boot,
+#      and run `bootflow scan -b usb`. U-Boot finds /extlinux/extlinux.conf on
+#      the USB and boots the kernel directly. Requires a working Asahi boot
+#      chain (m1n1 + U-Boot) already installed on the internal NVMe.
+#   2. Fresh install: Asahi installer creates partitions + boot chain from macOS,
+#      then arches installs into the prepared partition.
+#   3. Host install: From a running Asahi Linux (e.g. Fedora), arches installs
+#      into a btrfs subvolume alongside (or replacing) the existing system,
+#      using a containerized installer via Podman.
 
 [platform]
 name = "aarch64-apple"
-description = "Apple Silicon (M1/M2/M3) with Asahi Linux kernel"
+description = "Apple Silicon (M1/M2/M3/M4) with Asahi Linux kernel"
 arch = "aarch64"
+# Auto-install / auto-partition is disabled on Apple Silicon. The disk
+# layout is managed by the Asahi installer (m1n1, U-Boot, macOS recovery
+# partitions) and must never be wiped. Use host-install or manual
+# partitioning instead.
+allow_auto_install = false
 
 [kernel]
 package = "linux-asahi"
 headers = "linux-asahi-headers"
 
 [bootloader]
-# Apple Silicon uses m1n1 → U-Boot → GRUB chain
-# Limine is not applicable here
+# Apple Silicon uses m1n1 → U-Boot → GRUB chain.
+# The boot chain is set up by the Asahi installer and is NOT managed
+# by arches — we only configure GRUB inside the installed system.
 type = "grub"
 efi_binary = "BOOTAA64.EFI"
 efi_fallback_path = "EFI/BOOT/BOOTAA64.EFI"
@@ -26,14 +39,12 @@ supports_bios = false
 snapshot_boot = false
 
 [disk_layout]
-# Default auto-install layout: ESP + /boot (ext4) + root (ext4) + /home (ext4)
-# Note: On Apple Silicon, partitions are typically pre-created by the Asahi
-# installer. Auto-install assumes a clean target disk.
-filesystem = "ext4"
-mount_options = "noatime"
+# GRUB reads kernels from btrfs natively — no separate /boot needed.
+# ESP mounts at /boot/efi. Subvolume layout matches aarch64-generic.
+filesystem = "btrfs"
+mount_options = "compress=zstd:1,noatime"
+subvolumes = ["@", "@home", "@var"]
 esp_size_mib = 512
-boot_size_mib = 1024
-home_partition = true
 swap = "zram"
 
 [hardware_detection]
@@ -42,6 +53,16 @@ enabled = false
 
 [base_packages]
 install = [
+    # Asahi ALARM keyring + repo
+    "asahi-alarm-keyring",
+    # Boot chain (m1n1 → U-Boot → GRUB)
+    "m1n1",
+    "uboot-asahi",
+    "grub",
+    "efibootmgr",
+    # Filesystem
+    "btrfs-progs",
+    # Asahi firmware + scripts
     "asahi-fwextract",
     "asahi-scripts",
 ]
@@ -50,9 +71,17 @@ install = [
 build = []
 
 [iso]
-# Apple Silicon cannot boot ISOs — this section is a placeholder.
-# Install delivery mechanism TBD.
-boot_modes = []
+# Apple Silicon cannot boot raw ISO images like a PC. The ISO is converted
+# to a GPT + FAT32 USB image with /extlinux/extlinux.conf for U-Boot.
+# Write it to a USB-C drive, interrupt U-Boot at startup, and run
+# `bootflow scan -b usb` to boot the installer.
+#
+# Known USB limitations (from Asahi U-Boot):
+#   - USB-A ports do not work (controller requires non-redistributable FW)
+#   - Two USB-C ports furthest from power on iMacs don't work
+#   - Multi-function USB devices (hub+NIC combos) may not work
+#   - USB hubs with empty SD card slots can cause a hard reset
+boot_modes = ["uefi.grub"]
 extra_packages = [
     "linux-asahi",
     "linux-asahi-headers",

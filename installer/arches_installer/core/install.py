@@ -51,6 +51,28 @@ def _make_pacman_conf_with_cache() -> Path:
     return tmp
 
 
+def _query_available_packages(
+    pacman_conf: Path,
+    log: LogCallback | None = None,
+) -> set[str] | None:
+    """Query pacman for all available package names.
+
+    Returns a set of package names, or None if the query fails.
+    Used to filter out packages that aren't in any configured repo.
+    """
+    try:
+        result = subprocess.run(
+            ["pacman", "--config", str(pacman_conf), "-Ssq"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return set(result.stdout.strip().splitlines())
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        _log("WARNING: Could not query available packages.", log)
+        return None
+
+
 def pacstrap(
     platform: PlatformConfig,
     template: InstallTemplate,
@@ -81,22 +103,102 @@ def pacstrap(
     if pacman_conf != ISO_PACMAN_CONF:
         _log(f"Using cached packages from {ISO_PKG_CACHE}", log)
 
-    run(
-        ["pacstrap", "-C", str(pacman_conf), str(MOUNT_ROOT)] + all_packages,
-        log=log,
+    # Check if the arches-local repo is empty. If so, filter out packages
+    # that aren't available in upstream repos to avoid pacstrap failing on
+    # custom packages that haven't been pre-built (e.g. host-install without
+    # a prior ISO build). Filtered packages are deferred to post-install.
+    deferred: list[str] = []
+    local_repo = Path("/opt/arches-repo")
+    local_repo_empty = not local_repo.exists() or not any(
+        local_repo.glob("*.pkg.tar.*")
     )
+    if local_repo_empty and template.install.pacstrap:
+        available = _query_available_packages(pacman_conf, log)
+        if available is not None:
+            filtered = []
+            for pkg in all_packages:
+                if pkg in available:
+                    filtered.append(pkg)
+                else:
+                    deferred.append(pkg)
+                    _log(f"  Deferring unavailable package: {pkg}", log)
+            if deferred:
+                _log(
+                    f"Deferred {len(deferred)} package(s) not in upstream repos.",
+                    log,
+                )
+            all_packages = filtered
+
+    # Pacstrap can fail due to transient mirror timeouts. Retry up to 3 times
+    # before giving up, since the download is resumable (pacman caches
+    # partially-downloaded packages).
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            run(
+                ["pacstrap", "-C", str(pacman_conf), str(MOUNT_ROOT)] + all_packages,
+                log=log,
+            )
+            break
+        except subprocess.CalledProcessError:
+            if attempt < max_attempts:
+                _log(
+                    f"pacstrap failed (attempt {attempt}/{max_attempts}), retrying...",
+                    log,
+                )
+            else:
+                raise
+
+    if deferred:
+        _log(
+            f"NOTE: {len(deferred)} package(s) were deferred because they are "
+            "only available in the arches-local repo, which is empty. "
+            "Pre-build with: make container-iso-aarch64",
+            log,
+        )
+        _log(f"  Deferred: {', '.join(deferred)}", log)
 
 
 def generate_fstab(log: LogCallback | None = None) -> None:
     """Generate fstab from current mounts."""
     _log("Generating fstab...", log)
+
+    # Unmount stale mounts that pacstrap hooks may have created
+    # (e.g., asahi-fwextract mounts the ESP at /run/.system-efi)
+    stale_run = MOUNT_ROOT / "run" / ".system-efi"
+    if stale_run.is_mount():
+        try:
+            run(["umount", str(stale_run)], log=log)
+        except subprocess.CalledProcessError:
+            pass
+
     result = run(
         ["genfstab", "-U", str(MOUNT_ROOT)],
         log=log,
         capture_output=True,
     )
+
+    # Filter out stale entries that genfstab may have picked up:
+    # - /run/.system-efi (asahi-fwextract hook artifact)
+    # - nonexistent swap files
+    stale_patterns = ["/run/.system-efi", "/var/swap/swapfile"]
+    lines = result.stdout.splitlines(keepends=True)
+    filtered: list[str] = []
+    skip_block = False
+    for line in lines:
+        if any(p in line for p in stale_patterns):
+            skip_block = True
+            _log(f"Filtered stale fstab entry: {line.strip()}", log)
+            continue
+        if skip_block and line.strip() == "":
+            skip_block = False
+            continue
+        if skip_block:
+            continue
+        filtered.append(line)
+
     fstab_path = MOUNT_ROOT / "etc" / "fstab"
-    fstab_path.write_text(result.stdout)
+    fstab_path.write_text("".join(filtered))
 
 
 def install_pacman_conf(log: LogCallback | None = None) -> None:
@@ -209,20 +311,33 @@ def create_user(
     password: str,
     log: LogCallback | None = None,
 ) -> None:
-    """Create a user with sudo privileges."""
+    """Create a user with sudo privileges.
+
+    Idempotent: if the user already exists (e.g., from a prior failed
+    install on the same subvolume), update their groups and shell instead
+    of failing.
+    """
     _log(f"Creating user {username}...", log)
-    chroot_run(
-        [
-            "useradd",
-            "-m",
-            "-G",
-            "wheel",
-            "-s",
-            "/bin/zsh",
-            username,
-        ],
-        log=log,
-    )
+    try:
+        chroot_run(
+            [
+                "useradd",
+                "-m",
+                "-G",
+                "wheel",
+                "-s",
+                "/bin/zsh",
+                username,
+            ],
+            log=log,
+        )
+    except subprocess.CalledProcessError:
+        # User already exists — update groups and shell
+        _log(f"User {username} already exists, updating...", log)
+        chroot_run(
+            ["usermod", "-a", "-G", "wheel", "-s", "/bin/zsh", username],
+            log=log,
+        )
 
     # Set password via chpasswd
     _log("Setting password...", log)
@@ -362,6 +477,159 @@ def _pre_pacstrap_setup(log: LogCallback | None = None) -> None:
     _log("Pre-created /etc/mkinitcpio.conf (no autodetect).", log)
 
 
+def copy_apple_firmware(
+    platform: PlatformConfig,
+    log: LogCallback | None = None,
+) -> None:
+    """Copy Apple Silicon firmware from the host into the target system.
+
+    On Apple Silicon, the firmware is extracted from the macOS APFS partition
+    by asahi-fwextract and stored at /lib/firmware/vendor/. When installing
+    from a running Asahi Linux host, we copy this firmware into the target
+    so the new system has working WiFi, Bluetooth, GPU, etc.
+
+    This is a no-op on non-Apple platforms or if the firmware directory
+    doesn't exist on the host.
+    """
+    if platform.name != "aarch64-apple":
+        return
+
+    # Check common firmware locations on the host.
+    # In the container, host firmware is bind-mounted at /host-firmware.
+    # On a native host, it's at /lib/firmware/vendor or /usr/lib/firmware/vendor.
+    host_fw_paths = [
+        Path("/host-firmware"),
+        Path("/lib/firmware/vendor"),
+        Path("/usr/lib/firmware/vendor"),
+    ]
+    host_fw = None
+    for p in host_fw_paths:
+        if p.exists() and any(p.iterdir()):
+            host_fw = p
+            break
+
+    if host_fw is None:
+        _log(
+            "WARNING: No Apple firmware found on host. "
+            "WiFi/BT/GPU may not work in the installed system. "
+            "Run asahi-fwextract after booting into the new system.",
+            log,
+        )
+        return
+
+    target_fw = MOUNT_ROOT / "lib" / "firmware" / "vendor"
+    if target_fw.exists() and any(target_fw.iterdir()):
+        _log("Firmware already present in target, skipping.", log)
+        return
+
+    _log(f"Copying Apple firmware from {host_fw}...", log)
+    target_fw.parent.mkdir(parents=True, exist_ok=True)
+    # Use dirs_exist_ok=True because asahi-fwextract creates the empty
+    # vendor/ directory during pacstrap.
+    shutil.copytree(host_fw, target_fw, dirs_exist_ok=True)
+    _log("Apple firmware copied.", log)
+
+
+def preseed_network_deps(
+    username: str,
+    log: LogCallback | None = None,
+) -> None:
+    """Pre-seed resources that would require network at first boot.
+
+    Runs during install (inside the container, where we have network) so
+    that firstboot ansible can run fully offline. This includes:
+      - oh-my-zsh: git clone for the user and root
+      - rustup: initialize the stable toolchain
+    """
+    _log("Pre-seeding network-dependent resources...", log)
+
+    # oh-my-zsh for user
+    omz_user = MOUNT_ROOT / "home" / username / ".oh-my-zsh"
+    if not omz_user.exists():
+        _log(f"Cloning oh-my-zsh for {username}...", log)
+        try:
+            chroot_run(
+                [
+                    "su",
+                    "-",
+                    username,
+                    "-c",
+                    "git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git"
+                    " ~/.oh-my-zsh",
+                ],
+                log=log,
+            )
+        except subprocess.CalledProcessError:
+            _log("WARNING: oh-my-zsh clone failed for user (no network?)", log)
+
+    # oh-my-zsh for root
+    omz_root = MOUNT_ROOT / "root" / ".oh-my-zsh"
+    if not omz_root.exists():
+        _log("Cloning oh-my-zsh for root...", log)
+        try:
+            chroot_run(
+                [
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    "https://github.com/ohmyzsh/ohmyzsh.git",
+                    "/root/.oh-my-zsh",
+                ],
+                log=log,
+            )
+        except subprocess.CalledProcessError:
+            _log("WARNING: oh-my-zsh clone failed for root (no network?)", log)
+
+    # rustup stable toolchain
+    _log(f"Initializing rustup stable toolchain for {username}...", log)
+    try:
+        chroot_run(
+            ["su", "-", username, "-c", "rustup default stable"],
+            log=log,
+        )
+    except subprocess.CalledProcessError:
+        _log("WARNING: rustup toolchain init failed (no network?)", log)
+
+    _log("Pre-seeding complete.", log)
+
+
+def configure_apple_input(
+    platform: PlatformConfig,
+    log: LogCallback | None = None,
+) -> None:
+    """Configure Apple Silicon keyboard and touchpad for a usable layout.
+
+    Apple keyboards have a non-standard layout (Fn where Ctrl is, Cmd where
+    Alt is, etc.). This sets hid_apple module options to swap keys into a
+    standard PC layout:
+      - swap_fn_leftctrl: Fn ↔ Left Ctrl
+      - swap_opt_cmd: Option ↔ Command (so Cmd acts as Alt)
+      - fnmode=2: Function keys are F1-F12 by default (media keys with Fn)
+
+    Also ensures libinput quirks for the Apple touchpad are active.
+    """
+    if platform.name != "aarch64-apple":
+        return
+
+    _log("Configuring Apple keyboard and touchpad...", log)
+
+    # hid_apple module options
+    modprobe_dir = MOUNT_ROOT / "etc" / "modprobe.d"
+    modprobe_dir.mkdir(parents=True, exist_ok=True)
+    (modprobe_dir / "hid_apple.conf").write_text(
+        "# Arches — Apple keyboard layout remapping\n"
+        "# swap_fn_leftctrl: Fn ↔ Left Ctrl\n"
+        "# swap_opt_cmd: Option ↔ Command (Cmd acts as Alt)\n"
+        "# fnmode=2: F1-F12 by default, media keys with Fn held\n"
+        "options hid_apple swap_fn_leftctrl=1\n"
+        "options hid_apple swap_opt_cmd=1\n"
+        "options hid_apple fnmode=2\n"
+    )
+
+    _log("Apple input configured (hid_apple key remapping).", log)
+
+
 def install_system(
     platform: PlatformConfig,
     template: InstallTemplate,
@@ -381,6 +649,9 @@ def install_system(
     configure_hostname(hostname, log)
     create_user(username, password, log)
     deploy_ssh_key(username, log)
+    copy_apple_firmware(platform, log)
+    configure_apple_input(platform, log)
+    preseed_network_deps(username, log)
     run_hardware_detection(platform, log)
     # NOTE: mkinitcpio is NOT run here — it's handled by
     # limine-mkinitcpio in the bootloader phase (Phase 3),

@@ -10,7 +10,7 @@ Currently supported platforms:
 |-------------------|--------------------------|-----------------|--------------------------|--------------------|---------------------------|
 | `x86-64`          | CachyOS v3 (AVX2/SSE4.2) | `linux-cachyos` | Limine                   | btrfs + subvolumes | Fully implemented         |
 | `aarch64-generic` | Arch Linux ARM           | `linux-aarch64` | GRUB                     | btrfs + subvolumes | Fully implemented         |
-| `aarch64-apple`   | Asahi Linux              | `linux-asahi`   | GRUB (m1n1→U-Boot chain) | TBD                | Not implemented or tested |
+| `aarch64-apple`   | Asahi Linux              | `linux-asahi`   | m1n1→U-Boot→extlinux     | btrfs + subvolumes | USB boot via U-Boot       |
 
 ## Quickstart
 
@@ -81,6 +81,33 @@ sudo make container-iso-aarch64
 make test-disk
 make test-iso          # UEFI mode
 ```
+
+**Apple Silicon (USB boot via U-Boot):**
+
+```bash
+# 1. Build the USB image (container ISO build + GPT+FAT32 conversion)
+sudo make usb-aarch64-apple
+
+# 2. Write to a USB-C drive (interactive — detects USB drives, confirms before writing)
+sudo make write-usb
+
+# 3. Boot on the Mac
+#    - Plug USB-C drive into a working port (closest to power cable)
+#    - Reboot into Asahi (where U-Boot runs)
+#    - Interrupt U-Boot and type: bootflow scan -b usb
+```
+
+The USB image uses U-Boot's native extlinux boot protocol — no GRUB in the chain. U-Boot finds `/extlinux/extlinux.conf` on the USB drive and boots the kernel directly. Auto-install is disabled on Apple Silicon to prevent accidental disk wipes; use the manual partitioning flow or host-install instead.
+
+Requires `gptfdisk` and `dosfstools` on the build host. An existing Asahi boot chain (m1n1 + U-Boot) must already be installed on the Mac's internal NVMe. USB-A ports do not work; use a USB-C drive on a USB-C port closest to the power cable.
+
+**Host install (into btrfs subvolumes on a running Asahi system):**
+
+```bash
+sudo make host-install
+```
+
+This installs Arches into btrfs subvolumes alongside the existing Asahi Linux (e.g. Fedora) without touching the partition table. Runs inside a Podman container on the host. See `examples/host-install.toml` for configuration.
 
 The built ISO is written to `out/arches-<date>.iso`. Each platform has its own make target (`iso-x86-64`, `iso-aarch64-generic`). The platform config is baked into the ISO at `/opt/arches/platform/platform.toml` so the installer knows which kernel, repos, and bootloader settings to use.
 
@@ -305,7 +332,8 @@ arches/
 │   │   ├── pacman.conf                   # Arch Linux ARM repos
 │   │   └── packages                      # Platform-specific ISO packages
 │   └── aarch64-apple/
-│       ├── platform.toml                 # GRUB + ext4 + Asahi firmware
+│       ├── platform.toml                 # extlinux + btrfs + Asahi firmware
+│       ├── archiso.conf                  # mkinitcpio config (Apple USB-C PHY modules)
 │       ├── pacman.conf                   # Asahi + ALARM repos
 │       └── packages                      # Platform-specific ISO packages
 │
@@ -368,7 +396,10 @@ arches/
 │
 └── scripts/
     ├── build-aur-repo.sh                 # Pre-build AUR packages into local repo
-    └── build-iso.sh                      # Full ISO build (called by Makefile)
+    ├── build-in-container.sh             # Build aarch64 ISO inside Podman container
+    ├── iso-to-usb-image.sh              # Convert ISO to GPT+FAT32 USB image (Apple Silicon)
+    ├── write-usb.sh                      # Interactive USB drive writer (device select + confirm)
+    └── host-install.sh                   # Host install into btrfs subvolumes (Apple Silicon)
 ```
 
 ## Key Technical Decisions
@@ -376,7 +407,7 @@ arches/
 - **Platform/template matrix** — Hardware concerns (kernel, repos, bootloader, disk layout, GPU detection) are separated from workload concerns (packages, services, Ansible roles). Platforms are selected at ISO build time; templates are selected at install time. Templates work on any platform without modification.
 - **Shell-first partitioning** — The default install flow drops the user to a shell to partition, format, and mount disks. The installer detects the mount layout on return. Auto-partition is available for VMs.
 - **CachyOS v3 repos** (x86-64 platform) — Full Arch package set recompiled with AVX2/SSE4.2 optimizations. Covers all x86-64 hardware from 2011 onward. The CachyOS custom pacman fork is intentionally excluded to maintain standard Arch pacman semantics.
-- **Bootloader dispatch** — The platform config determines the bootloader. x86-64 uses Limine (BIOS + UEFI, snapshot boot entries via `limine-snapper-sync`). aarch64-generic uses GRUB (UEFI-only, snapshot boot entries via `grub-btrfs`). Firmware type is auto-detected at install time.
+- **Bootloader dispatch** — The platform config determines the bootloader. x86-64 uses Limine (BIOS + UEFI, snapshot boot entries via `limine-snapper-sync`). aarch64-generic uses GRUB (UEFI-only, snapshot boot entries via `grub-btrfs`). aarch64-apple uses the m1n1 → U-Boot → extlinux chain; U-Boot's `bootflow scan` finds `/extlinux/extlinux.conf` on the USB drive and boots the kernel directly (no GRUB in the USB boot path). Firmware type is auto-detected at install time.
 - **Disk layout per platform** — x86-64: ESP (2G, doubles as /boot) + btrfs root with subvolumes (`@`, `@home`, `@var`). aarch64-generic: ESP (512M, at /boot/efi) + btrfs root with subvolumes (`@`, `@home`, `@var`). GRUB reads kernels from btrfs natively — no separate /boot partition needed.
 - **ESP sizing** — 2 GiB on x86-64 for snapshot booting (each bootable snapshot copies its kernel/initramfs into the ESP via `limine-snapper-sync`). 512 MiB on aarch64 (`grub-btrfs` reads snapshots directly from btrfs, no kernel copies needed).
 - **Hardware detection** — Controlled by the platform config. The x86-64 platform uses CachyOS `chwd` (Rust-based, replaces Manjaro's `mhwd`) to auto-install GPU drivers. ARM platforms disable it. Failures are always non-fatal.

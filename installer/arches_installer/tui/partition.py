@@ -184,6 +184,15 @@ class PartitionScreen(Screen):
 
     def _auto_partition(self) -> None:
         """Use auto-partition (wipes disk, uses platform disk_layout)."""
+        if not self.app.platform.allow_auto_install:
+            status = self.query_one("#mount-status", Static)
+            status.update(
+                "[red]Auto-partition is disabled for this platform.[/red]\n"
+                f"Platform '{self.app.platform.name}' has a disk layout managed\n"
+                "externally and must not be wiped. Use the shell to set up\n"
+                "your mounts manually, or use host-install instead."
+            )
+            return
         self.app.partition_mode = "auto"
         self.app.partition_map = None
         self.app.push_screen("template_select")

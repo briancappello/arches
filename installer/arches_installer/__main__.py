@@ -20,9 +20,15 @@ def main() -> int:
         help="Run unattended install from a TOML config file (no TUI)",
     )
     parser.add_argument(
+        "--host",
+        metavar="CONFIG",
+        type=Path,
+        help="Run host-install from a TOML config (install into btrfs subvolumes)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Validate config and print plan without executing (--auto only)",
+        help="Validate config and print plan without executing (--auto/--host only)",
     )
     parser.add_argument(
         "--platform",
@@ -31,6 +37,10 @@ def main() -> int:
         help="Path to platform.toml (default: /opt/arches/platform/platform.toml)",
     )
     args = parser.parse_args()
+
+    # --host flag: host-install mode (install into subvolumes on existing system)
+    if args.host:
+        return _run_host(args.host, platform_path=args.platform, dry_run=args.dry_run)
 
     # Explicit --auto flag takes priority — fail hard on errors
     if args.auto:
@@ -139,6 +149,67 @@ def _run_auto(
     if rc != 0 and fallback_to_tui:
         print("\nFalling back to manual install...\n", file=sys.stderr)
     return rc
+
+
+def _run_host(
+    config_path: Path,
+    *,
+    platform_path: Path | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Run host-install from a TOML config file."""
+    from arches_installer.core.host_install import HostInstallConfig, run_host_install
+
+    if not config_path.exists():
+        print(f"ERROR: Config file not found: {config_path}", file=sys.stderr)
+        return 1
+
+    try:
+        platform = _load_platform(platform_path)
+    except Exception as e:
+        print(f"ERROR: Failed to load platform config: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        config = HostInstallConfig.from_file(config_path)
+    except Exception as e:
+        print(f"ERROR: Invalid config: {e}", file=sys.stderr)
+        return 1
+
+    if dry_run:
+        layout = platform.disk_layout
+        print("== Arches Host Install (dry run) ==")
+        print(f"  Platform:    {platform.name} ({platform.arch})")
+        print(f"  Kernel:      {platform.kernel.package}")
+        print(f"  Bootloader:  {platform.bootloader.type}")
+        print(f"  Filesystem:  {layout.filesystem}")
+        print(f"  Template:    {config.template.name}")
+        print(f"  Hostname:    {config.hostname}")
+        print(f"  User:        {config.username}")
+        print(f"  Partition:   {config.partition}")
+        print(f"  ESP:         {config.esp_partition}")
+        print(f"  Mode:        {config.mode}")
+        if config.mode == "alongside":
+            print(
+                f"  Subvolumes:  {config.subvol_prefix}, {config.subvol_prefix}-home, {config.subvol_prefix}-var"
+            )
+        else:
+            print("  Subvolumes:  @, @home, @var (replace existing)")
+        print(f"  GRUB entry:  {'yes (host)' if config.add_grub_entry else 'no'}")
+        print(
+            f"  Bootloader:  {'install in chroot' if config.install_bootloader else 'skip (host GRUB)'}"
+        )
+        print(f"  Packages:    {len(config.template.install.all_packages)}")
+        print(f"  Services:    {len(config.template.services)}")
+        if config.template.ansible.firstboot_roles:
+            print(
+                f"  Ansible:     {', '.join(config.template.ansible.firstboot_roles)}"
+            )
+        print("")
+        print("Dry run complete. No changes made.")
+        return 0
+
+    return run_host_install(platform, config)
 
 
 def _auto_install_error(msg: str, fallback_to_tui: bool) -> None:

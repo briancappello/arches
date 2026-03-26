@@ -15,11 +15,17 @@
   pacman:
     name: "{{ kde_extra_packages }}"
     state: present
+  # Pre-installed during pacstrap — no-op if already present.
 
 - name: Install custom plasmoid packages (from local repo)
   command: >-
     pacman -S --noconfirm --needed --overwrite '*'
     {{ kde_custom_plasmoid_packages | join(' ') }}
+  register: plasmoid_install
+  changed_when: "'reinstalling' in plasmoid_install.stdout"
+  failed_when: false
+  # Pre-installed as override packages. --needed makes this a no-op.
+  # failed_when: false handles the case where local repo is unavailable.
 
 # --------------------------------------------------------------------------
 # 1. Display Manager (SDDM)

@@ -68,6 +68,7 @@ done
 all_packages=($(printf '%s\n' "${base_packages[@]}" "${template_packages[@]}" | sort -u))
 
 echo "  Packages to cache: ${#all_packages[@]}"
+echo "  Package list: ${all_packages[*]}"
 
 # Create cache dir
 mkdir -p "$CACHE_DIR"
@@ -82,25 +83,32 @@ else
     _conf="$PLATFORM_CONF"
 fi
 
+echo "  Config: $_conf"
 echo "  Downloading to: $CACHE_DIR"
 
 # Use a temporary dbpath so pacman resolves the full dependency tree
 # as if nothing is installed (the host may already have these packages,
 # which would cause -Sw to skip them).
 TEMP_DB=$(mktemp -d)
-trap "rm -rf $TEMP_DB" EXIT
+cleanup() { rm -rf "$TEMP_DB" 2>/dev/null || true; }
+trap cleanup EXIT
 
 # Sync databases into the temp dbpath
+echo ""
+echo "  ── Syncing package databases ──"
 pacman -Sy --noconfirm \
     --config "$_conf" \
-    --dbpath "$TEMP_DB" 2>&1 | tail -3
+    --dbpath "$TEMP_DB"
 
 # Download all packages AND their dependencies
+echo ""
+echo "  ── Downloading packages ──"
 pacman -Sw --noconfirm \
     --config "$_conf" \
     --cachedir "$CACHE_DIR" \
     --dbpath "$TEMP_DB" \
-    "${all_packages[@]}" 2>&1 | tail -5
+    "${all_packages[@]}"
 
+echo ""
 echo "  Cached $(find "$CACHE_DIR" -name '*.pkg.tar.*' | wc -l) packages"
 echo "  Cache size: $(du -sh "$CACHE_DIR" | cut -f1)"

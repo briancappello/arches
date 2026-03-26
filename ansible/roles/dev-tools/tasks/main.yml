@@ -9,8 +9,9 @@
   become_user: "{{ ansible_user | default('brian') }}"
   command: rustup default stable
   args:
-    creates: "~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu"
-  ignore_errors: yes
+    creates: "/home/{{ ansible_user | default('brian') }}/.rustup/toolchains/stable-aarch64-unknown-linux-gnu"
+  # Pre-seeded at install time by preseed_network_deps(). The creates guard
+  # makes this a no-op when the toolchain already exists.
 
 # ==========================================================================
 # Podman
@@ -20,6 +21,7 @@
   pacman:
     name: podman
     state: present
+  # Pre-installed during pacstrap — no-op if already present.
 
 # ==========================================================================
 # PostgreSQL — localhost-only, trust local connections (no password for dev)

@@ -11,11 +11,13 @@ from arches_installer.core.disk import (
     BlockDevice,
     PartitionMap,
     _part_name,
+    cleanup_mounts,
     detect_block_devices,
     detect_mounts,
     detect_single_disk,
     partition_disk_aarch64,
     partition_disk_x86,
+    prepare_subvolume,
     validate_mounts,
 )
 
@@ -479,3 +481,133 @@ def test_detect_single_disk_multiple_disks(mock_detect: MagicMock) -> None:
     ]
     with pytest.raises(RuntimeError, match="Multiple non-removable disks"):
         detect_single_disk()
+
+
+# ---------------------------------------------------------------------------
+# cleanup_mounts()
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_mounts_nothing_mounted() -> None:
+    """cleanup_mounts is a no-op when nothing is mounted at /mnt."""
+    content = _proc_mounts(
+        [
+            "/dev/sda1 / ext4 rw 0 0",
+            "tmpfs /tmp tmpfs rw 0 0",
+        ]
+    )
+    with patch("builtins.open", mock_open(read_data=content)):
+        with patch("arches_installer.core.disk.run") as mock_run:
+            cleanup_mounts()
+            mock_run.assert_not_called()
+
+
+def test_cleanup_mounts_unmounts_in_reverse() -> None:
+    """cleanup_mounts unmounts deepest paths first."""
+    content = _proc_mounts(
+        [
+            "/dev/sda2 /mnt btrfs rw 0 0",
+            "/dev/sda2 /mnt/home btrfs rw 0 0",
+            "/dev/sda1 /mnt/boot/efi vfat rw 0 0",
+        ]
+    )
+    with patch("builtins.open", mock_open(read_data=content)):
+        with patch("arches_installer.core.disk.run") as mock_run:
+            cleanup_mounts()
+            # Should unmount deepest first: /mnt/boot/efi, /mnt/home, /mnt
+            calls = [c[0][0] for c in mock_run.call_args_list]
+            assert calls == [
+                ["umount", "/mnt/home"],
+                ["umount", "/mnt/boot/efi"],
+                ["umount", "/mnt"],
+            ]
+
+
+def test_cleanup_mounts_oserror_is_safe() -> None:
+    """cleanup_mounts handles OSError gracefully."""
+    with patch("builtins.open", side_effect=OSError("permission denied")):
+        # Should not raise
+        cleanup_mounts()
+
+
+# ---------------------------------------------------------------------------
+# prepare_subvolume()
+# ---------------------------------------------------------------------------
+
+
+@patch("arches_installer.core.disk.run")
+def test_prepare_subvolume_alongside(
+    mock_run, aarch64_apple_platform, tmp_path
+) -> None:
+    """Alongside mode creates @arches, @arches-home, @arches-var subvolumes."""
+    mount_root = tmp_path / "mnt"
+
+    with patch("arches_installer.core.disk.MOUNT_ROOT", mount_root):
+        pm = prepare_subvolume(
+            partition="/dev/nvme0n1p6",
+            esp_partition="/dev/nvme0n1p4",
+            platform=aarch64_apple_platform,
+            mode="alongside",
+            subvol_prefix="@arches",
+        )
+
+    assert pm.esp == "/dev/nvme0n1p4"
+    assert pm.root == "/dev/nvme0n1p6"
+
+    # Verify subvolume creation commands were issued
+    run_cmds = [c[0][0] for c in mock_run.call_args_list]
+    subvol_creates = [
+        c for c in run_cmds if len(c) >= 3 and c[:3] == ["btrfs", "subvolume", "create"]
+    ]
+    assert len(subvol_creates) == 3  # @arches, @arches-home, @arches-var
+
+    # Verify mount commands include the subvolume options
+    mount_cmds = [c for c in run_cmds if c[0] == "mount"]
+    assert len(mount_cmds) >= 4  # top-level, root, home, var, ESP
+
+
+@patch("arches_installer.core.disk.run")
+def test_prepare_subvolume_replace(mock_run, aarch64_apple_platform, tmp_path) -> None:
+    """Replace mode creates standard @, @home, @var subvolumes."""
+    mount_root = tmp_path / "mnt"
+
+    with patch("arches_installer.core.disk.MOUNT_ROOT", mount_root):
+        pm = prepare_subvolume(
+            partition="/dev/nvme0n1p6",
+            esp_partition="/dev/nvme0n1p4",
+            platform=aarch64_apple_platform,
+            mode="replace",
+        )
+
+    assert pm.esp == "/dev/nvme0n1p4"
+    assert pm.root == "/dev/nvme0n1p6"
+
+    # Verify subvolume creation commands include @, @home, @var
+    run_cmds = [c[0][0] for c in mock_run.call_args_list]
+    subvol_creates = [
+        c for c in run_cmds if len(c) >= 3 and c[:3] == ["btrfs", "subvolume", "create"]
+    ]
+    assert len(subvol_creates) == 3
+
+
+def test_prepare_subvolume_rejects_ext4(aarch64_apple_platform) -> None:
+    """prepare_subvolume raises if platform uses ext4."""
+    aarch64_apple_platform.disk_layout.filesystem = "ext4"
+    with pytest.raises(RuntimeError, match="requires btrfs"):
+        prepare_subvolume(
+            partition="/dev/sda2",
+            esp_partition="/dev/sda1",
+            platform=aarch64_apple_platform,
+            mode="alongside",
+        )
+
+
+def test_prepare_subvolume_rejects_invalid_mode(aarch64_apple_platform) -> None:
+    """prepare_subvolume raises on invalid mode."""
+    with pytest.raises(ValueError, match="Unknown subvolume mode"):
+        prepare_subvolume(
+            partition="/dev/sda2",
+            esp_partition="/dev/sda1",
+            platform=aarch64_apple_platform,
+            mode="invalid",
+        )

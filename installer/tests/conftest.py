@@ -98,6 +98,45 @@ def aarch64_platform() -> PlatformConfig:
 
 
 @pytest.fixture
+def aarch64_apple_platform() -> PlatformConfig:
+    """An aarch64-apple Apple Silicon platform config for testing."""
+    return PlatformConfig(
+        name="aarch64-apple",
+        description="Apple Silicon (M1/M2/M3/M4) with Asahi Linux kernel",
+        arch="aarch64",
+        kernel=KernelConfig(
+            package="linux-asahi",
+            headers="linux-asahi-headers",
+        ),
+        bootloader=BootloaderPlatformConfig(
+            type="grub",
+            efi_binary="BOOTAA64.EFI",
+            efi_fallback_path="EFI/BOOT/BOOTAA64.EFI",
+            supports_bios=False,
+            snapshot_boot=False,
+        ),
+        disk_layout=DiskLayoutConfig(
+            filesystem="btrfs",
+            mount_options="compress=zstd:1,noatime",
+            subvolumes=["@", "@home", "@var"],
+            esp_size_mib=512,
+            swap="zram",
+        ),
+        hardware_detection=HardwareDetectionConfig(enabled=False),
+        base_packages=[
+            "asahi-alarm-keyring",
+            "m1n1",
+            "uboot-asahi",
+            "grub",
+            "efibootmgr",
+            "btrfs-progs",
+            "asahi-fwextract",
+            "asahi-scripts",
+        ],
+    )
+
+
+@pytest.fixture
 def dev_workstation_template() -> InstallTemplate:
     """A dev-workstation-style template."""
     return InstallTemplate(

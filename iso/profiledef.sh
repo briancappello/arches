@@ -11,7 +11,9 @@
 #   ARCHES_ARCH=aarch64 mkarchiso ...
 
 iso_name="arches"
-iso_label="ARCHES_$(date +%Y%m)"
+# FAT32 volume labels are limited to 11 characters. Keep this short
+# and stable so the USB image can use the same label for archisolabel=.
+iso_label="ARCHES_2026"
 iso_publisher="Arches <https://github.com/your-user/arches>"
 iso_application="Arches Install/Recovery Media"
 iso_version="$(date +%Y.%m.%d)"
@@ -37,8 +39,11 @@ pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"
 
 # The ALARM linux-aarch64 kernel lacks CONFIG_SQUASHFS_ZSTD; use xz instead.
+# xz duplicate detection decompresses previously-written blocks in parallel,
+# which can exceed memory limits and cause "xz uncompress failed" errors.
+# -no-duplicates disables this, and -processors 4 limits parallelism.
 if [[ "$arch" == "aarch64" ]]; then
-    airootfs_image_tool_options=('-comp' 'xz' '-b' '1M')
+    airootfs_image_tool_options=('-comp' 'xz' '-b' '1M' '-no-duplicates' '-processors' '4')
 else
     airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' '15' '-b' '1M')
 fi

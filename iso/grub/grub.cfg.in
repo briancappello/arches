@@ -46,8 +46,8 @@ timeout_style=menu
 
 menuentry "Arches Install/Recovery (%ARCH%, ${archiso_platform})" --class arch --class gnu-linux --class gnu --class os --id 'arches' {
     set gfxpayload=keep
-    linux /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-linux-aarch64 archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% console=ttyAMA0,115200 console=tty0 video=1920x1080
-    initrd /%INSTALL_DIR%/boot/%ARCH%/initramfs-linux-aarch64.img
+    linux /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-@KERNEL@ archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% console=ttyAMA0,115200 console=tty0 video=1920x1080
+    initrd /%INSTALL_DIR%/boot/%ARCH%/initramfs-@KERNEL@.img
 }
 
 if [ "${grub_platform}" == 'efi' ]; then

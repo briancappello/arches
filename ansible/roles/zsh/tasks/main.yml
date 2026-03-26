@@ -4,6 +4,10 @@
 # ==========================================================================
 # Regular user: bullet-train theme (Powerline prompt)
 # Root user:    fino theme (visually distinct so it's obvious you are root)
+#
+# oh-my-zsh is pre-cloned at install time by preseed_network_deps().
+# The git tasks below are no-ops when the directory exists (update: no),
+# but are kept so this role works standalone with network access.
 # ==========================================================================
 
 # --------------------------------------------------------------------------
