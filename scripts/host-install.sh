@@ -127,7 +127,7 @@ fi
 
 # ── AUR / custom package repo ─────────────────────────
 # The platform pacman.conf references [arches-local] at /opt/arches-repo.
-# For ISO builds, build-aur-repo.sh populates this during `make iso-*`.
+# For ISO builds, build-aur-repo.sh populates this during `make iso`.
 # For host-install, we reuse a prior build or run the build in-container.
 AUR_REPO_DIR="$PROJECT_DIR/iso/airootfs/opt/arches-repo"
 

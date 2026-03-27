@@ -2,7 +2,7 @@
 
 A personal Arch-based Linux distribution with a declarative, template-driven installer and configurable platform support.
 
-Arches uses a **platform + template matrix** design. A *platform* defines the hardware foundation — kernel, repos, bootloader, disk layout, hardware detection — while a *template* defines the userspace on top — packages, services, Ansible roles. Templates are platform-independent. You build an ISO for a specific platform (`make iso-x86-64`), and at install time you select a template.
+Arches uses a **platform + template matrix** design. A *platform* defines the hardware foundation — kernel, repos, bootloader, disk layout, hardware detection — while a *template* defines the userspace on top — packages, services, Ansible roles. Templates are platform-independent. You build an ISO with `make iso` (the platform is auto-detected), and at install time you select a template.
 
 Currently supported platforms:
 
@@ -71,45 +71,38 @@ The installer checks for `/root/auto-install.toml` in the running ISO. If this f
 
 ### Build
 
-```bash
-# 1. Build the ISO (requires root for mkarchiso)
-sudo make iso-x86-64
-# or
-sudo make container-iso-aarch64
-
-# 2. Create a QEMU test disk and boot the ISO
-make test-disk
-make test-iso          # UEFI mode
-```
-
-**Apple Silicon (USB boot via U-Boot):**
+All builds run inside Podman containers regardless of host distro. The platform is auto-detected from the host hardware but can be overridden with `PLATFORM=x86-64|aarch64-generic|aarch64-apple`.
 
 ```bash
-# 1. Build the USB image (container ISO build + GPT+FAT32 conversion)
-sudo make usb-aarch64-apple
+# Build install media and write to USB drive (auto-detects platform)
+sudo make usb
 
-# 2. Write to a USB-C drive (interactive — detects USB drives, confirms before writing)
-sudo make write-usb
+# Or just build the ISO
+sudo make iso
 
-# 3. Boot on the Mac
-#    - Plug USB-C drive into a working port (closest to power cable)
-#    - Reboot into Asahi (where U-Boot runs)
-#    - Interrupt U-Boot and type: bootflow scan -b usb
+# Install into a QEMU VM (builds ISO if needed, creates disk, boots QEMU)
+make qemu-install
 ```
 
-The USB image uses U-Boot's native extlinux boot protocol — no GRUB in the chain. U-Boot finds `/extlinux/extlinux.conf` on the USB drive and boots the kernel directly. Auto-install is disabled on Apple Silicon to prevent accidental disk wipes; use the manual partitioning flow or host-install instead.
+**USB boot on Apple Silicon:**
 
-Requires `gptfdisk` and `dosfstools` on the build host. An existing Asahi boot chain (m1n1 + U-Boot) must already be installed on the Mac's internal NVMe. USB-A ports do not work; use a USB-C drive on a USB-C port closest to the power cable.
+On Apple Silicon, `make usb` builds the ISO and converts it to a GPT+FAT32 USB image for U-Boot's native extlinux boot protocol. After writing:
+
+1. Plug USB-C drive into a working port (closest to power cable)
+2. Reboot into Asahi (where U-Boot runs)
+3. Interrupt U-Boot and type: `bootflow scan -b usb`
+
+Auto-install is disabled on Apple Silicon to prevent accidental disk wipes; use the manual partitioning flow or host-install instead. Requires an existing Asahi boot chain (m1n1 + U-Boot) on the Mac's internal NVMe.
 
 **Host install (into btrfs subvolumes on a running Asahi system):**
 
 ```bash
-sudo make host-install
+sudo make host-install CONFIG=examples/host-install.toml
 ```
 
 This installs Arches into btrfs subvolumes alongside the existing Asahi Linux (e.g. Fedora) without touching the partition table. Runs inside a Podman container on the host. See `examples/host-install.toml` for configuration.
 
-The built ISO is written to `out/arches-<date>.iso`. Each platform has its own make target (`iso-x86-64`, `iso-aarch64-generic`). The platform config is baked into the ISO at `/opt/arches/platform/platform.toml` so the installer knows which kernel, repos, and bootloader settings to use.
+The built ISO is written to `out/arches-<date>.iso`. The platform config is baked into the ISO at `/opt/arches/platform/platform.toml` so the installer knows which kernel, repos, and bootloader settings to use.
 
 ### Development
 
@@ -395,9 +388,12 @@ arches/
 │       └── vm-server/tasks/main.yml      # SSH hardening, Postgres, Redis
 │
 └── scripts/
+    ├── detect-platform.sh                # Auto-detect host platform (x86-64/aarch64-generic/aarch64-apple)
+    ├── build-iso.sh                      # Build ISO inside Podman container (any platform)
+    ├── build-usb.sh                      # Build ISO + write to USB (platform-aware)
+    ├── qemu-install.sh                   # Build ISO + boot QEMU VM with install disk
     ├── build-aur-repo.sh                 # Pre-build AUR packages into local repo
-    ├── build-in-container.sh             # Build aarch64 ISO inside Podman container
-    ├── iso-to-usb-image.sh              # Convert ISO to GPT+FAT32 USB image (Apple Silicon)
+    ├── iso-to-usb-image.sh              # Convert ISO to GPT+FAT32 USB image (aarch64)
     ├── write-usb.sh                      # Interactive USB drive writer (device select + confirm)
     └── host-install.sh                   # Host install into btrfs subvolumes (Apple Silicon)
 ```

@@ -1,45 +1,22 @@
 #!/usr/bin/env bash
 #
-# Build the Arches aarch64 ISO inside a Podman container.
+# Build the Arches ISO inside a Podman container.
 #
-# This provides the full Arch Linux ARM toolchain (mkarchiso, pacman,
-# makepkg, etc.) on a non-Arch host (e.g. Fedora aarch64).
-#
-# Requires sudo — mkarchiso needs real root for devtmpfs mounts,
-# loopback devices, and chroot operations (same as native ISO builds).
+# Auto-detects the host platform and builds the appropriate ISO.
+# Works from any Linux distro — only requires Podman and sudo.
 #
 # Usage:
-#   sudo ./scripts/build-in-container.sh                          # default: aarch64-generic
-#   sudo ./scripts/build-in-container.sh --platform aarch64-apple # Asahi / Apple Silicon
-#   sudo ./scripts/build-in-container.sh --rebuild                # force rebuild container image
-#   sudo FORCE=1 ./scripts/build-in-container.sh                  # pass FORCE to AUR repo build
+#   sudo ./scripts/build-iso.sh                       # auto-detect platform
+#   sudo PLATFORM=x86-64 ./scripts/build-iso.sh       # explicit platform
+#   sudo ./scripts/build-iso.sh --rebuild              # force container rebuild
+#   sudo FORCE=1 ./scripts/build-iso.sh               # force AUR repo rebuild
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-IMAGE_NAME="arches-builder"
-PLATFORM="aarch64-generic"
 
-# ── Logging ───────────────────────────────────────────
-# All output goes to both the terminal and a log file (overwritten each run).
-LOG_FILE="$PROJECT_DIR/container-build.log"
-exec > >(tee "$LOG_FILE") 2>&1
-echo "Log: $LOG_FILE"
-
-# ── Require root ──────────────────────────────────────
-if [[ $EUID -ne 0 ]]; then
-    echo "ERROR: Container ISO build requires root (for mkarchiso chroot/mount operations)."
-    echo "       Run: sudo make container-iso-aarch64"
-    exit 1
-fi
-
-# Resolve the invoking user for UID mapping inside the container.
-# When run via sudo, SUDO_USER is the original user.
-BUILD_USER="${SUDO_USER:-$(logname 2>/dev/null || echo nobody)}"
-BUILD_UID=$(id -u "$BUILD_USER")
-BUILD_GID=$(id -g "$BUILD_USER")
-
+# ── Parse arguments ───────────────────────────────────
 REBUILD=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -49,9 +26,37 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+# ── Detect platform ──────────────────────────────────
+source "$SCRIPT_DIR/detect-platform.sh"
+
+# Map platform to container base image.
+# Image name includes arch so x86-64 and aarch64 images don't collide.
+case "$CONTAINER_ARCH" in
+    linux/amd64) BASE_IMAGE="docker.io/archlinux:latest"; TARGETARCH="amd64" ;;
+    linux/arm64) BASE_IMAGE="docker.io/lopsided/archlinux:latest"; TARGETARCH="arm64" ;;
+esac
+IMAGE_NAME="arches-builder-${TARGETARCH}"
+
+echo "Platform: $PLATFORM (arch: $ARCHES_ARCH, container: $CONTAINER_ARCH)"
+
+# ── Logging ───────────────────────────────────────────
+LOG_FILE="$PROJECT_DIR/container-build.log"
+exec > >(tee "$LOG_FILE") 2>&1
+echo "Log: $LOG_FILE"
+
+# ── Require root ──────────────────────────────────────
+if [[ $EUID -ne 0 ]]; then
+    echo "ERROR: ISO build requires root (for mkarchiso chroot/mount operations)."
+    echo "       Run: sudo $0"
+    exit 1
+fi
+
+# Resolve the invoking user for UID mapping inside the container.
+BUILD_USER="${SUDO_USER:-$(logname 2>/dev/null || echo nobody)}"
+BUILD_UID=$(id -u "$BUILD_USER")
+BUILD_GID=$(id -g "$BUILD_USER")
+
 # ── Persistent pacman cache ───────────────────────────
-# Shared across both `podman build` (image rebuild) and `podman run`
-# (ISO build), so packages downloaded during either step are reused.
 CACHE_DIR="$PROJECT_DIR/.pkg-cache"
 mkdir -p "$CACHE_DIR"
 
@@ -62,21 +67,24 @@ if [[ "$REBUILD" == true ]]; then
 fi
 
 if ! podman image exists "$IMAGE_NAME"; then
-    echo "══ Building container image ($IMAGE_NAME) ══"
-    podman build -t "$IMAGE_NAME" -f "$PROJECT_DIR/Containerfile" "$PROJECT_DIR"
+    echo "══ Building container image ($IMAGE_NAME for $CONTAINER_ARCH) ══"
+    podman build \
+        --platform="$CONTAINER_ARCH" \
+        --build-arg BASE_IMAGE="$BASE_IMAGE" \
+        --build-arg TARGETARCH="$TARGETARCH" \
+        -t "$IMAGE_NAME" \
+        -f "$PROJECT_DIR/Containerfile" \
+        "$PROJECT_DIR"
 fi
 
 # ── Volume mounts ─────────────────────────────────────
-# Mount the project directory read-write.
-# Mount sibling repos (custom plasmoid sources) read-only so
-# build-aur-repo.sh can find them at their expected relative paths.
 VOLUMES=(
     -v "$PROJECT_DIR:/build"
     -v "$CACHE_DIR:/var/cache/pacman/pkg"
 )
 
-# Mount the build user's .ssh directory so stage-installer can embed their
-# public key into the ISO (for passwordless SSH to installed systems).
+# SSH key embedding — mount the build user's .ssh so stage-installer
+# can embed their public key into the ISO.
 BUILD_HOME=$(eval echo "~$BUILD_USER")
 if [[ -d "$BUILD_HOME/.ssh" ]]; then
     VOLUMES+=(-v "$BUILD_HOME/.ssh:/home/builder/.ssh:ro")
@@ -94,22 +102,15 @@ for sibling in kde-task-manager plasma-ai-usage-monitor; do
 done
 
 # ── Run the build ─────────────────────────────────────
-# --privileged: mkarchiso needs devtmpfs, loopback devices, mount, chroot.
-# SUDO_USER=builder: build-aur-repo.sh uses this to drop privileges for makepkg.
 echo "══ Starting container build (platform: $PLATFORM) ══"
 
 FORCE_FLAG=""
 [[ "${FORCE:-}" == "1" ]] && FORCE_FLAG="FORCE=1"
 
-# The project dir is mounted from the host. Inside the container, 'builder'
-# needs write access for makepkg (which refuses to run as root). We match
-# the builder UID/GID to the invoking user so file ownership stays consistent.
 # Bash as PID 1 inside a container ignores SIGINT/SIGTERM by default.
 # We register a trap that forwards the signal to all child processes,
-# then run make in the background and wait for it — this lets the trap
-# fire while make is still running (traps only execute between foreground
-# commands, but 'wait' is interruptible).
-exec podman run --rm --privileged \
+# then run make in the background and wait for it.
+podman run --rm --privileged \
     --security-opt label=disable \
     "${VOLUMES[@]}" \
     -e SUDO_USER=builder \
@@ -121,6 +122,6 @@ exec podman run --rm --privileged \
         groupmod -g '"$BUILD_GID"' builder &&
         chown -R builder:builder /tmp &&
         chown builder:builder /home/builder &&
-        make iso-'"$PLATFORM"' '"$FORCE_FLAG"' &
+        make _iso PLATFORM='"$PLATFORM"' ARCHES_ARCH='"$ARCHES_ARCH"' '"$FORCE_FLAG"' &
         wait $!
     '

@@ -14,211 +14,70 @@ OUT_DIR     := $(PROJECT_DIR)/out
 
 # ─── Phony targets ────────────────────────────────────
 
-.PHONY: help iso-x86-64 iso-aarch64-generic iso-aarch64-apple \
-        aur-repo-x86-64 aur-repo-aarch64 \
-        container-iso-aarch64 container-iso-aarch64-apple \
-        usb-aarch64-apple write-usb clean clean-all \
-        lint format test test-unit test-tui test-template check-root check-deps \
-        stage-installer stage-ansible stage-platform stage-bootconfig \
-        assemble-packages cache-packages \
-        test-iso test-boot test-iso-bios test-disk dry-run \
-        ansible-dev \
-        host-install host-install-rebuild host-install-dry host-clean
+.PHONY: help \
+        iso usb qemu-install \
+        host-install host-install-rebuild host-install-dry host-clean \
+        fmt test test-template dry-run \
+        test-iso test-boot test-iso-bios test-disk ansible-dev \
+        clean clean-work clean-all \
+        _iso _aur-repo \
+        _stage-installer _stage-ansible _stage-platform _stage-bootconfig \
+        _assemble-packages _cache-packages \
+        _check-root _check-deps
 
 # ─── Default ──────────────────────────────────────────
 
 help: ## Show this help
-	@printf '\n  \033[1mArches Build Targets\033[0m\n\n'
-	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
+	@printf '\n  \033[1mArches Build Targets\033[0m\n'
+	@current_section=""; \
+	grep -E '^[a-zA-Z_-]+:.*##|^##@' $(MAKEFILE_LIST) | \
+	while IFS= read -r line; do \
+		if echo "$$line" | grep -qE '^##@'; then \
+			section=$$(echo "$$line" | sed 's/^##@ *//'); \
+			printf '\n  \033[1;33m%s\033[0m\n' "$$section"; \
+		else \
+			target=$$(echo "$$line" | sed 's/:.*//' ); \
+			desc=$$(echo "$$line" | sed 's/.*## //' ); \
+			printf '    \033[36m%-20s\033[0m %s\n' "$$target" "$$desc"; \
+		fi; \
+	done
 	@printf '\n'
 
-# ─── ISO build ────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
+# User-facing workflows
+# ─────────────────────────────────────────────────────────
 
-iso-x86-64: PLATFORM := x86-64
-iso-x86-64: export ARCHES_ARCH := x86_64
-iso-x86-64: check-root check-deps aur-repo-x86-64 stage-installer stage-ansible stage-platform stage-bootconfig assemble-packages cache-packages ## Build ISO for x86-64 (requires sudo)
-	@echo "══ Building Arches ISO (x86-64) ══"
-	@rm -rf $(WORK_DIR)
-	@mkdir -p $(OUT_DIR)
-	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
-	@echo ""
-	@echo "══ ISO built ══"
-	@ls -lh $(OUT_DIR)/arches-*.iso 2>/dev/null
+##@ Install
 
-iso-aarch64-generic: PLATFORM := aarch64-generic
-iso-aarch64-generic: export ARCHES_ARCH := aarch64
-iso-aarch64-generic: check-root check-deps aur-repo-aarch64 stage-installer stage-ansible stage-platform stage-bootconfig assemble-packages cache-packages ## Build ISO for aarch64-generic (requires sudo)
-	@echo "══ Building Arches ISO (aarch64-generic) ══"
-	@rm -rf $(WORK_DIR)
-	@mkdir -p $(OUT_DIR)
-	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
-	@echo ""
-	@echo "══ ISO built ══"
-	@ls -lh $(OUT_DIR)/arches-*.iso 2>/dev/null
+iso: ## Build ISO for auto-detected platform (requires sudo + Podman)
+	$(SCRIPTS)/build-iso.sh
 
-iso-aarch64-apple: PLATFORM := aarch64-apple
-iso-aarch64-apple: export ARCHES_ARCH := aarch64
-iso-aarch64-apple: check-root check-deps aur-repo-aarch64 stage-installer stage-ansible stage-platform stage-bootconfig assemble-packages cache-packages ## Build ISO for aarch64-apple / Asahi (requires sudo, native)
-	@echo "══ Building Arches ISO (aarch64-apple / Asahi) ══"
-	@rm -rf $(WORK_DIR)
-	@mkdir -p $(OUT_DIR)
-	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
-	@echo ""
-	@echo "══ ISO built ══"
-	@ls -lh $(OUT_DIR)/arches-*.iso 2>/dev/null
+usb: ## Build install media and write to USB drive (requires sudo + Podman)
+	$(SCRIPTS)/build-usb.sh
 
-container-iso-aarch64-apple: ## Build aarch64-apple ISO inside Podman container (requires sudo)
-	$(SCRIPTS)/build-in-container.sh --platform aarch64-apple
+qemu-install: ## Build ISO and boot QEMU VM with install disk attached
+	$(SCRIPTS)/qemu-install.sh
 
-usb-aarch64-apple: container-iso-aarch64-apple ## Build aarch64-apple USB image and write to USB drive
-	@ISO=$$(ls -t $(OUT_DIR)/arches-*-aarch64.iso 2>/dev/null | head -1); \
-	if [ -z "$$ISO" ]; then \
-		echo "ERROR: No aarch64 ISO found in $(OUT_DIR)/"; \
-		exit 1; \
-	fi; \
-	echo ""; \
-	$(SCRIPTS)/iso-to-usb-image.sh "$$ISO"
-	@IMG=$$(ls -t $(OUT_DIR)/arches-*.usb.img 2>/dev/null | head -1); \
-	$(SCRIPTS)/write-usb.sh "$$IMG"
-
-write-usb: ## Write USB image to a USB drive (builds if needed, interactive)
-	@IMG=$$(ls -t $(OUT_DIR)/arches-*.usb.img 2>/dev/null | head -1); \
-	if [ -z "$$IMG" ]; then \
-		ISO=$$(ls -t $(OUT_DIR)/arches-*-aarch64.iso 2>/dev/null | head -1); \
-		if [ -n "$$ISO" ]; then \
-			echo "No USB image found — converting existing ISO..."; \
-			echo ""; \
-			$(SCRIPTS)/iso-to-usb-image.sh "$$ISO"; \
-			IMG=$$(ls -t $(OUT_DIR)/arches-*.usb.img 2>/dev/null | head -1); \
-		else \
-			echo "No USB image or ISO found — building from scratch..."; \
-			echo ""; \
-			$(MAKE) usb-aarch64-apple; \
-			exit 0; \
-		fi; \
-	fi; \
-	$(SCRIPTS)/write-usb.sh "$$IMG"
-
-aur-repo-x86-64: ## Pre-build AUR packages for x86-64 platform
-	@echo "══ Building AUR repo (x86-64) ══"
-	$(SCRIPTS)/build-aur-repo.sh $(if $(FORCE),--force) x86-64
-
-aur-repo-aarch64: ## Pre-build AUR packages for aarch64 platform
-	@echo "══ Building AUR repo (aarch64-generic) ══"
-	$(SCRIPTS)/build-aur-repo.sh $(if $(FORCE),--force) aarch64-generic
-
-container-iso-aarch64: ## Build aarch64 ISO inside Podman container (requires sudo)
-	$(SCRIPTS)/build-in-container.sh
-
-stage-installer: ## Copy installer into ISO airootfs
-	@echo "══ Staging installer ══"
-	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/installer
-	@cp -r $(INSTALLER)/* $(ISO_PROFILE)/airootfs/opt/arches/installer/
-	@mkdir -p $(ISO_PROFILE)/airootfs/usr/local/bin
-	@printf '#!/usr/bin/env bash\n\
-cd /opt/arches/installer\n\
-exec python -m arches_installer "$$@"\n' > $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
-	@chmod +x $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
-	@# Embed build host's SSH public key for passwordless access to installed systems
-	@REAL_HOME=$$(eval echo ~$${SUDO_USER:-$$USER}); \
-	if [ -f "$$REAL_HOME/.ssh/id_ed25519.pub" ]; then \
-		cp "$$REAL_HOME/.ssh/id_ed25519.pub" $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub; \
-		echo "  Embedded SSH key: $$REAL_HOME/.ssh/id_ed25519.pub"; \
-	elif [ -f "$$REAL_HOME/.ssh/id_rsa.pub" ]; then \
-		cp "$$REAL_HOME/.ssh/id_rsa.pub" $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub; \
-		echo "  Embedded SSH key: $$REAL_HOME/.ssh/id_rsa.pub"; \
-	else \
-		echo "  WARNING: No SSH public key found ($$REAL_HOME/.ssh/id_ed25519.pub or id_rsa.pub)"; \
-		echo "           Installed systems will not have build-host SSH access."; \
-	fi
-
-stage-ansible: ## Copy Ansible playbooks into ISO airootfs
-	@echo "══ Staging Ansible ══"
-	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/ansible
-	@cp -r $(ANSIBLE_DIR)/* $(ISO_PROFILE)/airootfs/opt/arches/ansible/
-
-stage-platform: ## Copy platform config into ISO airootfs
-	@echo "══ Staging platform config ($(PLATFORM)) ══"
-	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
-	@if [ ! -d "$(PLATFORMS)/$(PLATFORM)" ]; then \
-		echo "ERROR: Platform directory not found: $(PLATFORMS)/$(PLATFORM)"; \
-		exit 1; \
-	fi
-	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/platform
-	@cp $(PLATFORMS)/$(PLATFORM)/platform.toml $(ISO_PROFILE)/airootfs/opt/arches/platform/
-	@cp $(PLATFORMS)/$(PLATFORM)/pacman.conf $(ISO_PROFILE)/airootfs/opt/arches/platform/
-	@echo "  Copied platform.toml and pacman.conf for $(PLATFORM)"
-
-stage-bootconfig: ## Generate mkinitcpio preset and substitute kernel name in boot configs
-	@echo "══ Staging boot config ($(PLATFORM)) ══"
-	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
-	@# Read kernel package name from platform.toml
-	@KERNEL=$$(grep '^package' $(PLATFORMS)/$(PLATFORM)/platform.toml | head -1 | \
-		sed 's/.*= *"\(.*\)"/\1/'); \
-	if [ -z "$$KERNEL" ]; then \
-		echo "ERROR: Could not read kernel package from platform.toml"; \
-		exit 1; \
-	fi; \
-	echo "  Kernel package: $$KERNEL"; \
-	\
-	echo "  Generating mkinitcpio preset hook for $$KERNEL"; \
-	mkdir -p $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks; \
-	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/archiso-mkinitcpio-preset.hook.in \
-		> $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook; \
-	\
-	echo "  Generating boot configs from templates"; \
-	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/grub/grub.cfg.in \
-		> $(ISO_PROFILE)/grub/grub.cfg; \
-	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg.in \
-		> $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg; \
-	\
-	echo "  Copying mkinitcpio archiso.conf from platform"; \
-	mkdir -p $(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d; \
-	cp $(PLATFORMS)/$(PLATFORM)/archiso.conf \
-		$(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d/archiso.conf
-
-assemble-packages: ## Assemble ISO package list from common + platform
-	@echo "══ Assembling package list ($(PLATFORM)) ══"
-	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
-	@# Read platform arch from platform.toml for the archiso package filename
-	@ARCH=$$(grep '^arch' $(PLATFORMS)/$(PLATFORM)/platform.toml | head -1 | \
-		sed 's/.*= *"\(.*\)"/\1/'); \
-	echo "  Platform arch: $$ARCH"; \
-	cat $(ISO_PROFILE)/packages.common $(PLATFORMS)/$(PLATFORM)/packages \
-		| grep -v '^#' | grep -v '^$$' | sort -u \
-		> $(ISO_PROFILE)/packages.$$ARCH; \
-	echo "  Wrote packages.$$ARCH ($$(wc -l < $(ISO_PROFILE)/packages.$$ARCH) packages)"
-	@# Install the platform pacman.conf, rewriting the arches-local repo
-	@# path to the build-host location (the ISO airootfs copy).
-	@# At install time the live ISO uses the original /opt/arches-repo path.
-	@sed 's|file:///opt/arches-repo|file://$(ISO_PROFILE)/airootfs/opt/arches-repo|' \
-		$(PLATFORMS)/$(PLATFORM)/pacman.conf > $(ISO_PROFILE)/pacman.conf
-
-cache-packages: ## Pre-download template packages into ISO for offline install
-	@echo "══ Caching template packages ══"
-	@$(SCRIPTS)/cache-template-packages.sh $(PLATFORM)
-
-# ─── Host install (Apple Silicon) ─────────────────────
+##@ Host Install (Apple Silicon)
 
 CONFIG ?= examples/host-install.toml
 
-host-install: check-root ## Install Arches into btrfs subvolumes from running host (CONFIG=path)
+host-install: _check-root ## Install Arches into btrfs subvolumes from running host (CONFIG=path)
 	@echo "══ Host Install (Apple Silicon) ══"
 	$(SCRIPTS)/host-install.sh $(CONFIG)
 
-host-install-rebuild: check-root ## Rebuild container image and install (CONFIG=path)
+host-install-rebuild: _check-root ## Rebuild container image and install (CONFIG=path)
 	@echo "══ Host Install — Rebuild ══"
 	$(SCRIPTS)/host-install.sh --rebuild $(CONFIG)
 
-host-install-dry: check-root ## Dry-run host install — validate config, print plan (CONFIG=path)
+host-install-dry: _check-root ## Dry-run host install — validate config, print plan (CONFIG=path)
 	@echo "══ Host Install — Dry Run ══"
 	$(SCRIPTS)/host-install.sh --dry-run $(CONFIG)
 
-host-clean: check-root ## Remove Arches subvolumes and GRUB entry (CONFIG=path)
+host-clean: _check-root ## Remove Arches subvolumes and GRUB entry (CONFIG=path)
 	$(SCRIPTS)/host-clean.sh $(CONFIG)
 
-# ─── Development ──────────────────────────────────────
+##@ Development
 
 fmt: ## Auto-format and lint Python code with ruff
 	@echo "══ Linting ══"
@@ -244,15 +103,11 @@ dry-run: ## Dry-run the example auto-install config
 		--platform platforms/x86-64/platform.toml \
 		--dry-run
 
-# ─── QEMU testing ─────────────────────────────────────
-#
-# Auto-detects host architecture for QEMU binary, machine type, and firmware.
-# x86-64:  qemu-system-x86_64, OVMF, -vga virtio
-# aarch64: qemu-system-aarch64, -M virt, QEMU_EFI pflash, virtio-gpu-pci
+##@ QEMU Testing
 
-test-iso: ## Boot the built ISO in QEMU (UEFI)
+test-iso: ## Boot the built ISO in QEMU (UEFI, no install)
 	@ISO=$$(ls -t $(OUT_DIR)/arches-*.iso 2>/dev/null | head -1); \
-	if [ -z "$$ISO" ]; then echo "No ISO found in $(OUT_DIR)/. Build an ISO first."; exit 1; fi; \
+	if [ -z "$$ISO" ]; then echo "No ISO found in $(OUT_DIR)/. Run 'make iso' first."; exit 1; fi; \
 	echo "══ Booting $$ISO in QEMU (UEFI) ══"; \
 	if [ "$$(uname -m)" = "aarch64" ]; then \
 		[ -f /tmp/arches-efi-vars.raw ] || \
@@ -301,7 +156,7 @@ test-iso-bios: ## Boot the built ISO in QEMU (BIOS, x86-64 only)
 		exit 1; \
 	fi
 	@ISO=$$(ls -t $(OUT_DIR)/arches-*.iso 2>/dev/null | head -1); \
-	if [ -z "$$ISO" ]; then echo "No ISO found in $(OUT_DIR)/. Run 'make iso-x86-64' first."; exit 1; fi; \
+	if [ -z "$$ISO" ]; then echo "No ISO found in $(OUT_DIR)/. Run 'make iso' first."; exit 1; fi; \
 	echo "══ Booting $$ISO in QEMU (BIOS) ══"; \
 	qemu-system-x86_64 \
 		-enable-kvm \
@@ -313,7 +168,10 @@ test-iso-bios: ## Boot the built ISO in QEMU (BIOS, x86-64 only)
 		-net nic -net user,hostfwd=tcp::2222-:22 \
 		-vga std
 
-# ─── Ansible dev against VM ───────────────────────────
+test-disk: ## Create a QEMU test disk image (20G)
+	@echo "══ Creating test disk ══"
+	qemu-img create -f qcow2 /tmp/arches-test-disk.qcow2 20G
+	@echo "Created /tmp/arches-test-disk.qcow2 (20G)"
 
 VM_SSH_PORT := 2222
 VM_USER     := arches
@@ -329,12 +187,7 @@ ansible-dev: ## Run Ansible roles against the QEMU VM (TAGS=all)
 		--tags $(TAGS) \
 		-v
 
-test-disk: ## Create a QEMU test disk image (20G)
-	@echo "══ Creating test disk ══"
-	qemu-img create -f qcow2 /tmp/arches-test-disk.qcow2 20G
-	@echo "Created /tmp/arches-test-disk.qcow2 (20G)"
-
-# ─── Cleanup ─────────────────────────────────────────
+##@ Cleanup
 
 clean: ## Remove staged files from ISO airootfs
 	@echo "══ Cleaning staged files ══"
@@ -349,7 +202,9 @@ clean: ## Remove staged files from ISO airootfs
 	rm -f  $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook
 	rm -f  $(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d/archiso.conf
 	rm -f  $(ISO_PROFILE)/grub/grub.cfg
+	rm -f  $(ISO_PROFILE)/grub/loopback.cfg
 	rm -f  $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg
+	rm -f  $(ISO_PROFILE)/syslinux/archiso_pxe-linux.cfg
 
 clean-work: ## Remove mkarchiso work directory
 	@echo "══ Cleaning work directory ══"
@@ -361,15 +216,128 @@ clean-all: clean clean-work ## Remove all build artifacts
 	rm -f /tmp/arches-test-disk.qcow2
 	rm -f /tmp/arches-efi-vars.raw
 
+# ─────────────────────────────────────────────────────────
+# Internal targets (not shown in help)
+# ─────────────────────────────────────────────────────────
+
+# Unified ISO build — called by build-iso.sh inside the container.
+# PLATFORM and ARCHES_ARCH are passed in by the container.
+_iso: export ARCHES_ARCH := $(ARCHES_ARCH)
+_iso: export ARCHES_PLATFORM := $(PLATFORM)
+_iso: _check-root _check-deps _aur-repo _stage-installer _stage-ansible _stage-platform _stage-bootconfig _assemble-packages _cache-packages
+	@echo "══ Building Arches ISO ($(PLATFORM)) ══"
+	@rm -rf $(WORK_DIR)
+	@mkdir -p $(OUT_DIR)
+	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
+	@echo ""
+	@echo "══ ISO built ══"
+	@ls -lh $(OUT_DIR)/arches-*.iso 2>/dev/null
+
+_aur-repo:
+	@echo "══ Building AUR repo ($(PLATFORM)) ══"
+	$(SCRIPTS)/build-aur-repo.sh $(if $(FORCE),--force) $(PLATFORM)
+
+_stage-installer:
+	@echo "══ Staging installer ══"
+	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/installer
+	@cp -r $(INSTALLER)/* $(ISO_PROFILE)/airootfs/opt/arches/installer/
+	@mkdir -p $(ISO_PROFILE)/airootfs/usr/local/bin
+	@printf '#!/usr/bin/env bash\n\
+cd /opt/arches/installer\n\
+exec python -m arches_installer "$$@"\n' > $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
+	@chmod +x $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
+	@# Embed build host's SSH public key for passwordless access to installed systems
+	@REAL_HOME=$$(eval echo ~$${SUDO_USER:-$$USER}); \
+	if [ -f "$$REAL_HOME/.ssh/id_ed25519.pub" ]; then \
+		cp "$$REAL_HOME/.ssh/id_ed25519.pub" $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub; \
+		echo "  Embedded SSH key: $$REAL_HOME/.ssh/id_ed25519.pub"; \
+	elif [ -f "$$REAL_HOME/.ssh/id_rsa.pub" ]; then \
+		cp "$$REAL_HOME/.ssh/id_rsa.pub" $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub; \
+		echo "  Embedded SSH key: $$REAL_HOME/.ssh/id_rsa.pub"; \
+	else \
+		echo "  WARNING: No SSH public key found ($$REAL_HOME/.ssh/id_ed25519.pub or id_rsa.pub)"; \
+		echo "           Installed systems will not have build-host SSH access."; \
+	fi
+
+_stage-ansible:
+	@echo "══ Staging Ansible ══"
+	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/ansible
+	@cp -r $(ANSIBLE_DIR)/* $(ISO_PROFILE)/airootfs/opt/arches/ansible/
+
+_stage-platform:
+	@echo "══ Staging platform config ($(PLATFORM)) ══"
+	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
+	@if [ ! -d "$(PLATFORMS)/$(PLATFORM)" ]; then \
+		echo "ERROR: Platform directory not found: $(PLATFORMS)/$(PLATFORM)"; \
+		exit 1; \
+	fi
+	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/platform
+	@cp $(PLATFORMS)/$(PLATFORM)/platform.toml $(ISO_PROFILE)/airootfs/opt/arches/platform/
+	@cp $(PLATFORMS)/$(PLATFORM)/pacman.conf $(ISO_PROFILE)/airootfs/opt/arches/platform/
+	@echo "  Copied platform.toml and pacman.conf for $(PLATFORM)"
+
+_stage-bootconfig:
+	@echo "══ Staging boot config ($(PLATFORM)) ══"
+	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
+	@# Read kernel package name from platform.toml
+	@KERNEL=$$(grep '^package' $(PLATFORMS)/$(PLATFORM)/platform.toml | head -1 | \
+		sed 's/.*= *"\(.*\)"/\1/'); \
+	if [ -z "$$KERNEL" ]; then \
+		echo "ERROR: Could not read kernel package from platform.toml"; \
+		exit 1; \
+	fi; \
+	echo "  Kernel package: $$KERNEL"; \
+	\
+	echo "  Generating mkinitcpio preset hook for $$KERNEL"; \
+	mkdir -p $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks; \
+	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/archiso-mkinitcpio-preset.hook.in \
+		> $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook; \
+	\
+	echo "  Generating boot configs from templates"; \
+	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/grub/grub.cfg.in \
+		> $(ISO_PROFILE)/grub/grub.cfg; \
+	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/grub/loopback.cfg.in \
+		> $(ISO_PROFILE)/grub/loopback.cfg; \
+	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg.in \
+		> $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg; \
+	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/syslinux/archiso_pxe-linux.cfg.in \
+		> $(ISO_PROFILE)/syslinux/archiso_pxe-linux.cfg; \
+	\
+	echo "  Copying mkinitcpio archiso.conf from platform"; \
+	mkdir -p $(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d; \
+	cp $(PLATFORMS)/$(PLATFORM)/archiso.conf \
+		$(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d/archiso.conf
+
+_assemble-packages:
+	@echo "══ Assembling package list ($(PLATFORM)) ══"
+	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
+	@# Read platform arch from platform.toml for the archiso package filename
+	@ARCH=$$(grep '^arch' $(PLATFORMS)/$(PLATFORM)/platform.toml | head -1 | \
+		sed 's/.*= *"\(.*\)"/\1/'); \
+	echo "  Platform arch: $$ARCH"; \
+	cat $(ISO_PROFILE)/packages.common $(PLATFORMS)/$(PLATFORM)/packages \
+		| grep -v '^#' | grep -v '^$$' | sort -u \
+		> $(ISO_PROFILE)/packages.$$ARCH; \
+	echo "  Wrote packages.$$ARCH ($$(wc -l < $(ISO_PROFILE)/packages.$$ARCH) packages)"
+	@# Install the platform pacman.conf, rewriting the arches-local repo
+	@# path to the build-host location (the ISO airootfs copy).
+	@# At install time the live ISO uses the original /opt/arches-repo path.
+	@sed 's|file:///opt/arches-repo|file://$(ISO_PROFILE)/airootfs/opt/arches-repo|' \
+		$(PLATFORMS)/$(PLATFORM)/pacman.conf > $(ISO_PROFILE)/pacman.conf
+
+_cache-packages:
+	@echo "══ Caching template packages ══"
+	@$(SCRIPTS)/cache-template-packages.sh $(PLATFORM)
+
 # ─── Checks ──────────────────────────────────────────
 
-check-root:
+_check-root:
 	@if [ "$$(id -u)" -ne 0 ]; then \
-		echo "ERROR: ISO build requires root. Run: sudo make iso-x86-64"; \
+		echo "ERROR: This target requires root. Run with sudo."; \
 		exit 1; \
 	fi
 
-check-deps:
+_check-deps:
 	@missing=""; \
 	for cmd in mkarchiso pacman-key mksquashfs; do \
 		if ! command -v $$cmd &>/dev/null; then \

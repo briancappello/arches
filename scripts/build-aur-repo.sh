@@ -83,7 +83,7 @@ declare -A CUSTOM_EXTRA_DEPS=(
 )
 
 # ── Skip if repo already populated ────────────────────
-# When called from `sudo make iso-x86-64`, avoid re-building packages that
+# When called from `sudo make iso`, avoid re-building packages that
 # are already present.  Pass --force to rebuild regardless.
 if [[ "$FORCE" == false && -f "$REPO_DIR/${REPO_NAME}.db.tar.gz" ]] \
    && compgen -G "$REPO_DIR"/*.pkg.tar.* &>/dev/null; then
@@ -95,15 +95,13 @@ fi
 
 # ── Privilege handling ────────────────────────────────
 # makepkg refuses to run as root.  When invoked via sudo (e.g. from
-# `sudo make iso-x86-64`), drop back to the invoking user for the
+# `sudo make iso`), drop back to the invoking user for the
 # actual build, then fix up ownership afterward.
 if [[ $EUID -eq 0 ]]; then
     if [[ -z "${SUDO_USER:-}" || "${SUDO_USER:-}" == "root" ]]; then
         echo "ERROR: Running as root without SUDO_USER set."
         echo "       Run via sudo so the build can drop privileges:"
-        echo "         sudo make iso-x86-64  (or iso-aarch64-generic)"
-        echo "       Or build the AUR repo first as a normal user:"
-        echo "         make aur-repo-x86-64  (or aur-repo-aarch64)"
+        echo "         sudo make iso"
         exit 1
     fi
     echo "  (running as root — will drop to $SUDO_USER for makepkg)"

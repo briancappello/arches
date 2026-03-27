@@ -68,7 +68,21 @@
     - "{{ kde_config }}/autostart"
 
 # --------------------------------------------------------------------------
-# 2b. Remove KDE Welcome Center
+# 2b. Disable Baloo file indexer
+# --------------------------------------------------------------------------
+# Baloo indexes files for KDE's tags:/ KIO protocol and search features.
+# It's resource-heavy and causes "Could not enter folder tags:/" errors
+# if it hasn't finished indexing. Disable it system-wide.
+- name: "Baloo: disable file indexing"
+  command: >-
+    kwriteconfig6 --file "{{ kde_config }}/baloofilerc"
+    --group "Basic Settings"
+    --key "Indexing-Enabled"
+    "false"
+  become_user: "{{ kde_user }}"
+
+# --------------------------------------------------------------------------
+# 2c. Remove KDE Welcome Center
 # --------------------------------------------------------------------------
 - name: "Welcome: remove plasma-welcome package"
   pacman:
@@ -78,7 +92,7 @@
   when: not kde_desktop.welcome_wizard
 
 # --------------------------------------------------------------------------
-# 2c. Override Plasma system-wide defaults
+# 2d. Override Plasma system-wide defaults
 # --------------------------------------------------------------------------
 # Plasma reads these on first login to decide the desktop containment
 # and initial panel layout. Must be system-wide files, not per-user.

@@ -153,7 +153,7 @@ def pacstrap(
         _log(
             f"NOTE: {len(deferred)} package(s) were deferred because they are "
             "only available in the arches-local repo, which is empty. "
-            "Pre-build with: make container-iso-aarch64",
+            "Pre-build with: make iso",
             log,
         )
         _log(f"  Deferred: {', '.join(deferred)}", log)

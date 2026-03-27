@@ -10,7 +10,9 @@
 # For manual builds, override ARCHES_ARCH before sourcing:
 #   ARCHES_ARCH=aarch64 mkarchiso ...
 
-iso_name="arches"
+# ARCHES_PLATFORM is set by the build system (e.g., x86-64, aarch64-generic).
+# Include it in the ISO name so different platforms produce distinct files.
+iso_name="arches-${ARCHES_PLATFORM:-unknown}"
 # FAT32 volume labels are limited to 11 characters. Keep this short
 # and stable so the USB image can use the same label for archisolabel=.
 iso_label="ARCHES_2026"
