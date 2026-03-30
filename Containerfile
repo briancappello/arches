@@ -61,24 +61,28 @@ Server = https://github.com/asahi-alarm/asahi-alarm/releases/download/$arch\n' /
     fi
 
 # ─── x86-64: CachyOS repos ──────────────────────────
-# CachyOS provides x86-64-v3 optimized packages and the cachyos kernel.
-# Install the keyring and mirrorlist, then add repos to pacman.conf.
+# The build container only needs the base [cachyos] repo (x86_64 baseline
+# packages). Tier-specific repos (v3/v4/znver4) are NOT added here — they
+# live in the platform's pacman.conf, which mkarchiso uses when building
+# the ISO rootfs. This separation means a v3 host can build a v4 ISO.
+#
+# We do install CachyOS's patched pacman because it recognizes the
+# non-standard architectures (x86_64_v3, etc.) that tier-specific
+# packages use. Without it, mkarchiso's pacstrap would reject them.
 RUN --mount=type=cache,target=/var/cache/pacman/pkg,sharing=locked \
     if [ "$TARGETARCH" = "amd64" ]; then \
+        # Bootstrap CachyOS signing key and install keyring + mirrorlists
+        pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com && \
+        pacman-key --lsign-key F3B607488DB35A47 && \
+        pacman -U --noconfirm \
+            'https://mirror.cachyos.org/repo/x86_64/cachyos/cachyos-keyring-20240331-1-any.pkg.tar.zst' \
+            'https://mirror.cachyos.org/repo/x86_64/cachyos/cachyos-mirrorlist-22-1-any.pkg.tar.zst' \
+            'https://mirror.cachyos.org/repo/x86_64/cachyos/cachyos-v3-mirrorlist-22-1-any.pkg.tar.zst' \
+            'https://mirror.cachyos.org/repo/x86_64/cachyos/cachyos-v4-mirrorlist-22-1-any.pkg.tar.zst' && \
+        # Add base [cachyos] repo and install CachyOS pacman
+        sed -i '/^\[core\]/i [cachyos]\nInclude = /etc/pacman.d/cachyos-mirrorlist\n' /etc/pacman.conf && \
         pacman -Sy --noconfirm && \
-        pacman -S --noconfirm cachyos-keyring cachyos-mirrorlist && \
-        sed -i '/^\[core\]/i \
-[cachyos-v3]\n\
-Include = /etc/pacman.d/cachyos-v3-mirrorlist\n\
-\n\
-[cachyos-core-v3]\n\
-Include = /etc/pacman.d/cachyos-v3-mirrorlist\n\
-\n\
-[cachyos-extra-v3]\n\
-Include = /etc/pacman.d/cachyos-v3-mirrorlist\n\
-\n\
-[cachyos]\n\
-Include = /etc/pacman.d/cachyos-mirrorlist\n' /etc/pacman.conf; \
+        pacman -S --noconfirm pacman; \
     fi
 
 # ─── Common: install all build dependencies ──────────

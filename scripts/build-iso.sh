@@ -35,6 +35,9 @@ case "$CONTAINER_ARCH" in
     linux/amd64) BASE_IMAGE="docker.io/archlinux:latest"; TARGETARCH="amd64" ;;
     linux/arm64) BASE_IMAGE="docker.io/lopsided/archlinux:latest"; TARGETARCH="arm64" ;;
 esac
+
+# Container image is the same for all x86-64 optimization tiers — the
+# tier-specific repos are in the platform's pacman.conf, not the container.
 IMAGE_NAME="arches-builder-${TARGETARCH}"
 
 echo "Platform: $PLATFORM (arch: $ARCHES_ARCH, container: $CONTAINER_ARCH)"
@@ -57,7 +60,9 @@ BUILD_UID=$(id -u "$BUILD_USER")
 BUILD_GID=$(id -g "$BUILD_USER")
 
 # ── Persistent pacman cache ───────────────────────────
-CACHE_DIR="$PROJECT_DIR/.pkg-cache"
+# Partitioned by platform so different optimization tiers don't pollute
+# each other's caches (e.g., v3 and v4 builds on the same host).
+CACHE_DIR="$PROJECT_DIR/.pkg-cache/$PLATFORM"
 mkdir -p "$CACHE_DIR"
 
 # ── Build container image if needed ───────────────────
@@ -69,6 +74,7 @@ fi
 if ! podman image exists "$IMAGE_NAME"; then
     echo "══ Building container image ($IMAGE_NAME for $CONTAINER_ARCH) ══"
     podman build \
+        --network=host \
         --platform="$CONTAINER_ARCH" \
         --build-arg BASE_IMAGE="$BASE_IMAGE" \
         --build-arg TARGETARCH="$TARGETARCH" \
@@ -111,6 +117,7 @@ FORCE_FLAG=""
 # We register a trap that forwards the signal to all child processes,
 # then run make in the background and wait for it.
 podman run --rm --privileged \
+    --network=host \
     --security-opt label=disable \
     "${VOLUMES[@]}" \
     -e SUDO_USER=builder \

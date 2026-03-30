@@ -94,7 +94,7 @@ fi
 
 if ! podman image exists "$IMAGE_NAME"; then
     echo "══ Building installer container image ($IMAGE_NAME) ══"
-    podman build -t "$IMAGE_NAME" -f "$PROJECT_DIR/Containerfile.install" "$PROJECT_DIR"
+    podman build --network=host -t "$IMAGE_NAME" -f "$PROJECT_DIR/Containerfile.install" "$PROJECT_DIR"
 fi
 
 # ── Volume mounts ─────────────────────────────────────

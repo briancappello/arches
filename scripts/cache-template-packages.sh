@@ -30,15 +30,16 @@ PLATFORM_TOML="$PROJECT_ROOT/platforms/$PLATFORM/platform.toml"
 # Collect base packages that the installer always installs
 base_packages=(base linux-firmware mkinitcpio sudo)
 
-# Read kernel package from platform.toml
-kernel=$(grep '^package' "$PLATFORM_TOML" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
-kernel_headers=$(grep '^headers' "$PLATFORM_TOML" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
-if [[ -n "$kernel" ]]; then
-    base_packages+=("$kernel")
-fi
-if [[ -n "$kernel_headers" ]]; then
-    base_packages+=("$kernel_headers")
-fi
+# Read all kernel variant packages from platform.toml
+while IFS= read -r pkg; do
+    [[ -n "$pkg" ]] && base_packages+=("$pkg")
+done < <(python3 -c "
+import tomllib
+d = tomllib.load(open('$PLATFORM_TOML', 'rb'))
+for v in d['kernel']['variants']:
+    print(v['package'])
+    print(v['headers'])
+")
 
 # Read base_packages.install from platform.toml
 while IFS= read -r pkg; do

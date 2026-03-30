@@ -12,6 +12,7 @@ from arches_installer.core.platform import (
     DiskLayoutConfig,
     HardwareDetectionConfig,
     KernelConfig,
+    KernelVariant,
     PlatformConfig,
 )
 from arches_installer.core.template import (
@@ -27,11 +28,15 @@ def x86_64_platform() -> PlatformConfig:
     """An x86-64 CachyOS platform config for testing."""
     return PlatformConfig(
         name="x86-64",
-        description="x86-64 with CachyOS v3",
+        description="x86-64 with CachyOS x86-64-v3",
         arch="x86_64",
         kernel=KernelConfig(
-            package="linux-cachyos",
-            headers="linux-cachyos-headers",
+            variants=[
+                KernelVariant(package="linux-cachyos", headers="linux-cachyos-headers"),
+                KernelVariant(
+                    package="linux-cachyos-lts", headers="linux-cachyos-lts-headers"
+                ),
+            ],
         ),
         bootloader=BootloaderPlatformConfig(
             type="limine",
@@ -59,6 +64,7 @@ def x86_64_platform() -> PlatformConfig:
             "cachyos-v3-mirrorlist",
             "cachyos-settings",
         ],
+        cachyos_optimization_tier="x86-64-v3",
     )
 
 
@@ -70,8 +76,9 @@ def aarch64_platform() -> PlatformConfig:
         description="Generic ARM64 with Arch Linux ARM",
         arch="aarch64",
         kernel=KernelConfig(
-            package="linux-aarch64",
-            headers="linux-aarch64-headers",
+            variants=[
+                KernelVariant(package="linux-aarch64", headers="linux-aarch64-headers"),
+            ],
         ),
         bootloader=BootloaderPlatformConfig(
             type="grub",
@@ -105,8 +112,9 @@ def aarch64_apple_platform() -> PlatformConfig:
         description="Apple Silicon (M1/M2/M3/M4) with Asahi Linux kernel",
         arch="aarch64",
         kernel=KernelConfig(
-            package="linux-asahi",
-            headers="linux-asahi-headers",
+            variants=[
+                KernelVariant(package="linux-asahi", headers="linux-asahi-headers"),
+            ],
         ),
         bootloader=BootloaderPlatformConfig(
             type="grub",
@@ -194,12 +202,15 @@ def platform_toml_file(tmp_path: Path) -> Path:
     p.write_text("""\
 [platform]
 name = "x86-64"
-description = "x86-64 with CachyOS v3"
+description = "x86-64 with CachyOS x86-64-v3"
 arch = "x86_64"
+cachyos_optimization_tier = "x86-64-v3"
 
 [kernel]
-package = "linux-cachyos"
-headers = "linux-cachyos-headers"
+variants = [
+    { package = "linux-cachyos", headers = "linux-cachyos-headers" },
+    { package = "linux-cachyos-lts", headers = "linux-cachyos-lts-headers" },
+]
 
 [bootloader]
 type = "limine"

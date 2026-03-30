@@ -279,14 +279,16 @@ _stage-platform:
 _stage-bootconfig:
 	@echo "══ Staging boot config ($(PLATFORM)) ══"
 	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
-	@# Read kernel package name from platform.toml
-	@KERNEL=$$(grep '^package' $(PLATFORMS)/$(PLATFORM)/platform.toml | head -1 | \
-		sed 's/.*= *"\(.*\)"/\1/'); \
+	@# Read default kernel package from platform.toml [kernel].variants
+	@KERNEL=$$(python3 -c "import tomllib; \
+		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
+		vs=d['kernel']['variants']; \
+		print(next((v['package'] for v in vs if v.get('default')), vs[0]['package']))"); \
 	if [ -z "$$KERNEL" ]; then \
 		echo "ERROR: Could not read kernel package from platform.toml"; \
 		exit 1; \
 	fi; \
-	echo "  Kernel package: $$KERNEL"; \
+	echo "  Default kernel: $$KERNEL"; \
 	\
 	echo "  Generating mkinitcpio preset hook for $$KERNEL"; \
 	mkdir -p $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks; \
@@ -311,12 +313,22 @@ _stage-bootconfig:
 _assemble-packages:
 	@echo "══ Assembling package list ($(PLATFORM)) ══"
 	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
-	@# Read platform arch from platform.toml for the archiso package filename
-	@ARCH=$$(grep '^arch' $(PLATFORMS)/$(PLATFORM)/platform.toml | head -1 | \
-		sed 's/.*= *"\(.*\)"/\1/'); \
+	@# Read platform arch and kernel packages from platform.toml
+	@ARCH=$$(python3 -c "import tomllib; \
+		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
+		print(d['platform']['arch'])"); \
+	KERNEL_PKGS=$$(python3 -c "import tomllib; \
+		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
+		vs=d['kernel']['variants']; \
+		pkgs=[]; \
+		[pkgs.extend([v['package'], v['headers']]) for v in vs]; \
+		pkgs.append('linux-firmware'); \
+		print('\n'.join(pkgs))"); \
 	echo "  Platform arch: $$ARCH"; \
-	cat $(ISO_PROFILE)/packages.common $(PLATFORMS)/$(PLATFORM)/packages \
-		| grep -v '^#' | grep -v '^$$' | sort -u \
+	echo "  Kernel packages: $$(echo $$KERNEL_PKGS | tr '\n' ' ')"; \
+	{ cat $(ISO_PROFILE)/packages.common $(PLATFORMS)/$(PLATFORM)/packages; \
+	  echo "$$KERNEL_PKGS"; \
+	} | grep -v '^#' | grep -v '^$$' | sort -u \
 		> $(ISO_PROFILE)/packages.$$ARCH; \
 	echo "  Wrote packages.$$ARCH ($$(wc -l < $(ISO_PROFILE)/packages.$$ARCH) packages)"
 	@# Install the platform pacman.conf, rewriting the arches-local repo

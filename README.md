@@ -6,11 +6,13 @@ Arches uses a **platform + template matrix** design. A *platform* defines the ha
 
 Currently supported platforms:
 
-| Platform          | Base                     | Kernel          | Bootloader               | Filesystem         | Status                    |
-|-------------------|--------------------------|-----------------|--------------------------|--------------------|---------------------------|
-| `x86-64`          | CachyOS v3 (AVX2/SSE4.2) | `linux-cachyos` | Limine                   | btrfs + subvolumes | Fully implemented         |
-| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64` | GRUB                     | btrfs + subvolumes | Fully implemented         |
-| `aarch64-apple`   | Asahi Linux              | `linux-asahi`   | m1n1→U-Boot→extlinux     | btrfs + subvolumes | USB boot via U-Boot       |
+| Platform          | Base                     | Kernel(s)                            | Bootloader               | Filesystem         | Status                    |
+|-------------------|--------------------------|------------------------------------- |--------------------------|--------------------|---------------------------|
+| `x86-64`          | CachyOS (configurable tier) | `linux-cachyos` + `linux-cachyos-lts` | Limine                   | btrfs + subvolumes | Fully implemented         |
+| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64`                      | GRUB                     | btrfs + subvolumes | Fully implemented         |
+| `aarch64-apple`   | Asahi Linux              | `linux-asahi`                        | m1n1→U-Boot→extlinux     | btrfs + subvolumes | USB boot via U-Boot       |
+
+Each platform has its own README with platform-specific configuration details (see `platforms/<name>/README.md`).
 
 ## Quickstart
 
@@ -402,7 +404,7 @@ arches/
 
 - **Platform/template matrix** — Hardware concerns (kernel, repos, bootloader, disk layout, GPU detection) are separated from workload concerns (packages, services, Ansible roles). Platforms are selected at ISO build time; templates are selected at install time. Templates work on any platform without modification.
 - **Shell-first partitioning** — The default install flow drops the user to a shell to partition, format, and mount disks. The installer detects the mount layout on return. Auto-partition is available for VMs.
-- **CachyOS v3 repos** (x86-64 platform) — Full Arch package set recompiled with AVX2/SSE4.2 optimizations. Covers all x86-64 hardware from 2011 onward. The CachyOS custom pacman fork is intentionally excluded to maintain standard Arch pacman semantics.
+- **CachyOS repos** (x86-64 platform) — Full Arch package set recompiled with configurable optimization tiers (`x86-64` baseline, `x86-64-v3` AVX2/SSE4.2, `x86-64-v4` AVX-512, `znver4` AMD Zen 4/5). See `platforms/x86-64/README.md` for tier details. The CachyOS custom pacman fork is intentionally excluded to maintain standard Arch pacman semantics.
 - **Bootloader dispatch** — The platform config determines the bootloader. x86-64 uses Limine (BIOS + UEFI, snapshot boot entries via `limine-snapper-sync`). aarch64-generic uses GRUB (UEFI-only, snapshot boot entries via `grub-btrfs`). aarch64-apple uses the m1n1 → U-Boot → extlinux chain; U-Boot's `bootflow scan` finds `/extlinux/extlinux.conf` on the USB drive and boots the kernel directly (no GRUB in the USB boot path). Firmware type is auto-detected at install time.
 - **Disk layout per platform** — x86-64: ESP (2G, doubles as /boot) + btrfs root with subvolumes (`@`, `@home`, `@var`). aarch64-generic: ESP (512M, at /boot/efi) + btrfs root with subvolumes (`@`, `@home`, `@var`). GRUB reads kernels from btrfs natively — no separate /boot partition needed.
 - **ESP sizing** — 2 GiB on x86-64 for snapshot booting (each bootable snapshot copies its kernel/initramfs into the ESP via `limine-snapper-sync`). 512 MiB on aarch64 (`grub-btrfs` reads snapshots directly from btrfs, no kernel copies needed).

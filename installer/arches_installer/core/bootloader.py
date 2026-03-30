@@ -62,6 +62,9 @@ def write_limine_defaults(
     if layout.filesystem == "btrfs" and layout.subvolumes:
         cmdline_parts.append("rootflags=subvol=/@")
 
+    # Framebuffer console — match the ISO live boot behavior
+    cmdline_parts.append("video=1920x1080")
+
     # Add common kernel parameters
     cmdline_parts.extend(
         [
@@ -201,7 +204,7 @@ def _install_limine(
     # Add Memtest86+ entry to limine.conf and install a pacman hook
     # so it persists across kernel upgrades (limine-mkinitcpio regenerates
     # limine.conf from scratch on each kernel update).
-    _setup_memtest_limine(log)
+    _setup_memtest_limine(platform, log)
 
 
 MEMTEST_APPEND_SCRIPT = """\
@@ -220,14 +223,23 @@ if ! grep -q 'Memtest86+' "$LIMINE_CONF"; then
 fi
 """
 
-MEMTEST_PACMAN_HOOK = """\
+
+def _memtest_pacman_hook(kernel_packages: list[str]) -> str:
+    """Generate the Memtest86+ pacman hook with targets for all kernel variants.
+
+    limine-mkinitcpio regenerates limine.conf from scratch on each kernel
+    update, which wipes the Memtest entry.  This hook re-appends it after
+    any kernel variant is installed or upgraded.
+    """
+    kernel_targets = "\n".join(f"Target = {pkg}" for pkg in kernel_packages)
+    return f"""\
 [Trigger]
 Type = Package
 Operation = Install
 Operation = Upgrade
 Target = memtest86+-efi
 Target = limine-mkinitcpio-hook
-Target = linux-cachyos
+{kernel_targets}
 
 [Trigger]
 Type = Path
@@ -244,7 +256,10 @@ Depends = grep
 """
 
 
-def _setup_memtest_limine(log: LogCallback | None = None) -> None:
+def _setup_memtest_limine(
+    platform: PlatformConfig,
+    log: LogCallback | None = None,
+) -> None:
     """Install a script and pacman hook to keep Memtest86+ in limine.conf."""
     memtest_efi = MOUNT_ROOT / "boot" / "memtest86+" / "memtest.efi"
     if not memtest_efi.exists():
@@ -257,10 +272,13 @@ def _setup_memtest_limine(log: LogCallback | None = None) -> None:
     script_path.write_text(MEMTEST_APPEND_SCRIPT)
     script_path.chmod(0o755)
 
-    # Install the pacman hook
+    # Install the pacman hook — trigger on all kernel variants
+    kernel_packages = [v.package for v in platform.kernel.variants]
     hook_dir = MOUNT_ROOT / "etc" / "pacman.d" / "hooks"
     hook_dir.mkdir(parents=True, exist_ok=True)
-    (hook_dir / "95-memtest-limine.hook").write_text(MEMTEST_PACMAN_HOOK)
+    (hook_dir / "95-memtest-limine.hook").write_text(
+        _memtest_pacman_hook(kernel_packages)
+    )
 
     # Run it now to add the entry to the current limine.conf
     chroot_run(["/usr/local/bin/arches-memtest-limine"], log=log)
@@ -282,6 +300,8 @@ def write_grub_defaults(
     if platform.arch == "aarch64":
         cmdline_parts.append("console=tty0")
 
+    # Framebuffer console — match the ISO live boot behavior
+    cmdline_parts.append("video=1920x1080")
     cmdline_parts.append("systemd.show_status=auto")
 
     cmdline = " ".join(cmdline_parts)
@@ -302,13 +322,16 @@ def write_grub_defaults(
     else:
         grub_default.parent.mkdir(parents=True, exist_ok=True)
         grub_default.write_text(
-            f'GRUB_CMDLINE_LINUX_DEFAULT="{cmdline}"\nGRUB_TIMEOUT=5\n'
+            f'GRUB_CMDLINE_LINUX_DEFAULT="{cmdline}"\n'
+            f"GRUB_TIMEOUT=5\n"
+            f'GRUB_GFXMODE="auto"\n'
+            f'GRUB_GFXPAYLOAD_LINUX="keep"\n'
         )
     _log("Wrote /etc/default/grub", log)
 
 
 def _install_alarm_vmlinuz_hook(
-    kernel_pkg: str, log: LogCallback | None = None
+    platform: PlatformConfig, log: LogCallback | None = None
 ) -> None:
     """Install a pacman hook that maintains the vmlinuz-* symlink.
 
@@ -316,6 +339,15 @@ def _install_alarm_vmlinuz_hook(
     GRUB's grub-mkconfig only searches for vmlinuz-*, so we need a persistent
     symlink. This hook recreates it after every kernel upgrade.
     """
+    if len(platform.kernel.variants) > 1:
+        raise NotImplementedError(
+            "aarch64 vmlinuz symlink hook only supports a single kernel variant. "
+            "With multiple variants, each needs its own hook creating a "
+            "vmlinuz-<package> symlink and a corresponding pacman trigger. "
+            "See _install_alarm_vmlinuz_hook in bootloader.py."
+        )
+
+    kernel_pkg = platform.kernel.package
     hooks_dir = MOUNT_ROOT / "etc" / "pacman.d" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -372,7 +404,7 @@ def _install_grub(
         if not vmlinuz.exists() and (MOUNT_ROOT / "boot" / "Image").exists():
             _log(f"Creating vmlinuz symlink for {kernel_pkg}...", log)
             vmlinuz.symlink_to("Image")
-        _install_alarm_vmlinuz_hook(kernel_pkg, log)
+        _install_alarm_vmlinuz_hook(platform, log)
 
     # On aarch64, remove efi_uga from grub's video setup script.
     # efi_uga is an x86-only module that doesn't exist on arm64-efi;

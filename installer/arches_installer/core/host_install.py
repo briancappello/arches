@@ -139,6 +139,8 @@ def generate_grub_entry(
     cmdline_parts = ["rw"]
     if platform.arch == "aarch64":
         cmdline_parts.append("console=tty0")
+    # Framebuffer console — match the ISO live boot behavior
+    cmdline_parts.append("video=1920x1080")
     cmdline_parts.append("systemd.show_status=auto")
     cmdline = " ".join(cmdline_parts)
 

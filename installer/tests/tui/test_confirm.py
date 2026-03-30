@@ -12,6 +12,7 @@ from arches_installer.core.platform import (
     DiskLayoutConfig,
     HardwareDetectionConfig,
     KernelConfig,
+    KernelVariant,
     PlatformConfig,
 )
 from arches_installer.core.template import (
@@ -44,7 +45,11 @@ TEST_PLATFORM = PlatformConfig(
     name="x86-64",
     description="x86-64 with CachyOS v3",
     arch="x86_64",
-    kernel=KernelConfig(package="linux-cachyos", headers="linux-cachyos-headers"),
+    kernel=KernelConfig(
+        variants=[
+            KernelVariant(package="linux-cachyos", headers="linux-cachyos-headers")
+        ]
+    ),
     bootloader=BootloaderPlatformConfig(snapshot_boot=True),
     disk_layout=DiskLayoutConfig(
         filesystem="btrfs",

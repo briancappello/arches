@@ -1,12 +1,11 @@
-# Platform-specific ISO packages — x86-64 with CachyOS v3
+# Platform-specific ISO packages — x86-64 with CachyOS
 #
 # These are combined with iso/packages.common at build time
 # to produce the final ISO package list.
-
-# ─── Kernel ───────────────────────────────────────────
-linux-cachyos
-linux-cachyos-headers
-linux-firmware
+#
+# NOTE: Kernel packages and linux-firmware are NOT listed here — they are
+# automatically injected from [kernel].variants in platform.toml by the
+# build system.
 
 # ─── CachyOS tooling ──────────────────────────────────
 cachyos-keyring

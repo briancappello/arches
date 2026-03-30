@@ -25,8 +25,9 @@ arch = "aarch64"
 allow_auto_install = false
 
 [kernel]
-package = "linux-asahi"
-headers = "linux-asahi-headers"
+variants = [
+    { package = "linux-asahi", headers = "linux-asahi-headers" },
+]
 
 [bootloader]
 # Apple Silicon uses m1n1 → U-Boot → GRUB chain.
@@ -82,9 +83,9 @@ build = []
 #   - Multi-function USB devices (hub+NIC combos) may not work
 #   - USB hubs with empty SD card slots can cause a hard reset
 boot_modes = ["uefi.grub"]
+# Kernel packages are automatically injected from [kernel].variants
+# by the build system.
 extra_packages = [
-    "linux-asahi",
-    "linux-asahi-headers",
     "linux-firmware",
 ]
 

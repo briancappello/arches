@@ -9,8 +9,9 @@ description = "Generic ARM64 with Arch Linux ARM"
 arch = "aarch64"
 
 [kernel]
-package = "linux-aarch64"
-headers = "linux-aarch64-headers"
+variants = [
+    { package = "linux-aarch64", headers = "linux-aarch64-headers" },
+]
 
 [bootloader]
 type = "grub"
@@ -49,9 +50,9 @@ build = []
 boot_modes = [
     "uefi.grub",
 ]
+# Kernel packages are automatically injected from [kernel].variants
+# by the build system.
 extra_packages = [
-    "linux-aarch64",
-    "linux-aarch64-headers",
     "linux-firmware",
     "grub",
     "efibootmgr",

@@ -3,15 +3,14 @@
 # For ISO builds: combined with iso/packages.common at build time.
 # For host-install: used by the containerized installer to determine
 # what packages the installer environment needs.
+#
+# NOTE: Kernel packages and linux-firmware are NOT listed here — they are
+# automatically injected from [kernel].variants in platform.toml by the
+# build system.
 
 # ─── Keyrings ─────────────────────────────────────────
 archlinuxarm-keyring
 asahi-alarm-keyring
-
-# ─── Kernel ───────────────────────────────────────────
-linux-asahi
-linux-asahi-headers
-linux-firmware
 
 # ─── Bootloader ───────────────────────────────────────
 grub

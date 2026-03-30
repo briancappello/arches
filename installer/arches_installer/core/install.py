@@ -84,13 +84,17 @@ def pacstrap(
     # Platform-agnostic base
     base_packages = [
         "base",
-        platform.kernel.package,
-        platform.kernel.headers,
         "linux-firmware",
         "mkinitcpio",
         "sudo",
         "ansible",
+        "terminus-font",
     ]
+
+    # Install all kernel variants (each gets a bootloader entry)
+    for variant in platform.kernel.variants:
+        base_packages.append(variant.package)
+        base_packages.append(variant.headers)
 
     # Platform-specific base packages (keyrings, mirrorlists, settings)
     base_packages.extend(platform.base_packages)
@@ -258,7 +262,7 @@ def configure_locale(
     locale_conf.write_text(f"LANG={locale}\n")
 
     vconsole = MOUNT_ROOT / "etc" / "vconsole.conf"
-    vconsole.write_text("KEYMAP=us\n")
+    vconsole.write_text("KEYMAP=us\nFONT=ter-116n\n")
 
 
 def configure_timezone(
@@ -459,7 +463,7 @@ def _pre_pacstrap_setup(log: LogCallback | None = None) -> None:
     etc.mkdir(parents=True, exist_ok=True)
 
     # mkinitcpio's keymap/sd-vconsole hooks need vconsole.conf
-    (etc / "vconsole.conf").write_text("KEYMAP=us\n")
+    (etc / "vconsole.conf").write_text("KEYMAP=us\nFONT=ter-116n\n")
     _log("Pre-created /etc/vconsole.conf for pacstrap hooks.", log)
 
     # Provide a mkinitcpio.conf with reliable hooks.

@@ -1,16 +1,24 @@
-# Arches platform config — x86-64 with CachyOS v3 optimized packages
+# Arches platform config — x86-64 with CachyOS optimized packages
 #
 # This defines the hardware-level foundation: kernel, repos, bootloader,
 # hardware detection, and base packages. Templates build on top of this.
+#
+# See platforms/x86-64/README.md for details on optimization tiers and
+# kernel variant options.
 
 [platform]
 name = "x86-64"
-description = "x86-64 with CachyOS v3 optimized packages (AVX2/SSE4.2)"
+description = "x86-64 with CachyOS x86-64-v3 optimized packages (AVX2/SSE4.2)"
 arch = "x86_64"
+cachyos_optimization_tier = "x86-64-v3"
 
 [kernel]
-package = "linux-cachyos"
-headers = "linux-cachyos-headers"
+# Multiple kernel variants produce multiple bootloader entries.
+# The first variant is the default unless one is explicitly marked default = true.
+variants = [
+    { package = "linux-cachyos", headers = "linux-cachyos-headers" },
+    { package = "linux-cachyos-lts", headers = "linux-cachyos-lts-headers" },
+]
 
 [bootloader]
 type = "limine"
@@ -60,10 +68,10 @@ boot_modes = [
     "bios.syslinux",
     "uefi.grub",
 ]
-# Platform-specific packages for the live ISO environment
+# Platform-specific packages for the live ISO environment.
+# Kernel packages are NOT listed here — they are automatically injected
+# from [kernel].variants by the build system.
 extra_packages = [
-    "linux-cachyos",
-    "linux-cachyos-headers",
     "linux-firmware",
     "cachyos-keyring",
     "cachyos-mirrorlist",
