@@ -10,19 +10,11 @@ config.
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arches_installer.core.bootloader import install_bootloader
-from arches_installer.core.disk import detect_single_disk, prepare_disk
-from arches_installer.core.firstboot import inject_firstboot_service
-from arches_installer.core.install import install_system
-from arches_installer.core.platform import PlatformConfig
-from arches_installer.core.snapper import setup_snapshots
 from arches_installer.core.template import (
     InstallTemplate,
     load_template,
@@ -79,115 +71,3 @@ class AutoInstallConfig:
         with open(path, "rb") as f:
             data = tomllib.load(f)
         return cls.from_dict(data)
-
-
-def log_stdout(msg: str) -> None:
-    """Log to stdout, stripping Rich markup for plain text output."""
-    # Strip common Rich markup tags for clean CLI output
-    clean = msg
-    for tag in (
-        "[bold cyan]",
-        "[/bold cyan]",
-        "[bold green]",
-        "[/bold green]",
-        "[bold red]",
-        "[/bold red]",
-        "[green]",
-        "[/green]",
-        "[red]",
-        "[/red]",
-    ):
-        clean = clean.replace(tag, "")
-    print(clean, flush=True)
-
-
-def run_auto_install(platform: PlatformConfig, config: AutoInstallConfig) -> int:
-    """Run the full install pipeline without TUI. Returns exit code."""
-    log = log_stdout
-
-    if not platform.allow_auto_install:
-        log(
-            f"ERROR: Auto-install is disabled for platform '{platform.name}'.\n"
-            "This platform's disk layout is managed externally and must not\n"
-            "be wiped. Use host-install (make host-install) or manual\n"
-            "partitioning in the TUI instead."
-        )
-        return 1
-
-    log("== Arches Auto Install ==")
-    log(f"  Platform: {platform.name} ({platform.arch})")
-    log(f"  Template: {config.template.name}")
-    log(f"  Hostname: {config.hostname}")
-    log(f"  User:     {config.username}")
-    log(f"  Reboot:   {config.reboot}")
-    log(f"  Shutdown: {config.shutdown}")
-    log("")
-
-    try:
-        # Detect target disk
-        log("Detecting target disk...")
-        disk = detect_single_disk()
-        device = disk.path
-        log(f"  Device:   {device}  {disk.size}  {disk.model}")
-        log("")
-
-        # Phase 1: Disk
-        log("-- Phase 1: Disk Setup --")
-        parts = prepare_disk(device, platform)
-        log("Disk prepared successfully.")
-
-        # Phase 2: System install
-        log("-- Phase 2: System Install --")
-        install_system(
-            platform,
-            config.template,
-            config.hostname,
-            config.username,
-            config.password,
-            log=log,
-        )
-        log("System installed successfully.")
-
-        # Phase 3: Bootloader
-        log("-- Phase 3: Bootloader --")
-        install_bootloader(
-            platform,
-            device,
-            parts.esp,
-            parts.root,
-            log=log,
-        )
-        log("Bootloader installed.")
-
-        # Phase 4: Snapshots (if btrfs platform)
-        if platform.disk_layout.filesystem == "btrfs":
-            log("-- Phase 4: Snapshots --")
-            setup_snapshots(platform, log=log)
-            log("Snapshot support configured.")
-
-        # Phase 5: First-boot service
-        log("-- Phase 5: First-Boot --")
-        inject_firstboot_service(
-            config.template,
-            config.username,
-            log=log,
-        )
-
-        log("")
-        log("== Installation complete ==")
-
-        if config.shutdown:
-            log("Shutting down...")
-            subprocess.run(["systemctl", "poweroff"], check=False)
-        elif config.reboot:
-            log("Rebooting into installed system...")
-            subprocess.run(["systemctl", "reboot"], check=False)
-
-        return 0
-
-    except Exception as e:
-        log(f"\nINSTALL FAILED: {e}")
-        import traceback
-
-        traceback.print_exc(file=sys.stderr)
-        return 1

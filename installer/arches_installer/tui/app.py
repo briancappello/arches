@@ -66,6 +66,16 @@ class ArchesApp(App):
     username: str = ""
     password: str = ""
 
+    # Auto-install mode — when True, skip to progress screen and
+    # handle reboot/shutdown on completion.
+    auto_install: bool = False
+    auto_shutdown: bool = False
+    auto_reboot: bool = False
+    install_success: bool = False
+
+    # Debug/demo: push this screen name on mount (e.g., "confirm", "user_setup")
+    push_screen_on_mount: str = ""
+
     SCREENS = {
         "welcome": WelcomeScreen,
         "partition": PartitionScreen,
@@ -80,5 +90,12 @@ class ArchesApp(App):
         self.platform = platform
 
     def get_default_screen(self) -> Screen:
-        """Use WelcomeScreen as the initial screen."""
+        """Start at progress screen for auto-install, welcome for interactive."""
+        if self.auto_install:
+            return InstallProgressScreen()
         return WelcomeScreen()
+
+    def on_mount(self) -> None:
+        """Optionally push a specific screen for demo/debug."""
+        if self.push_screen_on_mount and self.push_screen_on_mount in self.SCREENS:
+            self.push_screen(self.push_screen_on_mount)

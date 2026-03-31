@@ -26,9 +26,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["installer"]
 
-[tool.setuptools.package-data]
-arches_installer = ["templates/*.toml"]
-
 [tool.ruff]
 src = ["installer"]
 

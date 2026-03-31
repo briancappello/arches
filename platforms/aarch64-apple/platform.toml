@@ -18,6 +18,7 @@
 name = "aarch64-apple"
 description = "Apple Silicon (M1/M2/M3/M4) with Asahi Linux kernel"
 arch = "aarch64"
+default_template = "dev-workstation"
 # Auto-install / auto-partition is disabled on Apple Silicon. The disk
 # layout is managed by the Asahi installer (m1n1, U-Boot, macOS recovery
 # partitions) and must never be wiped. Use host-install or manual
@@ -27,6 +28,12 @@ allow_auto_install = false
 [kernel]
 variants = [
     { package = "linux-asahi", headers = "linux-asahi-headers" },
+]
+flags = [
+    "console=ttyAMA0,115200",
+    "console=tty0",
+    "loglevel=5",
+    "video=1920x1080",
 ]
 
 [bootloader]
@@ -53,7 +60,16 @@ swap = "zram"
 enabled = false
 
 [base_packages]
+# Always installed by pacstrap regardless of template.
+# Kernel packages are NOT listed here — they come from [kernel].variants.
 install = [
+    # Core system
+    "base",
+    "linux-firmware",
+    "mkinitcpio",
+    "sudo",
+    "ansible",
+    "terminus-font",
     # Asahi ALARM keyring + repo
     "asahi-alarm-keyring",
     # Boot chain (m1n1 → U-Boot → GRUB)

@@ -1,7 +1,0 @@
-[install]
-template = "dev-workstation.toml"
-hostname = "arches"
-username = "arches"
-password = "password"
-reboot = true
-# shutdown = true  # takes precedence over reboot if set

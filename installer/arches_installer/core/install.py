@@ -22,6 +22,10 @@ ISO_PACMAN_CONF = ISO_PLATFORM_DIR / "pacman.conf"
 # Pre-downloaded package cache baked into the ISO
 ISO_PKG_CACHE = Path("/opt/arches/pkg-cache")
 
+# Mount point inside the target for the ISO package cache (bind-mounted)
+_TARGET_ISO_CACHE = Path("/mnt/arches-pkg-cache")
+_TARGET_ISO_CACHE_MOUNTED = False
+
 # Ansible playbooks shipped on the ISO
 ISO_ANSIBLE_DIR = Path("/opt/arches/ansible")
 
@@ -29,8 +33,44 @@ ISO_ANSIBLE_DIR = Path("/opt/arches/ansible")
 ISO_BUILD_HOST_PUBKEY = Path("/opt/arches/build-host.pub")
 
 
+def _setup_local_repo_mirror(log: LogCallback | None = None) -> Path | None:
+    """Create a local file:// mirror from the live system's synced databases.
+
+    pacstrap always runs ``pacman -Sy`` which downloads database files from
+    mirrors.  When offline, this fails.  By creating a local repo structure
+    with the pre-synced database files and adding ``file://`` Server lines
+    *before* the remote mirrors in each repo section, pacman's ``-Sy``
+    succeeds offline (it finds the database at the file:// URL and stops).
+
+    Returns the path to the local mirror directory, or None if not available.
+    """
+    # Look for databases in the ISO package cache first (baked in by
+    # cache-template-packages.sh), then fall back to the live system's
+    # pacman database.
+    cache_sync = ISO_PKG_CACHE / "sync"
+    host_sync = Path("/var/lib/pacman/sync")
+    if cache_sync.exists() and any(cache_sync.glob("*.db")):
+        sync_dir = cache_sync
+    elif host_sync.exists() and any(host_sync.glob("*.db")):
+        sync_dir = host_sync
+    else:
+        return None
+
+    mirror_dir = Path(tempfile.mkdtemp(prefix="arches-local-mirror-"))
+
+    # For each .db file, create a repo directory structure:
+    #   <mirror_dir>/<reponame>/<reponame>.db
+    for db_file in sync_dir.glob("*.db"):
+        repo_name = db_file.name.replace(".db", "")
+        repo_dir = mirror_dir / repo_name
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(db_file, repo_dir / db_file.name)
+
+    return mirror_dir
+
+
 def _make_pacman_conf_with_cache() -> Path:
-    """Create a pacman.conf that includes the ISO package cache as a CacheDir.
+    """Create a pacman.conf with local cache and local mirror for offline use.
 
     Returns the path to a temporary config file. If no ISO cache exists,
     returns the original platform pacman.conf unchanged.
@@ -39,16 +79,110 @@ def _make_pacman_conf_with_cache() -> Path:
         return ISO_PACMAN_CONF
 
     conf_text = ISO_PACMAN_CONF.read_text()
-    # Insert our cache dir before the default, so pacman checks it first
+
+    # Add the ISO package cache as a CacheDir
     cache_line = f"CacheDir = {ISO_PKG_CACHE}/\nCacheDir = /var/cache/pacman/pkg/\n"
     conf_text = conf_text.replace(
         "[options]\n",
         f"[options]\n{cache_line}",
         1,
     )
+
+    # Create a local file:// mirror from the live system's databases.
+    # Insert a Server = file:// line at the top of each repo section
+    # so pacman's -Sy finds the database locally before trying mirrors.
+    mirror_dir = _setup_local_repo_mirror()
+    if mirror_dir:
+        import re
+
+        def _add_local_server(match: re.Match) -> str:
+            repo_name = match.group(1)
+            # Skip [options] and local repos that already have file:// servers
+            if repo_name in ("options", "arches-local"):
+                return match.group(0)
+            local_repo = mirror_dir / repo_name
+            if local_repo.exists():
+                return f"[{repo_name}]\nServer = file://{local_repo}\n"
+            return match.group(0)
+
+        conf_text = re.sub(
+            r"^\[([a-zA-Z0-9_-]+)\]\s*$",
+            _add_local_server,
+            conf_text,
+            flags=re.MULTILINE,
+        )
+
     tmp = Path(tempfile.mktemp(prefix="arches-pacman-", suffix=".conf"))
     tmp.write_text(conf_text)
     return tmp
+
+
+def _mount_iso_cache_in_target(
+    target_pacman_conf: Path,
+    log: LogCallback | None = None,
+) -> None:
+    """Bind-mount the ISO package cache into the target and register it as a CacheDir.
+
+    This allows chroot pacman operations (override packages, hardware
+    detection) to find packages locally without downloading.  The mount
+    is inside the chroot at ``/mnt/arches-pkg-cache``, and the target's
+    pacman.conf gets an extra ``CacheDir`` pointing there.
+    """
+    global _TARGET_ISO_CACHE_MOUNTED
+    if not ISO_PKG_CACHE.exists() or not any(ISO_PKG_CACHE.glob("*.pkg.tar.*")):
+        return
+
+    mount_point = MOUNT_ROOT / "mnt" / "arches-pkg-cache"
+    mount_point.mkdir(parents=True, exist_ok=True)
+
+    try:
+        run(["mount", "--bind", str(ISO_PKG_CACHE), str(mount_point)], log=log)
+        _TARGET_ISO_CACHE_MOUNTED = True
+    except subprocess.CalledProcessError:
+        _log("WARNING: Failed to bind-mount package cache into target.", log)
+        return
+
+    # Add the bind-mount as an extra CacheDir in the target's pacman.conf.
+    # The chroot sees it at /mnt/arches-pkg-cache.
+    conf_text = target_pacman_conf.read_text()
+    if "/mnt/arches-pkg-cache" not in conf_text:
+        cache_line = "CacheDir = /mnt/arches-pkg-cache/\n"
+        conf_text = conf_text.replace(
+            "[options]\n",
+            f"[options]\n{cache_line}",
+            1,
+        )
+        target_pacman_conf.write_text(conf_text)
+
+    _log("Bind-mounted ISO package cache into target.", log)
+
+
+def _unmount_iso_cache_from_target(log: LogCallback | None = None) -> None:
+    """Unmount the ISO package cache from the target and clean up pacman.conf."""
+    global _TARGET_ISO_CACHE_MOUNTED
+    if not _TARGET_ISO_CACHE_MOUNTED:
+        return
+
+    mount_point = MOUNT_ROOT / "mnt" / "arches-pkg-cache"
+    try:
+        run(["umount", str(mount_point)], log=log)
+    except subprocess.CalledProcessError:
+        _log("WARNING: Failed to unmount package cache from target.", log)
+    _TARGET_ISO_CACHE_MOUNTED = False
+
+    # Remove the extra CacheDir from pacman.conf so the installed system
+    # doesn't reference a non-existent path after reboot.
+    target_conf = MOUNT_ROOT / "etc" / "pacman.conf"
+    if target_conf.exists():
+        conf_text = target_conf.read_text()
+        conf_text = conf_text.replace("CacheDir = /mnt/arches-pkg-cache/\n", "")
+        target_conf.write_text(conf_text)
+
+    # Clean up mount point
+    try:
+        mount_point.rmdir()
+    except OSError:
+        pass
 
 
 def _query_available_packages(
@@ -73,6 +207,23 @@ def _query_available_packages(
         return None
 
 
+def _preseed_pacman_databases(log: LogCallback | None = None) -> None:
+    """Copy the live system's pacman databases into the target.
+
+    pacstrap runs ``pacman -Sy`` which fails offline because it can't
+    sync remote databases.  By pre-seeding the target with the live
+    system's databases (which were synced during the ISO build), pacstrap
+    finds them already present and can install from the local cache.
+    """
+    host_db = Path("/var/lib/pacman/sync")
+    target_db = MOUNT_ROOT / "var" / "lib" / "pacman" / "sync"
+    if host_db.exists() and any(host_db.glob("*.db")):
+        target_db.mkdir(parents=True, exist_ok=True)
+        for db_file in host_db.iterdir():
+            shutil.copy2(db_file, target_db / db_file.name)
+        _log("Pre-seeded pacman databases from live system.", log)
+
+
 def pacstrap(
     platform: PlatformConfig,
     template: InstallTemplate,
@@ -81,31 +232,37 @@ def pacstrap(
     """Install base packages into MOUNT_ROOT via pacstrap."""
     _log("Running pacstrap...", log)
 
-    # Platform-agnostic base
-    base_packages = [
-        "base",
-        "linux-firmware",
-        "mkinitcpio",
-        "sudo",
-        "ansible",
-        "terminus-font",
-    ]
+    # All base packages come from the platform config (single source of truth).
+    # This includes core system packages, keyrings, bootloader, etc.
+    base_packages = list(platform.base_packages)
 
-    # Install all kernel variants (each gets a bootloader entry)
+    # Kernel variants (each gets a bootloader entry)
     for variant in platform.kernel.variants:
         base_packages.append(variant.package)
         base_packages.append(variant.headers)
-
-    # Platform-specific base packages (keyrings, mirrorlists, settings)
-    base_packages.extend(platform.base_packages)
 
     # Template-specific packages (pacstrap phase only).
     # Override and firstboot packages are handled in separate pipeline steps.
     all_packages = base_packages + template.install.pacstrap
 
+    _log(f"Total packages: {len(all_packages)}", log)
+
     pacman_conf = _make_pacman_conf_with_cache()
     if pacman_conf != ISO_PACMAN_CONF:
         _log(f"Using cached packages from {ISO_PKG_CACHE}", log)
+        # Log local mirror status
+        cache_sync = ISO_PKG_CACHE / "sync"
+        if cache_sync.exists():
+            dbs = list(cache_sync.glob("*.db"))
+            _log(f"  Cached databases: {len(dbs)} in {cache_sync}", log)
+        else:
+            _log(f"  WARNING: No cached databases at {cache_sync}", log)
+        # Log file:// servers in generated config
+        for line in pacman_conf.read_text().splitlines():
+            if "Server = file://" in line:
+                _log(f"  {line.strip()}", log)
+    else:
+        _log("No package cache found — packages will be downloaded", log)
 
     # Check if the arches-local repo is empty. If so, filter out packages
     # that aren't available in upstream repos to avoid pacstrap failing on
@@ -133,14 +290,19 @@ def pacstrap(
                 )
             all_packages = filtered
 
-    # Pacstrap can fail due to transient mirror timeouts. Retry up to 3 times
-    # before giving up, since the download is resumable (pacman caches
-    # partially-downloaded packages).
-    max_attempts = 3
+    # pacstrap uses `pacman -Sy` which syncs databases + installs.  Our
+    # custom pacman.conf has file:// Server entries pointing at the live
+    # system's pre-synced databases, so -Sy succeeds offline.  Packages
+    # are found in the ISO cache (also configured as a CacheDir).
+    #
+    # -c: Use the host's package cache rather than downloading
+    # -M: Don't copy mirrorlist (we install our own later)
+    max_attempts = 2
     for attempt in range(1, max_attempts + 1):
         try:
             run(
-                ["pacstrap", "-C", str(pacman_conf), str(MOUNT_ROOT)] + all_packages,
+                ["pacstrap", "-c", "-M", "-C", str(pacman_conf), str(MOUNT_ROOT)]
+                + all_packages,
                 log=log,
             )
             break
@@ -217,6 +379,12 @@ def install_pacman_conf(log: LogCallback | None = None) -> None:
         # Fallback to the ISO's own pacman.conf
         shutil.copy2(ISO_PACMAN_CONF, target)
 
+    # Make the ISO package cache available inside the chroot so that
+    # post-pacstrap operations (override packages, hardware detection)
+    # can install without downloading.  We bind-mount the cache into
+    # the target and add it as an extra CacheDir in pacman.conf.
+    _mount_iso_cache_in_target(target, log)
+
     # Copy the local AUR repo into the target so packages are available
     # inside the chroot (for ansible tasks that install from arches-local).
     iso_repo = Path("/opt/arches-repo")
@@ -224,6 +392,24 @@ def install_pacman_conf(log: LogCallback | None = None) -> None:
     if iso_repo.exists() and not target_repo.exists():
         _log("Copying local AUR repo into target...", log)
         shutil.copytree(iso_repo, target_repo)
+
+
+def sync_chroot_databases(log: LogCallback | None = None) -> None:
+    """Best-effort sync of pacman databases inside the chroot.
+
+    Tries to refresh package databases so chroot operations (override
+    packages, hardware detection, bootloader hooks) see the latest
+    versions.  If network is unavailable this silently continues —
+    the databases from pacstrap are still valid and all cached packages
+    are usable.
+    """
+    _log("Syncing pacman databases (best-effort)...", log)
+    try:
+        chroot_run(["pacman", "-Sy", "--noconfirm"], log=log)
+    except subprocess.CalledProcessError:
+        _log(
+            "Database sync failed (no network?), continuing with cached databases.", log
+        )
 
 
 def install_override_packages(
@@ -239,9 +425,10 @@ def install_override_packages(
         return
 
     _log(f"Installing override packages: {', '.join(template.install.override)}", log)
+    # Databases are already synced from pacstrap.  Use -S (not -Sy) so
+    # this works offline.  The local arches-repo is already available.
     chroot_run(
-        ["pacman", "-Sy", "--noconfirm", "--overwrite", "*"]
-        + template.install.override,
+        ["pacman", "-S", "--noconfirm", "--overwrite", "*"] + template.install.override,
         log=log,
     )
 
@@ -462,9 +649,28 @@ def _pre_pacstrap_setup(log: LogCallback | None = None) -> None:
     etc = MOUNT_ROOT / "etc"
     etc.mkdir(parents=True, exist_ok=True)
 
+    # Pre-seed pacman databases so pacstrap works offline
+    _preseed_pacman_databases(log)
+
     # mkinitcpio's keymap/sd-vconsole hooks need vconsole.conf
     (etc / "vconsole.conf").write_text("KEYMAP=us\nFONT=ter-116n\n")
     _log("Pre-created /etc/vconsole.conf for pacstrap hooks.", log)
+
+    # Pre-create limine config files so that limine-mkinitcpio-hook's
+    # post-install scripts work during pacstrap (before our bootloader
+    # phase writes the full config).  The hook needs:
+    #   - /etc/default/limine with ESP_PATH
+    #   - /etc/kernel/cmdline (even if placeholder)
+    default_dir = etc / "default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    (default_dir / "limine").write_text('ESP_PATH="/boot"\n')
+    kernel_dir = etc / "kernel"
+    kernel_dir.mkdir(parents=True, exist_ok=True)
+    (kernel_dir / "cmdline").write_text("root=/dev/vda2 rw\n")
+    _log(
+        "Pre-created /etc/default/limine and /etc/kernel/cmdline for pacstrap hooks.",
+        log,
+    )
 
     # Provide a mkinitcpio.conf with reliable hooks.
     # The default includes 'autodetect' which can fail in chroot/VM.
@@ -647,6 +853,7 @@ def install_system(
     pacstrap(platform, template, log)
     generate_fstab(log)
     install_pacman_conf(log)
+    sync_chroot_databases(log)
     install_override_packages(template, log)
     configure_locale(template.system.locale, log)
     configure_timezone(template.system.timezone, log)
@@ -657,6 +864,7 @@ def install_system(
     configure_apple_input(platform, log)
     preseed_network_deps(username, log)
     run_hardware_detection(platform, log)
+    _unmount_iso_cache_from_target(log)
     # NOTE: mkinitcpio is NOT run here — it's handled by
     # limine-mkinitcpio in the bootloader phase (Phase 3),
     # which generates both the initramfs and limine.conf entries.

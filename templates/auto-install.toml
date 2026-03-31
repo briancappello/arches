@@ -3,5 +3,5 @@ template = "dev-workstation.toml"
 hostname = "arches"
 username = "arches"
 password = "password"  # FIXME
-reboot = true
-shutdown = true  # takes precedence over reboot if true
+reboot = false
+shutdown = false  # takes precedence over reboot if true

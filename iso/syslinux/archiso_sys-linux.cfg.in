@@ -5,4 +5,4 @@ ENDTEXT
 MENU LABEL Arches (%ARCH%, BIOS)
 LINUX /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-@KERNEL@
 INITRD /%INSTALL_DIR%/boot/%ARCH%/initramfs-@KERNEL@.img
-APPEND archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% video=1920x1080
+APPEND archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% @KERNEL_FLAGS@

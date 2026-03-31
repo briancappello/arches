@@ -60,7 +60,7 @@ class WelcomeScreen(Screen):
                     id="btn-wifi",
                 )
                 yield Button(
-                    "Recovery Shell",
+                    "Exit Installer",
                     variant="default",
                     id="btn-shell",
                 )
@@ -118,26 +118,7 @@ class WelcomeScreen(Screen):
 
         if event.button.id == "btn-wifi":
             self.app.suspend()
-            subprocess.run(
-                [
-                    "/bin/bash",
-                    "-c",
-                    'echo ""; '
-                    'echo "══ WiFi Setup ══"; '
-                    'echo ""; '
-                    'echo "Use iwctl to connect to a wireless network:"; '
-                    'echo "  station wlan0 scan"; '
-                    'echo "  station wlan0 get-networks"; '
-                    'echo "  station wlan0 connect <SSID>"; '
-                    'echo ""; '
-                    'echo "Or use nmtui for a menu-driven interface:"; '
-                    'echo "  nmtui"; '
-                    'echo ""; '
-                    'echo "Type exit when done."; '
-                    'echo ""; '
-                    "exec /bin/bash",
-                ],
-            )
+            subprocess.run(["nmtui"])
             self.app.resume()
             self._update_net_status()
             return

@@ -192,7 +192,7 @@ def test_install_limine_uefi_path(
     mock_defaults.assert_called_once_with(x86_64_platform, "/dev/sda2", None)
     assert mock_chroot.call_args_list == [
         call(
-            ["pacman", "-Sy", "--noconfirm", "--needed", "limine-mkinitcpio-hook"],
+            ["pacman", "-Q", "limine-mkinitcpio-hook"],
             log=None,
         ),
         call(["limine-install"], log=None),
@@ -215,7 +215,7 @@ def test_install_limine_bios_path(
     mock_bios.assert_called_once_with("/dev/sda", None)
     assert mock_chroot.call_args_list == [
         call(
-            ["pacman", "-Sy", "--noconfirm", "--needed", "limine-mkinitcpio-hook"],
+            ["pacman", "-Q", "limine-mkinitcpio-hook"],
             log=None,
         ),
         call(["limine-mkinitcpio"], log=None),

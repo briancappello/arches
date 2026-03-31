@@ -6,6 +6,7 @@ SHELL       := /bin/bash
 PROJECT_DIR := $(shell pwd)
 ISO_PROFILE := $(PROJECT_DIR)/iso
 INSTALLER   := $(PROJECT_DIR)/installer
+TEMPLATES   := $(PROJECT_DIR)/templates
 ANSIBLE_DIR := $(PROJECT_DIR)/ansible
 PLATFORMS   := $(PROJECT_DIR)/platforms
 SCRIPTS     := $(PROJECT_DIR)/scripts
@@ -15,14 +16,14 @@ OUT_DIR     := $(PROJECT_DIR)/out
 # ─── Phony targets ────────────────────────────────────
 
 .PHONY: help \
-        iso usb qemu-install \
+        iso usb \
         host-install host-install-rebuild host-install-dry host-clean \
         fmt test test-template dry-run \
-        test-iso test-boot test-iso-bios test-disk ansible-dev \
+        qemu-install qemu-test qemu-boot qemu-disk qemu-ansible \
         clean clean-work clean-all \
         _iso _aur-repo \
         _stage-installer _stage-ansible _stage-platform _stage-bootconfig \
-        _assemble-packages _cache-packages \
+        _assemble-packages _stage-graphical _cache-packages \
         _check-root _check-deps
 
 # ─── Default ──────────────────────────────────────────
@@ -47,7 +48,7 @@ help: ## Show this help
 # User-facing workflows
 # ─────────────────────────────────────────────────────────
 
-##@ Install
+##@ Build
 
 iso: ## Build ISO for auto-detected platform (requires sudo + Podman)
 	$(SCRIPTS)/build-iso.sh
@@ -55,12 +56,9 @@ iso: ## Build ISO for auto-detected platform (requires sudo + Podman)
 usb: ## Build install media and write to USB drive (requires sudo + Podman)
 	$(SCRIPTS)/build-usb.sh
 
-qemu-install: ## Build ISO and boot QEMU VM with install disk attached
-	$(SCRIPTS)/qemu-install.sh
-
 ##@ Host Install (Apple Silicon)
 
-CONFIG ?= examples/host-install.toml
+CONFIG ?= templates/host-install.toml
 
 host-install: _check-root ## Install Arches into btrfs subvolumes from running host (CONFIG=path)
 	@echo "══ Host Install (Apple Silicon) ══"
@@ -99,85 +97,54 @@ print(f'Loaded {len(templates)} templates:'); \
 dry-run: ## Dry-run the example auto-install config
 	@echo "══ Dry run ══"
 	uv run python -m arches_installer \
-		--auto examples/auto-install.toml \
+		--auto templates/auto-install.toml \
 		--platform platforms/x86-64/platform.toml \
 		--dry-run
 
-##@ QEMU Testing
+##@ QEMU
 
-test-iso: ## Boot the built ISO in QEMU (UEFI, no install)
-	@ISO=$$(ls -t $(OUT_DIR)/arches-*.iso 2>/dev/null | head -1); \
-	if [ -z "$$ISO" ]; then echo "No ISO found in $(OUT_DIR)/. Run 'make iso' first."; exit 1; fi; \
-	echo "══ Booting $$ISO in QEMU (UEFI) ══"; \
-	if [ "$$(uname -m)" = "aarch64" ]; then \
-		[ -f /tmp/arches-efi-vars.raw ] || \
-			cp /usr/share/edk2/aarch64/vars-template-pflash.raw /tmp/arches-efi-vars.raw; \
-		qemu-system-aarch64 -M virt -enable-kvm -cpu host -m 4G -smp 4 \
-			-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw \
-			-drive if=pflash,format=raw,file=/tmp/arches-efi-vars.raw \
-			-device virtio-gpu-pci -device qemu-xhci -device usb-kbd -device usb-tablet \
-			-drive file=/tmp/arches-test-disk.qcow2,format=qcow2,if=virtio \
-			-device usb-storage,drive=cdrom0,bootindex=2 \
-			-drive id=cdrom0,file=$$ISO,format=raw,if=none,media=cdrom,readonly=on \
-			-net nic -net user,hostfwd=tcp::2222-:22; \
-	else \
-		qemu-system-x86_64 -enable-kvm -cpu host -m 4G -smp 4 \
-			-bios /usr/share/edk2/x64/OVMF.4m.fd \
-			-vga virtio \
-			-drive file=$$ISO,format=raw,media=cdrom \
-			-drive file=/tmp/arches-test-disk.qcow2,format=qcow2,if=virtio \
-			-net nic -net user,hostfwd=tcp::2222-:22; \
-	fi
+qemu-install: ## Build ISO and boot QEMU VM with install disk attached
+	$(SCRIPTS)/qemu-install.sh
 
-test-boot: ## Boot the installed test disk in QEMU (UEFI, no ISO)
+qemu-test: ## Automated install test — headless QEMU, auto-install, verify (TIMEOUT=900)
+	$(SCRIPTS)/qemu-test.sh
+
+qemu-boot: ## Boot the installed test disk in QEMU (UEFI, no ISO)
 	@echo "══ Booting installed disk in QEMU (UEFI) ══"
-	@echo "    SSH: ssh -p 2222 <user>@localhost"
+	@echo "  SSH: ssh -p 2222 <user>@localhost"
+	@echo "  Serial: Ctrl-A X to quit"
 	@if [ "$$(uname -m)" = "aarch64" ]; then \
 		[ -f /tmp/arches-efi-vars.raw ] || \
-			cp /usr/share/edk2/aarch64/vars-template-pflash.raw /tmp/arches-efi-vars.raw; \
+			{ echo "ERROR: No EFI vars — run make qemu-install first"; exit 1; }; \
 		qemu-system-aarch64 -M virt -enable-kvm -cpu host -m 4G -smp 4 \
 			-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw \
 			-drive if=pflash,format=raw,file=/tmp/arches-efi-vars.raw \
 			-device virtio-gpu-pci -device qemu-xhci -device usb-kbd -device usb-tablet \
+			-serial mon:stdio \
 			-drive file=/tmp/arches-test-disk.qcow2,format=qcow2,if=virtio \
 			-net nic -net user,hostfwd=tcp::2222-:22; \
 	else \
+		[ -f /tmp/arches-efi-vars.raw ] || \
+			{ echo "ERROR: No EFI vars — run make qemu-install first"; exit 1; }; \
 		qemu-system-x86_64 -enable-kvm -cpu host -m 4G -smp 4 \
-			-bios /usr/share/edk2/x64/OVMF.4m.fd \
+			-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
+			-drive if=pflash,format=raw,file=/tmp/arches-efi-vars.raw \
 			-vga virtio \
+			-serial mon:stdio \
 			-drive file=/tmp/arches-test-disk.qcow2,format=qcow2,if=virtio \
 			-net nic -net user,hostfwd=tcp::2222-:22; \
 	fi
 
-test-iso-bios: ## Boot the built ISO in QEMU (BIOS, x86-64 only)
-	@if [ "$$(uname -m)" = "aarch64" ]; then \
-		echo "ERROR: BIOS boot is not supported on aarch64 (UEFI only)."; \
-		echo "       Use 'make test-iso' instead."; \
-		exit 1; \
-	fi
-	@ISO=$$(ls -t $(OUT_DIR)/arches-*.iso 2>/dev/null | head -1); \
-	if [ -z "$$ISO" ]; then echo "No ISO found in $(OUT_DIR)/. Run 'make iso' first."; exit 1; fi; \
-	echo "══ Booting $$ISO in QEMU (BIOS) ══"; \
-	qemu-system-x86_64 \
-		-enable-kvm \
-		-m 4G \
-		-cpu host \
-		-smp 4 \
-		-drive file=$$ISO,format=raw,media=cdrom \
-		-drive file=/tmp/arches-test-disk.qcow2,format=qcow2,if=virtio \
-		-net nic -net user,hostfwd=tcp::2222-:22 \
-		-vga std
-
-test-disk: ## Create a QEMU test disk image (20G)
+qemu-disk: ## Create a fresh QEMU test disk image (60G)
 	@echo "══ Creating test disk ══"
-	qemu-img create -f qcow2 /tmp/arches-test-disk.qcow2 20G
-	@echo "Created /tmp/arches-test-disk.qcow2 (20G)"
+	qemu-img create -f qcow2 /tmp/arches-test-disk.qcow2 60G
+	@echo "Created /tmp/arches-test-disk.qcow2 (60G)"
 
 VM_SSH_PORT := 2222
 VM_USER     := arches
 TAGS        ?= all
 
-ansible-dev: ## Run Ansible roles against the QEMU VM (TAGS=all)
+qemu-ansible: ## Run Ansible roles against the QEMU VM (TAGS=all)
 	@echo "══ Running Ansible against VM (tags: $(TAGS)) ══"
 	ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook $(ANSIBLE_DIR)/playbook.yml \
 		-i $(ANSIBLE_DIR)/inventory/dev-vm.ini \
@@ -192,9 +159,11 @@ ansible-dev: ## Run Ansible roles against the QEMU VM (TAGS=all)
 clean: ## Remove staged files from ISO airootfs
 	@echo "══ Cleaning staged files ══"
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/installer
+	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/templates
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/ansible
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/platform
 	rm -f  $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
+	rm -f  $(ISO_PROFILE)/airootfs/root/auto-install.toml
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches-repo
 	rm -f  $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub
 	rm -f  $(ISO_PROFILE)/packages.x86_64
@@ -205,6 +174,18 @@ clean: ## Remove staged files from ISO airootfs
 	rm -f  $(ISO_PROFILE)/grub/loopback.cfg
 	rm -f  $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg
 	rm -f  $(ISO_PROFILE)/syslinux/archiso_pxe-linux.cfg
+	rm -f  $(ISO_PROFILE)/pacman.conf
+	# Graphical staging artifacts
+	rm -f  $(ISO_PROFILE)/airootfs/etc/systemd/system/arches-liveuser.service
+	rm -f  $(ISO_PROFILE)/airootfs/etc/systemd/system/display-manager.service
+	rm -f  $(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants/arches-liveuser.service
+	rm -rf $(ISO_PROFILE)/airootfs/etc/systemd/system/sddm.service.d
+	rm -rf $(ISO_PROFILE)/airootfs/etc/sddm.conf.d
+	rm -rf $(ISO_PROFILE)/airootfs/etc/xdg
+	rm -rf $(ISO_PROFILE)/airootfs/usr/share/applications
+	rm -f  $(ISO_PROFILE)/airootfs/usr/local/bin/arches-liveuser-setup
+	rm -rf $(ISO_PROFILE)/airootfs/home
+
 
 clean-work: ## Remove mkarchiso work directory
 	@echo "══ Cleaning work directory ══"
@@ -221,17 +202,20 @@ clean-all: clean clean-work ## Remove all build artifacts
 # ─────────────────────────────────────────────────────────
 
 # Unified ISO build — called by build-iso.sh inside the container.
-# PLATFORM and ARCHES_ARCH are passed in by the container.
+# PLATFORM, ARCHES_ARCH, and TEMPLATE are passed in by the container.
 _iso: export ARCHES_ARCH := $(ARCHES_ARCH)
 _iso: export ARCHES_PLATFORM := $(PLATFORM)
-_iso: _check-root _check-deps _aur-repo _stage-installer _stage-ansible _stage-platform _stage-bootconfig _assemble-packages _cache-packages
-	@echo "══ Building Arches ISO ($(PLATFORM)) ══"
+_iso: _check-root _check-deps _aur-repo _stage-installer _stage-ansible _stage-platform _stage-bootconfig _assemble-packages _stage-graphical _cache-packages
+	@echo "══ Building Arches ISO ($(PLATFORM), template: $(TEMPLATE)) ══"
 	@rm -rf $(WORK_DIR)
 	@mkdir -p $(OUT_DIR)
 	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
 	@echo ""
 	@echo "══ ISO built ══"
-	@ls -lh $(OUT_DIR)/arches-*.iso 2>/dev/null
+	@for f in $(OUT_DIR)/arches-*.iso; do \
+		size=$$(ls -lh "$$f" | awk '{print $$5}'); \
+		echo "  out/$$(basename $$f) ($$size)"; \
+	done
 
 _aur-repo:
 	@echo "══ Building AUR repo ($(PLATFORM)) ══"
@@ -241,6 +225,15 @@ _stage-installer:
 	@echo "══ Staging installer ══"
 	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/installer
 	@cp -r $(INSTALLER)/* $(ISO_PROFILE)/airootfs/opt/arches/installer/
+	@# Stage templates (the installer discovers them at /opt/arches/templates/)
+	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/templates
+	@cp $(TEMPLATES)/*.toml $(ISO_PROFILE)/airootfs/opt/arches/templates/
+	@echo "  Staged templates: $$(ls $(TEMPLATES)/*.toml | xargs -n1 basename | tr '\n' ' ')"
+	@# Stage auto-install config into /root/ for auto-detect on boot
+	@if [ -f "$(TEMPLATES)/auto-install.toml" ]; then \
+		cp "$(TEMPLATES)/auto-install.toml" $(ISO_PROFILE)/airootfs/root/auto-install.toml; \
+		echo "  Staged auto-install.toml to /root/"; \
+	fi
 	@mkdir -p $(ISO_PROFILE)/airootfs/usr/local/bin
 	@printf '#!/usr/bin/env bash\n\
 cd /opt/arches/installer\n\
@@ -258,6 +251,8 @@ exec python -m arches_installer "$$@"\n' > $(ISO_PROFILE)/airootfs/usr/local/bin
 		echo "  WARNING: No SSH public key found ($$REAL_HOME/.ssh/id_ed25519.pub or id_rsa.pub)"; \
 		echo "           Installed systems will not have build-host SSH access."; \
 	fi
+	@# Test logging: the installer writes to /dev/virtio-ports/arches-log
+	@# if it exists (QEMU test harness). No staging needed — handled in run.py.
 
 _stage-ansible:
 	@echo "══ Staging Ansible ══"
@@ -279,16 +274,21 @@ _stage-platform:
 _stage-bootconfig:
 	@echo "══ Staging boot config ($(PLATFORM)) ══"
 	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
-	@# Read default kernel package from platform.toml [kernel].variants
+	@# Read default kernel and kernel flags from platform.toml
 	@KERNEL=$$(python3 -c "import tomllib; \
 		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
 		vs=d['kernel']['variants']; \
 		print(next((v['package'] for v in vs if v.get('default')), vs[0]['package']))"); \
+	KERNEL_FLAGS=$$(python3 -c "import tomllib; \
+		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
+		flags=d.get('kernel',{}).get('flags',[]); \
+		print(' '.join(flags))"); \
 	if [ -z "$$KERNEL" ]; then \
 		echo "ERROR: Could not read kernel package from platform.toml"; \
 		exit 1; \
 	fi; \
 	echo "  Default kernel: $$KERNEL"; \
+	echo "  Kernel flags: $$KERNEL_FLAGS"; \
 	\
 	echo "  Generating mkinitcpio preset hook for $$KERNEL"; \
 	mkdir -p $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks; \
@@ -296,13 +296,13 @@ _stage-bootconfig:
 		> $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook; \
 	\
 	echo "  Generating boot configs from templates"; \
-	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/grub/grub.cfg.in \
+	sed -e "s/@KERNEL@/$$KERNEL/g" -e "s|@KERNEL_FLAGS@|$$KERNEL_FLAGS|g" $(ISO_PROFILE)/grub/grub.cfg.in \
 		> $(ISO_PROFILE)/grub/grub.cfg; \
-	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/grub/loopback.cfg.in \
+	sed -e "s/@KERNEL@/$$KERNEL/g" -e "s|@KERNEL_FLAGS@|$$KERNEL_FLAGS|g" $(ISO_PROFILE)/grub/loopback.cfg.in \
 		> $(ISO_PROFILE)/grub/loopback.cfg; \
-	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg.in \
+	sed -e "s/@KERNEL@/$$KERNEL/g" -e "s|@KERNEL_FLAGS@|$$KERNEL_FLAGS|g" $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg.in \
 		> $(ISO_PROFILE)/syslinux/archiso_sys-linux.cfg; \
-	sed "s/@KERNEL@/$$KERNEL/g" $(ISO_PROFILE)/syslinux/archiso_pxe-linux.cfg.in \
+	sed -e "s/@KERNEL@/$$KERNEL/g" -e "s|@KERNEL_FLAGS@|$$KERNEL_FLAGS|g" $(ISO_PROFILE)/syslinux/archiso_pxe-linux.cfg.in \
 		> $(ISO_PROFILE)/syslinux/archiso_pxe-linux.cfg; \
 	\
 	echo "  Copying mkinitcpio archiso.conf from platform"; \
@@ -313,8 +313,23 @@ _stage-bootconfig:
 _assemble-packages:
 	@echo "══ Assembling package list ($(PLATFORM)) ══"
 	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
-	@# Read platform arch and kernel packages from platform.toml
-	@ARCH=$$(python3 -c "import tomllib; \
+	@# Resolve template to check graphical flag
+	@TMPL="$(TEMPLATE)"; \
+	if [ -z "$$TMPL" ]; then \
+		TMPL=$$(python3 -c "import tomllib; \
+			d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
+			print(d.get('platform',{}).get('default_template',''))"); \
+	fi; \
+	GRAPHICAL=false; \
+	if [ -n "$$TMPL" ]; then \
+		TMPL_FILE="$(TEMPLATES)/$$TMPL.toml"; \
+		if [ -f "$$TMPL_FILE" ]; then \
+			GRAPHICAL=$$(python3 -c "import tomllib; \
+				d=tomllib.load(open('$$TMPL_FILE','rb')); \
+				print('true' if d.get('meta',{}).get('graphical',False) else 'false')"); \
+		fi; \
+	fi; \
+	ARCH=$$(python3 -c "import tomllib; \
 		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
 		print(d['platform']['arch'])"); \
 	KERNEL_PKGS=$$(python3 -c "import tomllib; \
@@ -325,9 +340,16 @@ _assemble-packages:
 		pkgs.append('linux-firmware'); \
 		print('\n'.join(pkgs))"); \
 	echo "  Platform arch: $$ARCH"; \
+	echo "  Graphical ISO: $$GRAPHICAL"; \
 	echo "  Kernel packages: $$(echo $$KERNEL_PKGS | tr '\n' ' ')"; \
-	{ cat $(ISO_PROFILE)/packages.common $(PLATFORMS)/$(PLATFORM)/packages; \
+	GRAPHICAL_FILE=""; \
+	if [ "$$GRAPHICAL" = "true" ] && [ -f "$(ISO_PROFILE)/packages.graphical_iso" ]; then \
+		GRAPHICAL_FILE="$(ISO_PROFILE)/packages.graphical_iso"; \
+		echo "  Including graphical ISO packages"; \
+	fi; \
+	{ cat $(ISO_PROFILE)/packages.iso $(PLATFORMS)/$(PLATFORM)/packages; \
 	  echo "$$KERNEL_PKGS"; \
+	  if [ -n "$$GRAPHICAL_FILE" ]; then cat "$$GRAPHICAL_FILE"; fi; \
 	} | grep -v '^#' | grep -v '^$$' | sort -u \
 		> $(ISO_PROFILE)/packages.$$ARCH; \
 	echo "  Wrote packages.$$ARCH ($$(wc -l < $(ISO_PROFILE)/packages.$$ARCH) packages)"
@@ -336,6 +358,65 @@ _assemble-packages:
 	@# At install time the live ISO uses the original /opt/arches-repo path.
 	@sed 's|file:///opt/arches-repo|file://$(ISO_PROFILE)/airootfs/opt/arches-repo|' \
 		$(PLATFORMS)/$(PLATFORM)/pacman.conf > $(ISO_PROFILE)/pacman.conf
+
+_stage-graphical:
+	@# Conditionally set up graphical live boot based on template's graphical flag.
+	@TMPL="$(TEMPLATE)"; \
+	if [ -z "$$TMPL" ]; then \
+		TMPL=$$(python3 -c "import tomllib; \
+			d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
+			print(d.get('platform',{}).get('default_template',''))"); \
+	fi; \
+	TMPL_FILE="$(TEMPLATES)/$$TMPL.toml"; \
+	GRAPHICAL=$$(python3 -c "import tomllib; \
+		d=tomllib.load(open('$$TMPL_FILE','rb')); \
+		print('true' if d.get('meta',{}).get('graphical',False) else 'false')"); \
+	echo "  Cleaning previous graphical staging artifacts"; \
+	rm -rf $(ISO_PROFILE)/airootfs/etc/systemd/system/arches-liveuser.service \
+		$(ISO_PROFILE)/airootfs/etc/systemd/system/display-manager.service \
+		$(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants/arches-liveuser.service \
+		$(ISO_PROFILE)/airootfs/etc/systemd/system/sddm.service.d \
+		$(ISO_PROFILE)/airootfs/etc/sddm.conf.d \
+		$(ISO_PROFILE)/airootfs/etc/xdg \
+		$(ISO_PROFILE)/airootfs/usr/share/applications \
+		$(ISO_PROFILE)/airootfs/usr/local/bin/arches-liveuser-setup \
+		$(ISO_PROFILE)/airootfs/home 2>/dev/null || true; \
+	if [ "$$GRAPHICAL" = "true" ]; then \
+		echo "══ Staging graphical live boot (template: $$TMPL) ══"; \
+		echo "  Installing liveuser setup service"; \
+		mkdir -p $(ISO_PROFILE)/airootfs/usr/local/bin; \
+		cp $(ISO_PROFILE)/services/arches-liveuser-setup $(ISO_PROFILE)/airootfs/usr/local/bin/; \
+		chmod 755 $(ISO_PROFILE)/airootfs/usr/local/bin/arches-liveuser-setup; \
+		mkdir -p $(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants; \
+		cp $(ISO_PROFILE)/services/arches-liveuser.service $(ISO_PROFILE)/airootfs/etc/systemd/system/; \
+		ln -sf ../arches-liveuser.service \
+			$(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants/arches-liveuser.service; \
+		echo "  Configuring SDDM autologin"; \
+		mkdir -p $(ISO_PROFILE)/airootfs/etc/sddm.conf.d; \
+		printf '[Autologin]\nUser=liveuser\nSession=plasma\n' \
+			> $(ISO_PROFILE)/airootfs/etc/sddm.conf.d/autologin.conf; \
+		echo "  Enabling SDDM service (with liveuser dependency)"; \
+		ln -sf /usr/lib/systemd/system/sddm.service \
+			$(ISO_PROFILE)/airootfs/etc/systemd/system/display-manager.service; \
+		mkdir -p $(ISO_PROFILE)/airootfs/etc/systemd/system/sddm.service.d; \
+		printf '[Unit]\nRequires=arches-liveuser.service\nAfter=arches-liveuser.service\n' \
+			> $(ISO_PROFILE)/airootfs/etc/systemd/system/sddm.service.d/liveuser.conf; \
+		echo "  Creating installer desktop entry"; \
+		mkdir -p $(ISO_PROFILE)/airootfs/usr/share/applications; \
+		printf '[Desktop Entry]\n\
+Name=Arches Installer\n\
+Comment=Install Arches Linux\n\
+Exec=konsole --noclose -e sudo /usr/local/bin/arches-install\n\
+Icon=system-software-install\n\
+Terminal=false\n\
+Type=Application\n\
+Categories=System;\n' > $(ISO_PROFILE)/airootfs/usr/share/applications/arches-install.desktop; \
+		mkdir -p $(ISO_PROFILE)/airootfs/etc/xdg/autostart; \
+		cp $(ISO_PROFILE)/airootfs/usr/share/applications/arches-install.desktop \
+			$(ISO_PROFILE)/airootfs/etc/xdg/autostart/arches-install.desktop; \
+	else \
+		echo "══ Skipping graphical live boot (template $$TMPL is not graphical) ══"; \
+	fi
 
 _cache-packages:
 	@echo "══ Caching template packages ══"

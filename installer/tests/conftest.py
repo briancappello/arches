@@ -59,12 +59,27 @@ def x86_64_platform() -> PlatformConfig:
             optional=True,
         ),
         base_packages=[
+            "base",
+            "linux-firmware",
+            "mkinitcpio",
+            "sudo",
+            "ansible",
+            "terminus-font",
             "cachyos-keyring",
             "cachyos-mirrorlist",
             "cachyos-v3-mirrorlist",
             "cachyos-settings",
+            "limine",
+            "efibootmgr",
+            "chwd",
         ],
         cachyos_optimization_tier="x86-64-v3",
+        kernel_flags=[
+            "console=ttyS0,115200",
+            "console=tty0",
+            "loglevel=5",
+            "video=1920x1080",
+        ],
     )
 
 
@@ -96,10 +111,23 @@ def aarch64_platform() -> PlatformConfig:
         ),
         hardware_detection=HardwareDetectionConfig(enabled=False),
         base_packages=[
+            "base",
+            "linux-firmware",
+            "mkinitcpio",
+            "sudo",
+            "ansible",
+            "terminus-font",
+            "archlinuxarm-keyring",
             "grub",
             "efibootmgr",
             "grub-btrfs",
             "btrfs-progs",
+        ],
+        kernel_flags=[
+            "console=ttyAMA0,115200",
+            "console=tty0",
+            "loglevel=5",
+            "video=1920x1080",
         ],
     )
 
@@ -132,6 +160,12 @@ def aarch64_apple_platform() -> PlatformConfig:
         ),
         hardware_detection=HardwareDetectionConfig(enabled=False),
         base_packages=[
+            "base",
+            "linux-firmware",
+            "mkinitcpio",
+            "sudo",
+            "ansible",
+            "terminus-font",
             "asahi-alarm-keyring",
             "m1n1",
             "uboot-asahi",
@@ -140,6 +174,12 @@ def aarch64_apple_platform() -> PlatformConfig:
             "btrfs-progs",
             "asahi-fwextract",
             "asahi-scripts",
+        ],
+        kernel_flags=[
+            "console=ttyAMA0,115200",
+            "console=tty0",
+            "loglevel=5",
+            "video=1920x1080",
         ],
     )
 
@@ -211,6 +251,7 @@ variants = [
     { package = "linux-cachyos", headers = "linux-cachyos-headers" },
     { package = "linux-cachyos-lts", headers = "linux-cachyos-lts-headers" },
 ]
+flags = ["console=ttyS0,115200", "console=tty0", "loglevel=5", "video=1920x1080"]
 
 [bootloader]
 type = "limine"
@@ -234,6 +275,12 @@ optional = true
 
 [base_packages]
 install = [
+    "base",
+    "linux-firmware",
+    "mkinitcpio",
+    "sudo",
+    "ansible",
+    "terminus-font",
     "cachyos-keyring",
     "cachyos-mirrorlist",
     "cachyos-v3-mirrorlist",
@@ -258,6 +305,7 @@ def templates_dir(tmp_path: Path) -> Path:
 [meta]
 name = "Dev Workstation"
 description = "KDE Plasma desktop with full development toolchain"
+graphical = true
 
 [system]
 timezone = "America/New_York"

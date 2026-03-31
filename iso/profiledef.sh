@@ -54,4 +54,9 @@ file_permissions=(
     ["/root"]="0:0:750"
     ["/root/.bash_profile"]="0:0:644"
     ["/usr/local/bin/arches-install"]="0:0:755"
+    ["/usr/local/bin/arches-liveuser-setup"]="0:0:755"
+    ["/etc/sudoers.d/wheel"]="0:0:440"
 )
+
+# liveuser is created at boot by arches-liveuser.service (for graphical
+# templates). No file_permissions entry needed — useradd -m handles ownership.

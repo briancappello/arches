@@ -1,7 +1,9 @@
-# Platform-agnostic ISO packages
+# ISO live environment packages
 #
-# These are combined with platforms/<platform>/packages at build time
-# to produce the final ISO package list.
+# Combined with platforms/<platform>/packages and (conditionally)
+# packages.graphical_iso at build time to produce the final ISO package list.
+# These are for the LIVE ENVIRONMENT only — the installed system gets its
+# packages from [base_packages] in platform.toml + template TOMLs.
 
 # ─── Base system ───────────────────────────────────────
 base

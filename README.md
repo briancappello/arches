@@ -6,11 +6,11 @@ Arches uses a **platform + template matrix** design. A *platform* defines the ha
 
 Currently supported platforms:
 
-| Platform          | Base                     | Kernel(s)                            | Bootloader               | Filesystem         | Status                    |
-|-------------------|--------------------------|------------------------------------- |--------------------------|--------------------|---------------------------|
-| `x86-64`          | CachyOS (configurable tier) | `linux-cachyos` + `linux-cachyos-lts` | Limine                   | btrfs + subvolumes | Fully implemented         |
-| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64`                      | GRUB                     | btrfs + subvolumes | Fully implemented         |
-| `aarch64-apple`   | Asahi Linux              | `linux-asahi`                        | m1n1→U-Boot→extlinux     | btrfs + subvolumes | USB boot via U-Boot       |
+| Platform          | Base                     | Kernel(s)                            | Bootloader               | Default Template   | Status                    |
+|-------------------|--------------------------|------------------------------------- |--------------------------|--------------------| --------------------------|
+| `x86-64`          | CachyOS (configurable tier) | `linux-cachyos` + `linux-cachyos-lts` | Limine                   | dev-workstation    | Fully implemented         |
+| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64`                      | GRUB                     | vm-server          | Fully implemented         |
+| `aarch64-apple`   | Asahi Linux              | `linux-asahi`                        | m1n1→U-Boot→extlinux     | dev-workstation    | USB boot via U-Boot       |
 
 Each platform has its own README with platform-specific configuration details (see `platforms/<name>/README.md`).
 
@@ -60,27 +60,35 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ### Templates
 
-See `installer/arches_installer/templates`. Two are included:
+All templates live in `templates/`. System templates define the installable workloads:
 
-Dev Workstation
-VM Server
+- `dev-workstation.toml` — KDE Plasma desktop with full development toolchain
+- `vm-server.toml` — Headless server (nginx, postgres, redis, SSH)
+
+Config templates are used for install automation:
+
+- `auto-install.toml` — Unattended install config (baked into the ISO at `/root/auto-install.toml`)
+- `host-install.toml` — Host-install config (install into btrfs subvolumes on an existing system)
 
 #### Auto Install
 
-`iso/airootfs/root/auto-install.toml`
-
-The installer checks for `/root/auto-install.toml` in the running ISO. If this file exists, it will auto install the declared template. 
+The installer checks for `/root/auto-install.toml` in the running ISO. If this file exists, it will auto install the declared template.
 
 ### Build
 
-All builds run inside Podman containers regardless of host distro. The platform is auto-detected from the host hardware but can be overridden with `PLATFORM=x86-64|aarch64-generic|aarch64-apple`.
+All builds run inside Podman containers regardless of host distro. The platform is auto-detected from the host hardware but can be overridden with `PLATFORM=`. The template defaults to the platform's `default_template` but can be overridden with `TEMPLATE=`.
+
+The ISO is built as a **superset** of the selected template's installed system. For graphical templates (like `dev-workstation`), the live ISO boots into the full KDE Plasma desktop with a `liveuser` autologin. For non-graphical templates (like `vm-server`), the ISO boots to a text console with the TUI installer.
 
 ```bash
-# Build install media and write to USB drive (auto-detects platform)
+# Build install media and write to USB drive (auto-detects platform + default template)
 sudo make usb
 
 # Or just build the ISO
 sudo make iso
+
+# Explicit template override
+sudo TEMPLATE=vm-server make iso
 
 # Install into a QEMU VM (builds ISO if needed, creates disk, boots QEMU)
 make qemu-install
@@ -99,10 +107,10 @@ Auto-install is disabled on Apple Silicon to prevent accidental disk wipes; use 
 **Host install (into btrfs subvolumes on a running Asahi system):**
 
 ```bash
-sudo make host-install CONFIG=examples/host-install.toml
+sudo make host-install CONFIG=templates/host-install.toml
 ```
 
-This installs Arches into btrfs subvolumes alongside the existing Asahi Linux (e.g. Fedora) without touching the partition table. Runs inside a Podman container on the host. See `examples/host-install.toml` for configuration.
+This installs Arches into btrfs subvolumes alongside the existing Asahi Linux (e.g. Fedora) without touching the partition table. Runs inside a Podman container on the host. See `templates/host-install.toml` for configuration.
 
 The built ISO is written to `out/arches-<date>.iso`. The platform config is baked into the ISO at `/opt/arches/platform/platform.toml` so the installer knows which kernel, repos, and bootloader settings to use.
 
@@ -171,7 +179,7 @@ The config file specifies everything the TUI would ask for:
 ```toml
 [install]
 device = "/dev/vda"
-template = "installer/arches_installer/templates/dev-workstation.toml"
+template = "dev-workstation.toml"
 hostname = "archdev"
 username = "brian"
 password = "changeme"
@@ -180,10 +188,10 @@ password = "changeme"
 The platform (kernel, repos, hardware detection) is read from the ISO automatically. During development, you can override it with `--platform`:
 
 ```bash
-arches-install --auto examples/auto-install.toml --platform platforms/x86-64/platform.toml --dry-run
+arches-install --auto templates/auto-install.toml --platform platforms/x86-64/platform.toml --dry-run
 ```
 
-See `examples/auto-install.toml` for a full example.
+See `templates/auto-install.toml` for a full example.
 
 ## How Packages Get Installed and Configured
 
@@ -200,7 +208,7 @@ The platform provides the hardware foundation (kernel, repo keys, GPU detection 
 
 ### Example: Adding PostgreSQL and Redis to the VM Server
 
-**Step 1: Add the packages to the template** (`installer/arches_installer/templates/vm-server.toml`):
+**Step 1: Add the packages to the template** (`templates/vm-server.toml`):
 
 ```toml
 [system]
@@ -269,7 +277,7 @@ For packages that work out of the box with no configuration (e.g., `htop`, `git`
 
 ## Install Templates
 
-Templates are declarative TOML files in `installer/arches_installer/templates/`. Each defines a **userspace workload** — packages, services, and Ansible roles. Templates are **platform-independent**: the kernel, repo keyrings, bootloader, disk layout, and hardware detection all come from the platform, not the template.
+Templates are declarative TOML files in `templates/`. Each defines a **userspace workload** — packages, services, and Ansible roles. Templates are **platform-independent**: the kernel, repo keyrings, bootloader, disk layout, and hardware detection all come from the platform, not the template.
 
 | Template            | Desktop         | Use Case                                  |
 |---------------------|-----------------|-------------------------------------------|
@@ -314,8 +322,12 @@ Shell configuration uses [Oh My Zsh](https://ohmyz.sh/). The regular user gets t
 ```
 arches/
 ├── Makefile                              # Build targets (see `make help`)
-├── examples/
-│   └── auto-install.toml                 # Example config for --auto mode
+│
+├── templates/                            # All template files (single source of truth)
+│   ├── dev-workstation.toml              # KDE Plasma desktop + dev tools (graphical)
+│   ├── vm-server.toml                    # Headless server (nginx, postgres, redis)
+│   ├── auto-install.toml                 # Unattended install config (baked into ISO)
+│   └── host-install.toml                 # Host-install config (btrfs subvolumes)
 │
 ├── platforms/                            # Platform definitions (hardware layer)
 │   ├── x86-64/
@@ -334,7 +346,8 @@ arches/
 │
 ├── iso/                                  # archiso profile
 │   ├── profiledef.sh                     # ISO identity, boot modes (parameterized)
-│   ├── packages.common                   # Platform-agnostic ISO packages
+│   ├── packages.iso                      # ISO live environment packages
+│   ├── packages.graphical_iso            # Graphical desktop packages (conditional)
 │   └── airootfs/
 │       ├── etc/
 │       │   └── mkinitcpio.conf           # Hardware-agnostic (kms, no autodetect)
@@ -362,9 +375,6 @@ arches/
 │   │   │   ├── user_setup.py             # Hostname, username, password
 │   │   │   ├── confirm.py                # Summary review (manual mounts or auto layout)
 │   │   │   └── progress.py               # Threaded install (manual or auto partition)
-│   │   └── templates/
-│   │       ├── dev-workstation.toml      # KDE + btrfs + snapshots + dev tools
-│   │       └── vm-server.toml            # Headless + ext4 + nginx/postgres/redis
 │   └── tests/
 │       ├── conftest.py                   # Shared fixtures (platform, templates, mocks)
 │       ├── core/

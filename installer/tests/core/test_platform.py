@@ -341,6 +341,25 @@ class TestLoadAarch64Platforms:
         assert dl.subvolumes == ["@", "@home", "@var"]
 
 
+class TestDefaultTemplate:
+    """Test default_template field."""
+
+    def test_x86_64_has_default_template(self) -> None:
+        data = {
+            "platform": {
+                "arch": "x86_64",
+                "default_template": "dev-workstation",
+            },
+        }
+        platform = PlatformConfig.from_dict(data)
+        assert platform.default_template == "dev-workstation"
+
+    def test_default_template_empty_when_omitted(self) -> None:
+        data = {"platform": {"arch": "x86_64"}}
+        platform = PlatformConfig.from_dict(data)
+        assert platform.default_template == ""
+
+
 class TestLoadX86Platform:
     """Test loading the real x86-64 platform TOML file from the repo."""
 
@@ -352,6 +371,7 @@ class TestLoadX86Platform:
         assert platform.name == "x86-64"
         assert platform.arch == "x86_64"
         assert platform.cachyos_optimization_tier == "x86-64-v3"
+        assert platform.default_template == "dev-workstation"
         assert len(platform.kernel.variants) == 2
         assert platform.kernel.package == "linux-cachyos"
         assert platform.kernel.variants[0].package == "linux-cachyos"

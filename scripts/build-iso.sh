@@ -6,8 +6,9 @@
 # Works from any Linux distro — only requires Podman and sudo.
 #
 # Usage:
-#   sudo ./scripts/build-iso.sh                       # auto-detect platform
+#   sudo ./scripts/build-iso.sh                       # auto-detect platform + default template
 #   sudo PLATFORM=x86-64 ./scripts/build-iso.sh       # explicit platform
+#   sudo ./scripts/build-iso.sh --template dev-workstation  # explicit template
 #   sudo ./scripts/build-iso.sh --rebuild              # force container rebuild
 #   sudo FORCE=1 ./scripts/build-iso.sh               # force AUR repo rebuild
 #
@@ -22,6 +23,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --rebuild) REBUILD=true ;;
         --platform) PLATFORM="$2"; shift ;;
+        --template) TEMPLATE="$2"; shift ;;
     esac
     shift
 done
@@ -40,7 +42,10 @@ esac
 # tier-specific repos are in the platform's pacman.conf, not the container.
 IMAGE_NAME="arches-builder-${TARGETARCH}"
 
-echo "Platform: $PLATFORM (arch: $ARCHES_ARCH, container: $CONTAINER_ARCH)"
+# Template: use explicit value, TEMPLATE env var, or let Make resolve from platform.toml
+TEMPLATE="${TEMPLATE:-}"
+
+echo "Platform: $PLATFORM (arch: $ARCHES_ARCH, container: $CONTAINER_ARCH, template: ${TEMPLATE:-<default>})"
 
 # ── Logging ───────────────────────────────────────────
 LOG_FILE="$PROJECT_DIR/container-build.log"
@@ -108,10 +113,12 @@ for sibling in kde-task-manager plasma-ai-usage-monitor; do
 done
 
 # ── Run the build ─────────────────────────────────────
-echo "══ Starting container build (platform: $PLATFORM) ══"
+echo "══ Starting container build (platform: $PLATFORM, template: ${TEMPLATE:-<default>}) ══"
 
 FORCE_FLAG=""
 [[ "${FORCE:-}" == "1" ]] && FORCE_FLAG="FORCE=1"
+TEMPLATE_FLAG=""
+[[ -n "$TEMPLATE" ]] && TEMPLATE_FLAG="TEMPLATE=$TEMPLATE"
 
 # Bash as PID 1 inside a container ignores SIGINT/SIGTERM by default.
 # We register a trap that forwards the signal to all child processes,
@@ -129,6 +136,11 @@ podman run --rm --privileged \
         groupmod -g '"$BUILD_GID"' builder &&
         chown -R builder:builder /tmp &&
         chown builder:builder /home/builder &&
-        make _iso PLATFORM='"$PLATFORM"' ARCHES_ARCH='"$ARCHES_ARCH"' '"$FORCE_FLAG"' &
+        make _iso PLATFORM='"$PLATFORM"' ARCHES_ARCH='"$ARCHES_ARCH"' '"$FORCE_FLAG"' '"$TEMPLATE_FLAG"' &
         wait $!
     '
+
+# Fix ownership of build output so non-root user can access it
+if [[ -n "${SUDO_USER:-}" && -d "$PROJECT_DIR/out" ]]; then
+    chown -R "$SUDO_USER:$SUDO_USER" "$PROJECT_DIR/out"
+fi

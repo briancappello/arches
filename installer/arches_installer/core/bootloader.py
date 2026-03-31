@@ -62,15 +62,10 @@ def write_limine_defaults(
     if layout.filesystem == "btrfs" and layout.subvolumes:
         cmdline_parts.append("rootflags=subvol=/@")
 
-    # Framebuffer console — match the ISO live boot behavior
-    cmdline_parts.append("video=1920x1080")
+    # Platform-specific kernel flags (console, loglevel, video, etc.)
+    cmdline_parts.extend(platform.kernel_flags)
 
-    # Add common kernel parameters
-    cmdline_parts.extend(
-        [
-            "systemd.show_status=auto",
-        ]
-    )
+    cmdline_parts.append("systemd.show_status=auto")
 
     cmdline = " ".join(cmdline_parts)
 
@@ -170,14 +165,14 @@ def _install_limine(
     # Write /etc/default/limine config
     write_limine_defaults(platform, root_partition, log)
 
-    # Install limine-mkinitcpio-hook BEFORE deploying the bootloader.
-    # This package provides limine-install, limine-mkinitcpio, and
-    # limine-update. It must be installed AFTER /etc/default/limine
-    # exists, but we need its tools for the next steps.
-    # Use -Sy to sync the arches-local repo first.
-    _log("Installing limine-mkinitcpio-hook...", log)
+    # limine-mkinitcpio-hook is installed by pacstrap (via base_packages).
+    # It automatically regenerates limine.conf from boot entries whenever
+    # a kernel or initramfs is installed/updated.  It uses
+    # /etc/default/limine for the kernel cmdline and BOOT_ORDER.
+    # Verify it's present before proceeding.
+    _log("Verifying limine-mkinitcpio-hook is installed...", log)
     chroot_run(
-        ["pacman", "-Sy", "--noconfirm", "--needed", "limine-mkinitcpio-hook"],
+        ["pacman", "-Q", "limine-mkinitcpio-hook"],
         log=log,
     )
 
@@ -293,15 +288,8 @@ def write_grub_defaults(
     log: LogCallback | None = None,
 ) -> None:
     """Write /etc/default/grub with kernel cmdline parameters."""
-    cmdline_parts = []
-
-    # aarch64 kernels may default to serial console only; ensure
-    # framebuffer console is enabled so output is visible on screen.
-    if platform.arch == "aarch64":
-        cmdline_parts.append("console=tty0")
-
-    # Framebuffer console — match the ISO live boot behavior
-    cmdline_parts.append("video=1920x1080")
+    # Platform-specific kernel flags (console, loglevel, video, etc.)
+    cmdline_parts = list(platform.kernel_flags)
     cmdline_parts.append("systemd.show_status=auto")
 
     cmdline = " ".join(cmdline_parts)

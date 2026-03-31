@@ -1,1 +1,1 @@
-/etc/systemd/system/pacman-init.service
+../pacman-init.service

@@ -1,0 +1,32 @@
+#!/bin/bash
+# Create the liveuser account for graphical live boot.
+# Installed into the ISO airootfs by _stage-graphical and run at boot
+# by arches-liveuser.service, before SDDM starts.
+#
+# Logs to journal (visible via: journalctl -u arches-liveuser)
+
+USERNAME="liveuser"
+
+echo "arches-liveuser-setup: starting"
+
+# Skip if user already exists
+if id "$USERNAME" &>/dev/null; then
+    echo "arches-liveuser-setup: user $USERNAME already exists, skipping"
+    exit 0
+fi
+
+# Create user with home directory, zsh shell, in wheel group
+echo "arches-liveuser-setup: creating user $USERNAME"
+if ! useradd -m -G wheel -s /bin/zsh "$USERNAME" 2>&1; then
+    echo "arches-liveuser-setup: useradd failed" >&2
+    exit 1
+fi
+
+# Set empty password (passwordless login via SDDM autologin)
+echo "arches-liveuser-setup: removing password for $USERNAME"
+passwd -d "$USERNAME" >/dev/null 2>&1 || true
+
+# Ensure home ownership
+chown -R "$USERNAME":"$USERNAME" "/home/$USERNAME" 2>/dev/null || true
+
+echo "arches-liveuser-setup: done"

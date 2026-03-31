@@ -4,8 +4,8 @@
 # creating a dual-boot setup with the current OS (e.g. Fedora).
 #
 # Usage:
-#   sudo make host-install CONFIG=examples/host-install.toml
-#   sudo make host-install-dry CONFIG=examples/host-install.toml
+#   sudo make host-install CONFIG=templates/host-install.toml
+#   sudo make host-install-dry CONFIG=templates/host-install.toml
 #
 # Before running:
 # 1. Identify your btrfs root partition:  lsblk -f

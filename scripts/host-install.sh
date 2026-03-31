@@ -22,8 +22,8 @@
 #   sudo ./scripts/host-install.sh --rebuild config.toml
 #
 # Or via Makefile:
-#   sudo make host-install CONFIG=examples/host-install.toml
-#   sudo make host-install-dry CONFIG=examples/host-install.toml
+#   sudo make host-install CONFIG=templates/host-install.toml
+#   sudo make host-install-dry CONFIG=templates/host-install.toml
 #
 set -euo pipefail
 
@@ -61,7 +61,7 @@ if [[ -z "$CONFIG_FILE" ]]; then
     echo ""
     echo "The config file specifies the target partition, ESP, template,"
     echo "install mode (alongside/replace), and user settings."
-    echo "See examples/host-install.toml for a complete example."
+    echo "See templates/host-install.toml for a complete example."
     exit 1
 fi
 

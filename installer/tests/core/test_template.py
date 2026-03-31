@@ -22,6 +22,7 @@ class TestLoadTemplate:
         assert "NetworkManager" in tmpl.services
         assert "base" in tmpl.ansible.firstboot_roles
         assert "zsh" in tmpl.ansible.firstboot_roles
+        assert tmpl.graphical is True
 
     def test_load_vm_server_template(self, templates_dir: Path) -> None:
         tmpl = load_template(templates_dir / "vm-server.toml")
@@ -30,6 +31,7 @@ class TestLoadTemplate:
         assert "sshd" in tmpl.services
         assert "base" in tmpl.ansible.firstboot_roles
         assert "zsh" in tmpl.ansible.firstboot_roles
+        assert tmpl.graphical is False
 
     def test_load_nonexistent_file(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
@@ -119,3 +121,13 @@ class TestInstallTemplateFromDict:
         tmpl = InstallTemplate.from_dict(data)
         assert not hasattr(tmpl.system, "kernel")
         assert tmpl.install.pacstrap == ["git"]
+
+    def test_graphical_true(self) -> None:
+        data = {"meta": {"name": "Desktop", "graphical": True}}
+        tmpl = InstallTemplate.from_dict(data)
+        assert tmpl.graphical is True
+
+    def test_graphical_default_false(self) -> None:
+        data = {"meta": {"name": "Server"}}
+        tmpl = InstallTemplate.from_dict(data)
+        assert tmpl.graphical is False

@@ -7,10 +7,17 @@
 name = "aarch64-generic"
 description = "Generic ARM64 with Arch Linux ARM"
 arch = "aarch64"
+default_template = "dev-workstation"
 
 [kernel]
 variants = [
     { package = "linux-aarch64", headers = "linux-aarch64-headers" },
+]
+flags = [
+    "console=ttyAMA0,115200",
+    "console=tty0",
+    "loglevel=5",
+    "video=1920x1080",
 ]
 
 [bootloader]
@@ -35,11 +42,22 @@ enabled = false
 
 [base_packages]
 # Always installed by pacstrap regardless of template.
+# Kernel packages are NOT listed here — they come from [kernel].variants.
 install = [
+    # Core system
+    "base",
+    "linux-firmware",
+    "mkinitcpio",
+    "sudo",
+    "ansible",
+    "terminus-font",
+    # ALARM keyring
     "archlinuxarm-keyring",
+    # Bootloader
     "grub",
     "efibootmgr",
     "grub-btrfs",
+    # Filesystem
     "btrfs-progs",
 ]
 

@@ -12,11 +12,13 @@
 # starts.
 #
 # Usage:
-#   ./scripts/qemu-install.sh                  # auto-detect, build if needed
-#   PLATFORM=x86-64 ./scripts/qemu-install.sh  # explicit platform
-#   ./scripts/qemu-install.sh --rebuild         # force ISO rebuild
+#   ./scripts/qemu-install.sh                    # interactive install
+#   ./scripts/qemu-install.sh --rebuild           # force ISO rebuild
+#   ./scripts/qemu-install.sh --no-network        # offline (for testing)
+#   ./scripts/qemu-install.sh --log <file>        # installer log via virtio-serial
+#   ./scripts/qemu-install.sh --fresh-disk        # fresh disk (don't reuse)
 #
-# After install completes, use `make test-boot` to boot the installed disk.
+# After install completes, use `make qemu-boot` to boot the installed disk.
 #
 set -euo pipefail
 
@@ -25,11 +27,14 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 OUT_DIR="$PROJECT_DIR/out"
 
 DISK="/tmp/arches-test-disk.qcow2"
-DISK_SIZE="20G"
+DISK_SIZE="60G"
 EFI_VARS="/tmp/arches-efi-vars.raw"
 MEM="4G"
 SMP="4"
 SSH_PORT="2222"
+NO_NETWORK=false
+LOG_FILE=""
+FRESH_DISK=false
 
 # ── Parse arguments ───────────────────────────────────
 BUILD_ISO_ARGS=()
@@ -37,6 +42,9 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --rebuild) BUILD_ISO_ARGS+=(--rebuild) ;;
         --platform) BUILD_ISO_ARGS+=(--platform "$2"); PLATFORM="$2"; shift ;;
+        --no-network) NO_NETWORK=true ;;
+        --log) LOG_FILE="$2"; shift ;;
+        --fresh-disk) FRESH_DISK=true ;;
     esac
     shift
 done
@@ -79,6 +87,9 @@ fi
 echo "ISO: $ISO"
 
 # ── Step 2: Create disk if needed ────────────────────
+if [[ "$FRESH_DISK" == true ]]; then
+    rm -f "$DISK" "$EFI_VARS"
+fi
 if [[ ! -f "$DISK" ]]; then
     echo "══ Creating test disk ($DISK_SIZE) ══"
     qemu-img create -f qcow2 "$DISK" "$DISK_SIZE"
@@ -86,35 +97,67 @@ fi
 
 # ── Fix ownership ────────────────────────────────────
 # When run via sudo, the disk/EFI vars end up owned by root. Chown them
-# back to the invoking user so `make test-boot` works without sudo.
+# back to the invoking user so `make qemu-boot` works without sudo.
 if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then
     chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$DISK"
     [[ -f "$EFI_VARS" ]] && chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$EFI_VARS"
 fi
 
-# ── Step 3: Launch QEMU ──────────────────────────────
+# ── Step 3: Build QEMU arguments ─────────────────────
+
+# Network
+NET_ARGS=()
+if [[ "$NO_NETWORK" == true ]]; then
+    NET_ARGS=(-nic none)
+else
+    NET_ARGS=(-net nic -net user,hostfwd=tcp::${SSH_PORT}-:22)
+fi
+
+# Virtio-serial log (installer output piped to host file)
+LOG_ARGS=()
+if [[ -n "$LOG_FILE" ]]; then
+    : > "$LOG_FILE"
+    LOG_ARGS=(
+        -device virtio-serial-pci
+        -chardev "file,id=logfile,path=$LOG_FILE"
+        -device "virtserialport,chardev=logfile,name=arches-log"
+    )
+fi
+
 echo ""
 echo "══ Launching QEMU ══"
-echo "  SSH: ssh -p $SSH_PORT <user>@localhost"
+if [[ "$NO_NETWORK" != true ]]; then
+    echo "  SSH: ssh -p $SSH_PORT <user>@localhost"
+fi
 echo "  Quit: Ctrl-A X (serial) or close window"
+if [[ -n "$LOG_FILE" ]]; then
+    echo "  Log: $LOG_FILE"
+fi
 echo ""
 
 case "$PLATFORM" in
     x86-64)
+        # Persistent EFI vars so boot entries survive across QEMU sessions
+        if [[ ! -f "$EFI_VARS" ]]; then
+            cp /usr/share/edk2/x64/OVMF_VARS.4m.fd "$EFI_VARS"
+        fi
+
         exec qemu-system-x86_64 \
             -enable-kvm \
             -cpu host \
             -m "$MEM" \
             -smp "$SMP" \
-            -bios /usr/share/edk2/x64/OVMF.4m.fd \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
+            -drive if=pflash,format=raw,file="$EFI_VARS" \
             -vga virtio \
+            -serial mon:stdio \
             -drive file="$ISO",format=raw,media=cdrom \
             -drive file="$DISK",format=qcow2,if=virtio \
-            -net nic -net user,hostfwd=tcp::${SSH_PORT}-:22
+            "${NET_ARGS[@]}" \
+            "${LOG_ARGS[@]}" \
         ;;
 
     aarch64-generic)
-        # Create EFI vars if needed (pflash requires a writable copy)
         if [[ ! -f "$EFI_VARS" ]]; then
             cp /usr/share/edk2/aarch64/vars-template-pflash.raw "$EFI_VARS"
         fi
@@ -132,6 +175,7 @@ case "$PLATFORM" in
             -device usb-storage,drive=cdrom0,bootindex=2 \
             -drive id=cdrom0,file="$ISO",format=raw,if=none,media=cdrom,readonly=on \
             -drive file="$DISK",format=qcow2,if=virtio \
-            -net nic -net user,hostfwd=tcp::${SSH_PORT}-:22
+            "${NET_ARGS[@]}" \
+            "${LOG_ARGS[@]}" \
         ;;
 esac

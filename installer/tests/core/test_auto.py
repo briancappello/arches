@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from arches_installer.core.auto import AutoInstallConfig, log_stdout
+from arches_installer.core.auto import AutoInstallConfig
 
 
 class TestAutoInstallConfig:
@@ -144,18 +144,3 @@ shutdown = true
         assert config.reboot is True
         assert config.shutdown is False
         assert config.template.name == "Dev Workstation"
-
-
-class TestLogStdout:
-    """Test the plain-text log function."""
-
-    def test_strips_rich_markup(self, capsys) -> None:
-        log_stdout("[bold cyan]-- Phase 1 --[/bold cyan]")
-        out = capsys.readouterr().out
-        assert "bold" not in out
-        assert "Phase 1" in out
-
-    def test_plain_text_passthrough(self, capsys) -> None:
-        log_stdout("Hello world")
-        out = capsys.readouterr().out
-        assert out.strip() == "Hello world"

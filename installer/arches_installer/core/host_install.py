@@ -137,10 +137,8 @@ def generate_grub_entry(
 
     # Build kernel cmdline
     cmdline_parts = ["rw"]
-    if platform.arch == "aarch64":
-        cmdline_parts.append("console=tty0")
-    # Framebuffer console — match the ISO live boot behavior
-    cmdline_parts.append("video=1920x1080")
+    # Platform-specific kernel flags (console, loglevel, video, etc.)
+    cmdline_parts.extend(platform.kernel_flags)
     cmdline_parts.append("systemd.show_status=auto")
     cmdline = " ".join(cmdline_parts)
 

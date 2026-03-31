@@ -7,8 +7,8 @@
 # the host GRUB entry. The existing OS is not affected.
 #
 # Usage:
-#   sudo ./scripts/host-clean.sh examples/host-install.toml
-#   sudo make host-clean CONFIG=examples/host-install.toml
+#   sudo ./scripts/host-clean.sh templates/host-install.toml
+#   sudo make host-clean CONFIG=templates/host-install.toml
 #
 set -euo pipefail
 

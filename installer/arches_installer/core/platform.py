@@ -113,6 +113,14 @@ class PlatformConfig:
     #   "znver4"     — AMD Zen 4/5 specific tuning
     # Empty string for non-x86 platforms (CachyOS is x86-64 only).
     cachyos_optimization_tier: str = ""
+    # Platform-specific kernel command-line parameters (console, loglevel,
+    # video mode, etc.).  Applied to both ISO boot configs and the
+    # installed system's bootloader.
+    kernel_flags: list[str] = field(default_factory=list)
+    # Default template for ISO builds.  The ISO is built as a superset
+    # of this template's installed system.  Can be overridden at build
+    # time with TEMPLATE=<name>.
+    default_template: str = ""
     # When False, auto-install and auto-partition are disabled. This
     # prevents destructive whole-disk wipes on platforms where the
     # partition table is managed externally (e.g. Apple Silicon, where
@@ -189,6 +197,8 @@ class PlatformConfig:
             ),
             base_packages=base.get("install", []),
             cachyos_optimization_tier=cachyos_tier,
+            kernel_flags=kern.get("flags", []),
+            default_template=plat.get("default_template", ""),
             allow_auto_install=plat.get("allow_auto_install", True),
         )
 

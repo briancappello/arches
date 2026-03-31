@@ -7,15 +7,11 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Center, Horizontal, Vertical, VerticalScroll
+from textual.containers import HorizontalGroup, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Label, RichLog
 
-from arches_installer.core.bootloader import install_bootloader
-from arches_installer.core.disk import prepare_disk
-from arches_installer.core.firstboot import inject_firstboot_service
-from arches_installer.core.install import install_system
-from arches_installer.core.snapper import setup_snapshots
+from arches_installer.core.pipeline import InstallParams, run_install_pipeline
 
 INSTALL_LOG = Path("/var/log/arches-install.log")
 
@@ -23,31 +19,61 @@ INSTALL_LOG = Path("/var/log/arches-install.log")
 class InstallProgressScreen(Screen):
     """Screen that runs the install pipeline and streams log output."""
 
+    CSS = """
+    InstallProgressScreen #outer {
+        width: 100%;
+        height: 100%;
+    }
+    InstallProgressScreen #title {
+        height: auto;
+        width: 100%;
+        text-align: right;
+        padding-right: 2;
+    }
+    InstallProgressScreen #log-container {
+        height: 1fr;
+        border: solid $accent;
+        margin: 0 1;
+    }
+    InstallProgressScreen #install-log {
+        height: auto;
+        padding: 0 1;
+    }
+    InstallProgressScreen .button-row {
+        height: auto;
+        padding: 1 1 0 1;
+    }
+    InstallProgressScreen .button-row Button {
+        margin: 0 1 0 0;
+    }
+    InstallProgressScreen .btn-primary {
+        margin-top: 0;
+    }
+    """
+
     def compose(self) -> ComposeResult:
-        with Center():
-            with Vertical(classes="panel"):
-                yield Label("Installing...", classes="title", id="title")
-                with VerticalScroll():
-                    yield RichLog(
-                        highlight=True,
-                        markup=True,
-                        wrap=True,
-                        id="install-log",
-                    )
-                with Horizontal(classes="button-row"):
-                    yield Button(
-                        "Reboot",
-                        variant="primary",
-                        id="btn-reboot",
-                        classes="btn-primary",
-                        disabled=True,
-                    )
-                    yield Button(
-                        "Shutdown",
-                        variant="default",
-                        id="btn-shutdown",
-                        disabled=True,
-                    )
+        with Vertical(id="outer", classes="panel"):
+            yield Label("Installing...", id="title")
+            with VerticalScroll(id="log-container"):
+                yield RichLog(
+                    highlight=True,
+                    markup=True,
+                    wrap=True,
+                    id="install-log",
+                )
+            with HorizontalGroup(classes="button-row"):
+                yield Button(
+                    "Reboot",
+                    variant="primary",
+                    id="btn-reboot",
+                    disabled=True,
+                )
+                yield Button(
+                    "Shutdown",
+                    variant="default",
+                    id="btn-shutdown",
+                    disabled=True,
+                )
 
     def log_msg(self, msg: str) -> None:
         """Thread-safe log message to the RichLog widget and log file."""
@@ -87,76 +113,53 @@ class InstallProgressScreen(Screen):
             return
 
         try:
-            # Phase 1: Disk preparation
-            self.log_msg("[bold cyan]── Phase 1: Disk Setup ──[/bold cyan]")
-            if partition_mode == "manual":
-                parts = self.app.partition_map
-                if parts is None:
-                    self.log_msg(
-                        "[red]ERROR: No partition map from manual setup![/red]"
-                    )
-                    return
-                self.log_msg("Using manually prepared mounts:")
-                self.log_msg(f"  Root: {parts.root}")
-                self.log_msg(f"  ESP:  {parts.esp}")
-                if parts.boot:
-                    self.log_msg(f"  Boot: {parts.boot}")
-                if parts.home:
-                    self.log_msg(f"  Home: {parts.home}")
-                self.log_msg("[green]Manual mounts verified.[/green]")
-            else:
-                parts = prepare_disk(device, platform)
-                self.log_msg("[green]Disk prepared successfully.[/green]")
+            params = InstallParams(
+                platform=platform,
+                template=template,
+                device=device,
+                hostname=self.app.hostname,
+                username=self.app.username,
+                password=self.app.password,
+                partition_map=self.app.partition_map
+                if partition_mode == "manual"
+                else None,
+            )
+
+            parts = run_install_pipeline(params, log=self.log_msg)
             self.app.partition_map = parts
-
-            # Phase 2: System installation
-            self.log_msg("[bold cyan]── Phase 2: System Install ──[/bold cyan]")
-            install_system(
-                platform,
-                template,
-                self.app.hostname,
-                self.app.username,
-                self.app.password,
-                log=self.log_msg,
-            )
-            self.log_msg("[green]System installed successfully.[/green]")
-
-            # Phase 3: Bootloader
-            self.log_msg("[bold cyan]── Phase 3: Bootloader ──[/bold cyan]")
-            install_bootloader(
-                platform,
-                device,
-                parts.esp,
-                parts.root,
-                log=self.log_msg,
-            )
-            self.log_msg("[green]Bootloader installed.[/green]")
-
-            # Phase 4: Snapshots (if btrfs platform)
-            if platform.disk_layout.filesystem == "btrfs":
-                self.log_msg("[bold cyan]── Phase 4: Snapshots ──[/bold cyan]")
-                setup_snapshots(platform, log=self.log_msg)
-                self.log_msg("[green]Snapshot support configured.[/green]")
-
-            # Phase 5: First-boot service
-            self.log_msg("[bold cyan]── Phase 5: First-Boot ──[/bold cyan]")
-            inject_firstboot_service(
-                template,
-                self.app.username,
-                log=self.log_msg,
-            )
+            self.app.install_success = True
 
             # Done
             self.log_msg("")
-            self.log_msg("[bold green]Installation complete![/bold green]")
             self.log_msg("Remove the installation media and reboot.")
 
-            self.app.call_from_thread(self._enable_reboot)
+            self.app.call_from_thread(self._on_install_complete)
 
         except Exception as e:
             self.log_msg(f"\n[bold red]INSTALL FAILED: {e}[/bold red]")
             self.log_msg("Check the log above for details.")
             self.app.call_from_thread(self._enable_reboot)
+
+    def _on_install_complete(self) -> None:
+        """Handle install completion — auto shutdown/reboot or enable buttons.
+
+        This runs on the main app thread (dispatched via call_from_thread),
+        so use _write_log directly instead of log_msg (which would fail
+        with "must run in a different thread").
+        """
+        import subprocess
+
+        if getattr(self.app, "auto_install", False):
+            if self.app.auto_shutdown:
+                self._write_log("Shutting down...")
+                subprocess.run(["systemctl", "poweroff"], check=False)
+            elif self.app.auto_reboot:
+                self._write_log("Rebooting into installed system...")
+                subprocess.run(["systemctl", "reboot"], check=False)
+            else:
+                self._enable_reboot()
+        else:
+            self._enable_reboot()
 
     def _enable_reboot(self) -> None:
         """Enable the reboot/shutdown buttons and focus reboot."""

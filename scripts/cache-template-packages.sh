@@ -9,7 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 INSTALLER_DIR="$PROJECT_ROOT/installer/arches_installer"
-TEMPLATES_DIR="$INSTALLER_DIR/templates"
+TEMPLATES_DIR="$PROJECT_ROOT/templates"
 CACHE_DIR="$PROJECT_ROOT/iso/airootfs/opt/arches/pkg-cache"
 PLATFORM="${1:-}"
 
@@ -27,46 +27,66 @@ fi
 # Read the platform.toml for base packages (kernel, etc.)
 PLATFORM_TOML="$PROJECT_ROOT/platforms/$PLATFORM/platform.toml"
 
-# Collect base packages that the installer always installs
-base_packages=(base linux-firmware mkinitcpio sudo)
-
-# Read all kernel variant packages from platform.toml
+# Collect base packages from platform.toml (single source of truth).
+# This matches what install.py:pacstrap() installs.
+base_packages=()
 while IFS= read -r pkg; do
     [[ -n "$pkg" ]] && base_packages+=("$pkg")
-done < <(python3 -c "
-import tomllib
-d = tomllib.load(open('$PLATFORM_TOML', 'rb'))
-for v in d['kernel']['variants']:
-    print(v['package'])
-    print(v['headers'])
-")
+done < <(PYTHONPATH="$INSTALLER_DIR/.." python3 -c "
+from arches_installer.core.platform import load_platform
 
-# Read base_packages.install from platform.toml
-while IFS= read -r pkg; do
-    pkg=$(echo "$pkg" | tr -d '", ')
-    [[ -n "$pkg" && "$pkg" != "]" ]] && base_packages+=("$pkg")
-done < <(sed -n '/^\[base_packages\]/,/^\[/p' "$PLATFORM_TOML" | grep -E '^\s+"' | sed 's/.*"\(.*\)".*/\1/')
+platform = load_platform('$PLATFORM_TOML')
+
+# Base packages (core system + platform-specific)
+for p in platform.base_packages:
+    print(p)
+
+# Kernel variants
+for v in platform.kernel.variants:
+    print(v.package)
+    print(v.headers)
+")
 
 # Collect all template packages (from all install phases)
 template_packages=()
 for tmpl in "$TEMPLATES_DIR"/*.toml; do
     echo "  Reading template: $(basename "$tmpl")"
-    # Read packages from all [install.*] sections
-    for section in 'install\.pacstrap' 'install\.override' 'install\.firstboot'; do
-        while IFS= read -r pkg; do
-            pkg=$(echo "$pkg" | tr -d '", ')
-            [[ -n "$pkg" && "$pkg" != "]" ]] && template_packages+=("$pkg")
-        done < <(sed -n "/^\[${section}\]/,/^\[/p" "$tmpl" | grep -E '^\s+"' | sed 's/.*"\(.*\)".*/\1/')
-    done
-    # Also support old format: [system] packages = [...]
     while IFS= read -r pkg; do
-        pkg=$(echo "$pkg" | tr -d '", ')
-        [[ -n "$pkg" && "$pkg" != "]" ]] && template_packages+=("$pkg")
-    done < <(sed -n '/^\[system\]/,/^\[/p' "$tmpl" | sed -n '/^packages/,/^\]/p' | grep -E '^\s+"' | sed 's/.*"\(.*\)".*/\1/')
+        [[ -n "$pkg" ]] && template_packages+=("$pkg")
+    done < <(python3 -c "
+import tomllib
+d = tomllib.load(open('$tmpl', 'rb'))
+i = d.get('install', {})
+# New format: [install.pacstrap], [install.override], [install.firstboot]
+for phase in ('pacstrap', 'override', 'firstboot'):
+    for p in i.get(phase, {}).get('packages', []):
+        print(p)
+# Old format: [system] packages = [...]
+for p in d.get('system', {}).get('packages', []):
+    print(p)
+")
 done
 
+# Common hardware driver packages installed by chwd (hardware detection).
+# These cover AMD, Intel, NVIDIA, and VM (virtio) GPUs.  Without these in
+# the cache, chwd would need network access to install drivers.
+hw_driver_packages=(
+    # AMD
+    mesa vulkan-radeon xf86-video-amdgpu libva-mesa-driver mesa-vdpau
+    # Intel
+    vulkan-intel intel-media-driver
+    # NVIDIA (open kernel modules + proprietary userspace)
+    nvidia-open nvidia-utils
+    # VM / generic
+    xf86-video-vesa xf86-video-fbdev
+    # Input
+    xf86-input-libinput
+    # Xorg fallbacks
+    xorg-server xorg-xinit
+)
+
 # Deduplicate
-all_packages=($(printf '%s\n' "${base_packages[@]}" "${template_packages[@]}" | sort -u))
+all_packages=($(printf '%s\n' "${base_packages[@]}" "${template_packages[@]}" "${hw_driver_packages[@]}" | sort -u))
 
 echo "  Packages to cache: ${#all_packages[@]}"
 echo "  Package list: ${all_packages[*]}"
@@ -109,6 +129,15 @@ pacman -Sw --noconfirm \
     --cachedir "$CACHE_DIR" \
     --dbpath "$TEMP_DB" \
     "${all_packages[@]}"
+
+# Copy synced databases into the cache so the installer can use them
+# offline. The installer reads these from $CACHE_DIR/sync/ to set up
+# local file:// mirrors for pacstrap's -Sy.
+echo ""
+echo "  ── Copying pacman databases to cache ──"
+mkdir -p "$CACHE_DIR/sync"
+cp "$TEMP_DB/sync/"*.db "$CACHE_DIR/sync/" 2>/dev/null || true
+echo "  Copied $(ls "$CACHE_DIR/sync/"*.db 2>/dev/null | wc -l) database files"
 
 echo ""
 echo "  Cached $(find "$CACHE_DIR" -name '*.pkg.tar.*' | wc -l) packages"

@@ -126,31 +126,42 @@ class PartitionScreen(Screen):
 
     def _drop_to_shell(self) -> None:
         """Suspend the TUI and drop to an interactive shell."""
+        import os
+
         device = self.app.selected_device
         self.app.suspend()
+
+        # Set up environment hints for the shell session
+        env = os.environ.copy()
+        env["ARCHES_DEVICE"] = device
+
         subprocess.run(
             [
                 "/bin/bash",
-                "-c",
-                'echo ""; '
-                'echo "══ Arches Disk Setup Shell ══"; '
-                'echo ""; '
-                'echo "Target device: ' + device + '"; '
-                'echo ""; '
-                'echo "Partition, format, and mount your disks onto /mnt."; '
-                'echo "Example (GPT + btrfs):"; '
-                'echo "  sgdisk --zap-all ' + device + '"; '
-                'echo "  sgdisk -n 1:0:+2G -t 1:EF00 ' + device + '"; '
-                'echo "  sgdisk -n 2:0:0 -t 2:8300 ' + device + '"; '
-                'echo "  mkfs.fat -F32 ' + device + '1"; '
-                'echo "  mkfs.btrfs -f ' + device + '2"; '
-                'echo "  mount ' + device + '2 /mnt"; '
-                'echo "  mount --mkdir ' + device + '1 /mnt/boot"; '
-                'echo ""; '
-                'echo "Type exit when done."; '
-                'echo ""; '
-                "exec /bin/bash",
+                "--rcfile",
+                "/dev/stdin",
             ],
+            input=(
+                'PS1="\\[\\033[1;33m\\]arches-disk\\[\\033[0m\\]% "\n'
+                'echo ""\n'
+                'echo "══ Arches Disk Setup Shell ══"\n'
+                'echo ""\n'
+                f'echo "Target device: {device}"\n'
+                'echo ""\n'
+                'echo "Partition, format, and mount your disks onto /mnt."\n'
+                'echo "Example (GPT + btrfs):"\n'
+                f'echo "  sgdisk --zap-all {device}"\n'
+                f'echo "  sgdisk -n 1:0:+2G -t 1:EF00 {device}"\n'
+                f'echo "  sgdisk -n 2:0:0 -t 2:8300 {device}"\n'
+                f'echo "  mkfs.fat -F32 {device}1"\n'
+                f'echo "  mkfs.btrfs -f {device}2"\n'
+                f'echo "  mount {device}2 /mnt"\n'
+                f'echo "  mount --mkdir {device}1 /mnt/boot"\n'
+                'echo ""\n'
+                'echo "Type exit when done."\n'
+                'echo ""\n'
+            ),
+            env=env,
         )
         self.app.resume()
         self._update_mount_status()

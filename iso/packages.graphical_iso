@@ -1,0 +1,27 @@
+# Graphical desktop packages for the live ISO
+#
+# Included when the platform's default template has graphical = true.
+# This provides a working KDE Plasma desktop on the live environment
+# for a graphical install experience. The installed system gets its
+# own desktop packages from the template TOML.
+
+# ─── KDE Plasma desktop ─────────────────────────────
+plasma-meta
+sddm
+konsole
+dolphin
+spectacle
+
+# ─── Audio ───────────────────────────────────────────
+pipewire
+pipewire-alsa
+pipewire-pulse
+wireplumber
+
+# ─── Fonts ───────────────────────────────────────────
+noto-fonts
+noto-fonts-emoji
+ttf-jetbrains-mono-nerd
+
+# ─── Xorg / Wayland ─────────────────────────────────
+xorg-xwayland

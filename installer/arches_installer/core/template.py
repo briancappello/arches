@@ -3,15 +3,29 @@
 Templates define the userspace workload: packages, services, Ansible roles,
 timezone, and locale. They are platform-independent — disk layout, bootloader,
 kernel, and base packages all come from the platform config.
+
+Templates live in ``<project>/templates/`` (development) or
+``/opt/arches/templates/`` (live ISO).  Install-specific templates
+(auto-install.toml, host-install.toml) and system templates
+(dev-workstation.toml, vm-server.toml) all live in the same directory.
 """
 
 from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass, field
-from importlib import resources
 from pathlib import Path
 from typing import Any
+
+
+# Search paths for the templates directory, checked in order.
+# On the live ISO, templates are staged at /opt/arches/templates/.
+# In development, they're at <project>/templates/ (relative to the
+# installer package: installer/arches_installer/core/template.py -> ../../../../templates).
+_TEMPLATES_SEARCH = [
+    Path("/opt/arches/templates"),
+    Path(__file__).resolve().parents[3] / "templates",
+]
 
 
 @dataclass
@@ -47,6 +61,10 @@ class InstallTemplate:
     install: InstallPhases
     services: list[str] = field(default_factory=list)
     ansible: AnsibleConfig = field(default_factory=AnsibleConfig)
+    # When True, the ISO boots into a graphical desktop (SDDM + Plasma)
+    # with a liveuser autologin. When False, the ISO boots to a text
+    # console with the TUI installer on tty1.
+    graphical: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InstallTemplate:
@@ -80,6 +98,7 @@ class InstallTemplate:
             ansible=AnsibleConfig(
                 firstboot_roles=ans_raw.get("firstboot_roles", []),
             ),
+            graphical=meta.get("graphical", False),
         )
 
 
@@ -90,15 +109,23 @@ def load_template(path: Path) -> InstallTemplate:
     return InstallTemplate.from_dict(data)
 
 
+def _find_templates_dir() -> Path:
+    """Locate the templates directory from the search path."""
+    for d in _TEMPLATES_SEARCH:
+        if d.is_dir():
+            return d
+    searched = ", ".join(str(d) for d in _TEMPLATES_SEARCH)
+    raise FileNotFoundError(f"Templates directory not found (searched: {searched})")
+
+
 def resolve_template(filename: str) -> Path:
     """Resolve a template filename to its full path in the templates directory.
 
     Accepts a bare filename like ``"dev-workstation.toml"`` and returns the
-    absolute path inside the installed ``arches_installer/templates/`` package
-    directory.  Raises ``FileNotFoundError`` if the file does not exist.
+    absolute path.  Raises ``FileNotFoundError`` if the file does not exist.
     """
-    templates_dir = resources.files("arches_installer") / "templates"
-    path = Path(str(templates_dir / filename))
+    templates_dir = _find_templates_dir()
+    path = templates_dir / filename
     if not path.is_file():
         raise FileNotFoundError(
             f"Template not found: {filename} (looked in {templates_dir})"
@@ -107,13 +134,23 @@ def resolve_template(filename: str) -> Path:
 
 
 def discover_templates() -> list[InstallTemplate]:
-    """Discover all .toml templates in the templates directory."""
-    templates_dir = resources.files("arches_installer") / "templates"
+    """Discover all install templates (system templates only).
+
+    Returns templates that define a system workload (have ``[meta]`` with a
+    name).  Config files like auto-install.toml and host-install.toml are
+    excluded — they reference templates by filename, not define them.
+    """
+    templates_dir = _find_templates_dir()
     templates: list[InstallTemplate] = []
 
     for item in templates_dir.iterdir():
-        if hasattr(item, "name") and item.name.endswith(".toml"):
-            path = Path(str(item))
-            templates.append(load_template(path))
+        if item.name.endswith(".toml"):
+            try:
+                tmpl = load_template(item)
+                # Only include system templates (have a meaningful name)
+                if tmpl.name != "Unknown":
+                    templates.append(tmpl)
+            except Exception:
+                pass  # Skip non-template TOML files (auto-install, etc.)
 
     return sorted(templates, key=lambda t: t.name)

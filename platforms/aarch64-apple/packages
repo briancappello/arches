@@ -1,6 +1,6 @@
 # Platform-specific packages — aarch64-apple (Asahi Linux)
 #
-# For ISO builds: combined with iso/packages.common at build time.
+# For ISO builds: combined with iso/packages.iso at build time.
 # For host-install: used by the containerized installer to determine
 # what packages the installer environment needs.
 #

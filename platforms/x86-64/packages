@@ -1,6 +1,6 @@
 # Platform-specific ISO packages — x86-64 with CachyOS
 #
-# These are combined with iso/packages.common at build time
+# These are combined with iso/packages.iso at build time
 # to produce the final ISO package list.
 #
 # NOTE: Kernel packages and linux-firmware are NOT listed here — they are

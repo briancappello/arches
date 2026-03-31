@@ -1,6 +1,7 @@
 [meta]
 name = "Dev Workstation"
 description = "KDE Plasma desktop with full development toolchain"
+graphical = true
 
 [system]
 timezone = "America/Denver"

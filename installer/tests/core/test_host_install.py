@@ -184,7 +184,8 @@ def test_generate_grub_entry(mock_subprocess, aarch64_apple_platform):
     assert "root=UUID=abcd-1234" in entry
     assert "rootflags=subvol=@arches" in entry
     assert "initramfs-linux-asahi.img" in entry
-    assert "console=tty0" in entry  # aarch64 specific
+    assert "console=ttyAMA0,115200" in entry  # from platform kernel_flags
+    assert "console=tty0" in entry  # from platform kernel_flags
 
 
 @patch("arches_installer.core.bootloader.subprocess.run")

@@ -11,6 +11,7 @@ name = "x86-64"
 description = "x86-64 with CachyOS x86-64-v3 optimized packages (AVX2/SSE4.2)"
 arch = "x86_64"
 cachyos_optimization_tier = "x86-64-v3"
+default_template = "dev-workstation"
 
 [kernel]
 # Multiple kernel variants produce multiple bootloader entries.
@@ -18,6 +19,16 @@ cachyos_optimization_tier = "x86-64-v3"
 variants = [
     { package = "linux-cachyos", headers = "linux-cachyos-headers" },
     { package = "linux-cachyos-lts", headers = "linux-cachyos-lts-headers" },
+]
+# Platform-specific kernel command-line parameters.
+# Applied to both ISO boot and installed system bootloader configs.
+# Archiso-specific params (archisobasedir, etc.) are NOT here — they
+# stay in the .cfg.in templates.
+flags = [
+    "console=ttyS0,115200",
+    "console=tty0",
+    "loglevel=5",
+    "video=1920x1080",
 ]
 
 [bootloader]
@@ -43,18 +54,28 @@ optional = true  # non-fatal failure (expected in VMs without discrete GPU)
 
 [base_packages]
 # Always installed by pacstrap regardless of template.
-# These are platform-specific — repo keyrings, mirrorlists, settings,
-# bootloader, and hardware detection tools.
+# Kernel packages are NOT listed here — they come from [kernel].variants.
 install = [
+    # Core system
+    "base",
+    "linux-firmware",
+    "mkinitcpio",
+    "sudo",
+    "ansible",
+    "terminus-font",
+    # CachyOS repos
     "cachyos-keyring",
     "cachyos-mirrorlist",
     "cachyos-v3-mirrorlist",
     "cachyos-settings",
+    # Bootloader
     "limine",
+    "limine-mkinitcpio-hook",
     "efibootmgr",
-    "chwd",
     "limine-snapper-sync",
     "memtest86+-efi",
+    # Hardware detection
+    "chwd",
 ]
 
 [aur_packages]

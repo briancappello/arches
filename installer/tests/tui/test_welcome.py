@@ -90,7 +90,7 @@ async def test_welcome_continue_sets_device(mock_detect) -> None:
     return_value=FAKE_DEVICES,
 )
 async def test_welcome_shell_button_exits(mock_detect) -> None:
-    """Recovery Shell button should exit with return code 2."""
+    """Exit Installer button should exit with return code 2."""
     app = ArchesApp(platform=TEST_PLATFORM)
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.wait_for_animation()

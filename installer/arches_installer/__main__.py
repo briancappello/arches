@@ -1,6 +1,7 @@
 """Entry point for the Arches installer."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -38,6 +39,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Require root for all modes except --dry-run
+    if not args.dry_run and os.geteuid() != 0:
+        print(
+            "ERROR: arches-install must be run as root.\n"
+            "       Use: sudo arches-install",
+            file=sys.stderr,
+        )
+        return 1
+
     # --host flag: host-install mode (install into subvolumes on existing system)
     if args.host:
         return _run_host(args.host, platform_path=args.platform, dry_run=args.dry_run)
@@ -47,18 +57,17 @@ def main() -> int:
         return _run_auto(args.auto, platform_path=args.platform, dry_run=args.dry_run)
 
     # Auto-detect config baked into the ISO at /root/auto-install.toml.
-    # On failure, print the error and fall through to the TUI so the user
-    # can still perform a manual install.
-    if AUTO_INSTALL_PATH.exists():
+    # Runs inside the TUI progress screen (same code path as interactive).
+    # On failure, falls through to the interactive TUI.
+    if AUTO_INSTALL_PATH.exists() and not args.dry_run:
         rc = _run_auto(
             AUTO_INSTALL_PATH,
             platform_path=args.platform,
-            dry_run=args.dry_run,
+            dry_run=False,
             fallback_to_tui=True,
         )
         if rc == 0:
             return 0
-        # Non-zero means auto-install failed; fall through to TUI
 
     return _run_tui(platform_path=args.platform)
 
@@ -91,11 +100,12 @@ def _run_auto(
 ) -> int:
     """Run unattended install from a TOML config file.
 
-    When *fallback_to_tui* is True (ISO auto-detect path), errors are
-    printed but return non-zero so the caller can fall through to the
-    TUI.  When False (explicit ``--auto``), behaviour is unchanged.
+    The install runs inside the TUI progress screen — same code path
+    as interactive install. When *fallback_to_tui* is True (ISO auto-detect),
+    errors return non-zero so the caller can fall through to interactive mode.
     """
-    from arches_installer.core.auto import AutoInstallConfig, run_auto_install
+    from arches_installer.core.auto import AutoInstallConfig
+    from arches_installer.core.disk import detect_single_disk
 
     if not config_path.exists():
         print(f"ERROR: Config file not found: {config_path}", file=sys.stderr)
@@ -145,10 +155,43 @@ def _run_auto(
         print("Dry run complete. No changes made.")
         return 0
 
-    rc = run_auto_install(platform, config)
-    if rc != 0 and fallback_to_tui:
+    # Detect target disk
+    try:
+        disk = detect_single_disk()
+    except Exception as e:
+        _auto_install_error(f"Disk detection failed: {e}", fallback_to_tui)
+        return 1
+
+    # Launch TUI with auto-install state pre-populated.
+    # The app skips straight to the progress screen.
+    from arches_installer.tui.app import ArchesApp
+
+    app = ArchesApp(platform=platform)
+    app.selected_device = disk.path
+    app.selected_template = config.template
+    app.partition_mode = "auto"
+    app.hostname = config.hostname
+    app.username = config.username
+    app.password = config.password
+    app.auto_install = True
+    app.auto_shutdown = config.shutdown
+    app.auto_reboot = config.reboot
+
+    # When running under the test harness (virtio log port exists),
+    # force shutdown on completion so the test script can detect success.
+    if Path("/dev/virtio-ports/arches-log").exists():
+        app.auto_shutdown = True
+        app.auto_reboot = False
+
+    app.run()
+
+    # Check if install succeeded (set by progress screen)
+    if getattr(app, "install_success", False):
+        return 0
+
+    if fallback_to_tui:
         print("\nFalling back to manual install...\n", file=sys.stderr)
-    return rc
+    return 1
 
 
 def _run_host(
