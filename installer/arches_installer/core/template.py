@@ -150,7 +150,7 @@ def discover_templates() -> list[InstallTemplate]:
                 # Only include system templates (have a meaningful name)
                 if tmpl.name != "Unknown":
                     templates.append(tmpl)
-            except Exception:
+            except (KeyError, tomllib.TOMLDecodeError):
                 pass  # Skip non-template TOML files (auto-install, etc.)
 
     return sorted(templates, key=lambda t: t.name)

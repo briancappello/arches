@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -24,7 +25,11 @@ ISO_PKG_CACHE = Path("/opt/arches/pkg-cache")
 
 # Mount point inside the target for the ISO package cache (bind-mounted)
 _TARGET_ISO_CACHE = Path("/mnt/arches-pkg-cache")
-_TARGET_ISO_CACHE_MOUNTED = False
+
+# Track whether the ISO cache is bind-mounted into the target.
+# Module-level state is acceptable here because the installer process
+# runs exactly one install pipeline and then exits (reboot/shutdown).
+_target_iso_cache_mounted = False
 
 # Ansible playbooks shipped on the ISO
 ISO_ANSIBLE_DIR = Path("/opt/arches/ansible")
@@ -93,7 +98,6 @@ def _make_pacman_conf_with_cache() -> Path:
     # so pacman's -Sy finds the database locally before trying mirrors.
     mirror_dir = _setup_local_repo_mirror()
     if mirror_dir:
-        import re
 
         def _add_local_server(match: re.Match) -> str:
             repo_name = match.group(1)
@@ -112,9 +116,12 @@ def _make_pacman_conf_with_cache() -> Path:
             flags=re.MULTILINE,
         )
 
-    tmp = Path(tempfile.mktemp(prefix="arches-pacman-", suffix=".conf"))
-    tmp.write_text(conf_text)
-    return tmp
+    fd = tempfile.NamedTemporaryFile(
+        prefix="arches-pacman-", suffix=".conf", mode="w", delete=False
+    )
+    fd.write(conf_text)
+    fd.close()
+    return Path(fd.name)
 
 
 def _mount_iso_cache_in_target(
@@ -128,7 +135,7 @@ def _mount_iso_cache_in_target(
     is inside the chroot at ``/mnt/arches-pkg-cache``, and the target's
     pacman.conf gets an extra ``CacheDir`` pointing there.
     """
-    global _TARGET_ISO_CACHE_MOUNTED
+    global _target_iso_cache_mounted
     if not ISO_PKG_CACHE.exists() or not any(ISO_PKG_CACHE.glob("*.pkg.tar.*")):
         return
 
@@ -137,7 +144,7 @@ def _mount_iso_cache_in_target(
 
     try:
         run(["mount", "--bind", str(ISO_PKG_CACHE), str(mount_point)], log=log)
-        _TARGET_ISO_CACHE_MOUNTED = True
+        _target_iso_cache_mounted = True
     except subprocess.CalledProcessError:
         _log("WARNING: Failed to bind-mount package cache into target.", log)
         return
@@ -159,8 +166,8 @@ def _mount_iso_cache_in_target(
 
 def _unmount_iso_cache_from_target(log: LogCallback | None = None) -> None:
     """Unmount the ISO package cache from the target and clean up pacman.conf."""
-    global _TARGET_ISO_CACHE_MOUNTED
-    if not _TARGET_ISO_CACHE_MOUNTED:
+    global _target_iso_cache_mounted
+    if not _target_iso_cache_mounted:
         return
 
     mount_point = MOUNT_ROOT / "mnt" / "arches-pkg-cache"
@@ -168,7 +175,7 @@ def _unmount_iso_cache_from_target(log: LogCallback | None = None) -> None:
         run(["umount", str(mount_point)], log=log)
     except subprocess.CalledProcessError:
         _log("WARNING: Failed to unmount package cache from target.", log)
-    _TARGET_ISO_CACHE_MOUNTED = False
+    _target_iso_cache_mounted = False
 
     # Remove the extra CacheDir from pacman.conf so the installed system
     # doesn't reference a non-existent path after reboot.

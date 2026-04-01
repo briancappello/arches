@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 
 from arches_installer.core.disk import MOUNT_ROOT
@@ -124,8 +125,6 @@ def _configure_snapshot_boot_limine(
     # The snapshot path defaults to /@/.snapshots which matches our nested layout.
     conf = MOUNT_ROOT / "etc" / "limine-snapper-sync.conf"
     if conf.exists():
-        import re
-
         content = conf.read_text()
         # Replace TARGET_OS_NAME regardless of its current value
         content = re.sub(

@@ -18,7 +18,7 @@ OUT_DIR     := $(PROJECT_DIR)/out
 .PHONY: help \
         iso usb \
         host-install host-install-rebuild host-install-dry host-clean \
-        fmt test test-template dry-run \
+        fmt test test-unit test-template dry-run \
         qemu-install qemu-test qemu-boot qemu-disk qemu-ansible \
         clean clean-work clean-all \
         _iso _aur-repo \
@@ -85,6 +85,10 @@ fmt: ## Auto-format and lint Python code with ruff
 test: ## Run all tests (unit + TUI)
 	@echo "══ Running all tests ══"
 	uv run pytest -v
+
+test-unit: ## Run fast unit tests only (no TUI/textual tests)
+	@echo "══ Running unit tests ══"
+	uv run pytest -v installer/tests/core/
 
 test-template: ## Validate all TOML templates parse correctly
 	@echo "══ Validating templates ══"

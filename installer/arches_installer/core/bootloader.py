@@ -7,6 +7,7 @@ Supports multiple bootloader backends via the platform config:
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -296,8 +297,6 @@ def write_grub_defaults(
 
     grub_default = MOUNT_ROOT / "etc" / "default" / "grub"
     if grub_default.exists():
-        import re
-
         content = grub_default.read_text()
         # Update GRUB_CMDLINE_LINUX_DEFAULT
         content = re.sub(

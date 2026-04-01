@@ -6,56 +6,36 @@ Arches uses a **platform + template matrix** design. A *platform* defines the ha
 
 Currently supported platforms:
 
-| Platform          | Base                     | Kernel(s)                            | Bootloader               | Default Template   | Status                    |
-|-------------------|--------------------------|------------------------------------- |--------------------------|--------------------| --------------------------|
+| Platform          | Base                        | Kernel(s)                             | Bootloader               | Default Template   | Status                    |
+|-------------------|-----------------------------|---------------------------------------|--------------------------|--------------------| --------------------------|
 | `x86-64`          | CachyOS (configurable tier) | `linux-cachyos` + `linux-cachyos-lts` | Limine                   | dev-workstation    | Fully implemented         |
-| `aarch64-generic` | Arch Linux ARM           | `linux-aarch64`                      | GRUB                     | vm-server          | Fully implemented         |
-| `aarch64-apple`   | Asahi Linux              | `linux-asahi`                        | m1n1→U-Boot→extlinux     | dev-workstation    | USB boot via U-Boot       |
+| `aarch64-generic` | Arch Linux ARM              | `linux-aarch64`                       | GRUB                     | dev-workstation    | Fully implemented         |
+| `aarch64-apple`   | Asahi Linux                 | `linux-asahi`                         | m1n1→U-Boot→extlinux     | dev-workstation    | USB boot via U-Boot       |
 
-Each platform has its own README with platform-specific configuration details (see `platforms/<name>/README.md`).
+Each platform has a README with platform-specific configuration details (see `platforms/{ISA}/README.md`).
 
 ## Quickstart
 
 ### Prerequisites
 
-**ISO build (x86-64, native on Arch/CachyOS):**
-
-```bash
-sudo pacman -S archiso squashfs-tools base-devel git
-```
-
-CachyOS signing key must be trusted in your build environment:
-
-```bash
-sudo pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com
-sudo pacman-key --lsign-key F3B607488DB35A47
-```
-
-**ISO build (aarch64, containerized):**
-
 Runs inside a Podman container — works from any Linux host (Fedora, Arch, etc.):
 
 ```bash
-# Fedora/RHEL:
-sudo dnf install podman
 # Arch:
 sudo pacman -S podman
+
+# Fedora/RHEL:
+sudo dnf install podman
 ```
 
-**QEMU testing (optional):**
+#### QEMU testing (optional)
 
 ```bash
-# x86-64:
+# Arch
 sudo pacman -S qemu-full edk2-ovmf
-# aarch64 (Fedora):
+
+# Fedora/RHEL
 sudo dnf install qemu-system-aarch64 edk2-aarch64
-```
-
-**Development:**
-
-```bash
-# Install uv (Python package manager) — https://docs.astral.sh/uv/
-curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ### Templates
@@ -63,11 +43,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 All templates live in `templates/`. System templates define the installable workloads:
 
 - `dev-workstation.toml` — KDE Plasma desktop with full development toolchain
-- `vm-server.toml` — Headless server (nginx, postgres, redis, SSH)
+- `vm-server.toml` — Headless server (Nginx, PostgresSQL, Redis, RabbitMQ)
 
 Config templates are used for install automation:
 
-- `auto-install.toml` — Unattended install config (baked into the ISO at `/root/auto-install.toml`)
+- `auto-install.toml` — Unattended install config (copy to `iso/airootfs/root/auto-install.toml` to enable)
 - `host-install.toml` — Host-install config (install into btrfs subvolumes on an existing system)
 
 #### Auto Install
@@ -119,6 +99,7 @@ The built ISO is written to `out/arches-<date>.iso`. The platform config is bake
 ```bash
 make fmt               # Auto-format Python with ruff
 make test              # Run all tests (unit + TUI)
+make test-unit         # Run fast unit tests only (no TUI/textual tests)
 make test-template     # Validate all TOML templates parse
 make dry-run           # Dry-run the example auto-install config (x86-64)
 make clean             # Remove staged files from ISO airootfs
@@ -178,12 +159,13 @@ The config file specifies everything the TUI would ask for:
 
 ```toml
 [install]
-device = "/dev/vda"
 template = "dev-workstation.toml"
 hostname = "archdev"
 username = "brian"
-password = "changeme"
+password = "changeme"        # Change this before building
 ```
+
+> **Note:** The `password` field in config templates (`auto-install.toml`, `host-install.toml`) ships with placeholder values. Always change these before building an ISO or running a host install. The target disk is auto-detected at install time (must be exactly one non-removable disk).
 
 The platform (kernel, repos, hardware detection) is read from the ISO automatically. During development, you can override it with `--platform`:
 
@@ -200,7 +182,7 @@ Customizing what software lands on the system happens at three layers:
 | Layer                            | File                             | What it controls                                                              |
 |----------------------------------|----------------------------------|-------------------------------------------------------------------------------|
 | **Platform `[base_packages]`**   | `platforms/*/platform.toml`      | Platform-specific packages always installed (repo keyrings, settings, kernel) |
-| **Template `[system] packages`** | `templates/*.toml`               | Workload-specific packages installed via `pacstrap`                           |
+| **Template `[install.pacstrap]`** | `templates/*.toml`               | Workload-specific packages installed via `pacstrap`                           |
 | **Template `[services] enable`** | `templates/*.toml`               | Which systemd services get enabled at boot                                    |
 | **Ansible role**                 | `ansible/roles/*/tasks/main.yml` | How those packages are configured after install                               |
 
@@ -211,7 +193,7 @@ The platform provides the hardware foundation (kernel, repo keys, GPU detection 
 **Step 1: Add the packages to the template** (`templates/vm-server.toml`):
 
 ```toml
-[system]
+[install.pacstrap]
 packages = [
     # ...existing packages...
     "postgresql",
@@ -257,7 +239,7 @@ Taking `postgresql` as a concrete example, here's exactly what happens at each s
 Platform [base_packages] install = ["cachyos-keyring", ...]
   └─ pacstrap installs platform base packages + kernel
 
-Template [system] packages = ["postgresql"]
+Template [install.pacstrap] packages = ["postgresql"]
   └─ pacstrap installs the postgresql package from platform repos
 
 Template [services] enable = ["postgresql"]
@@ -273,7 +255,7 @@ First boot
 
 ### When you don't need Ansible
 
-For packages that work out of the box with no configuration (e.g., `htop`, `git`, `tmux`), you only need the template — just add them to `[system] packages`. No Ansible role needed. Ansible is only for post-install configuration that goes beyond `pacman -S`.
+For packages that work out of the box with no configuration (e.g., `htop`, `git`, `tmux`), you only need the template — just add them to `[install.pacstrap] packages`. No Ansible role needed. Ansible is only for post-install configuration that goes beyond `pacman -S`.
 
 ## Install Templates
 
@@ -294,6 +276,8 @@ description = "Description shown in the installer"
 [system]
 timezone = "America/New_York"
 locale = "en_US.UTF-8"
+
+[install.pacstrap]
 packages = ["git", "neovim"]     # installed via pacstrap
 
 [services]
@@ -335,7 +319,8 @@ arches/
 │   │   ├── pacman.conf                   # CachyOS v3 + Arch repos
 │   │   └── packages                      # Platform-specific ISO packages
 │   ├── aarch64-generic/
-│   │   ├── platform.toml                 # GRUB + ext4 + 4-partition layout
+│   │   ├── platform.toml                 # GRUB + btrfs + subvolumes
+│   │   ├── archiso.conf                  # mkinitcpio config for ISO
 │   │   ├── pacman.conf                   # Arch Linux ARM repos
 │   │   └── packages                      # Platform-specific ISO packages
 │   └── aarch64-apple/
@@ -349,23 +334,27 @@ arches/
 │   ├── packages.iso                      # ISO live environment packages
 │   ├── packages.graphical_iso            # Graphical desktop packages (conditional)
 │   └── airootfs/
-│       ├── etc/
-│       │   └── mkinitcpio.conf           # Hardware-agnostic (kms, no autodetect)
 │       └── root/
 │           └── .bash_profile             # Boot menu: installer or recovery shell
 │
+├── pyproject.toml                        # Package config, builds `arches-install` CLI
+├── Containerfile                         # Multi-arch ISO builder (Podman)
+├── Containerfile.install                 # Host-install container (aarch64-apple)
+│
 ├── installer/                            # Python package — the TUI installer
-│   ├── pyproject.toml                    # Package config, builds `arches-install` CLI
 │   ├── arches_installer/
 │   │   ├── __main__.py                   # Entry point (--auto or TUI, --platform)
 │   │   ├── core/
 │   │   │   ├── platform.py               # Platform config loader + dataclasses
-│   │   │   ├── auto.py                   # Unattended install runner
+│   │   │   ├── auto.py                   # Unattended install config parser
 │   │   │   ├── template.py               # TOML template loader + dataclasses
 │   │   │   ├── disk.py                   # Partition, format, mount, detect mounts
 │   │   │   ├── install.py                # pacstrap, genfstab, chroot config, hw detect
+│   │   │   ├── pipeline.py               # Install pipeline orchestration
+│   │   │   ├── run.py                    # Subprocess execution helpers + logging
 │   │   │   ├── bootloader.py             # Limine + GRUB install (dispatched by platform)
 │   │   │   ├── snapper.py                # Snapper + limine-snapper-sync setup
+│   │   │   ├── host_install.py           # Host-install runner (btrfs subvolumes)
 │   │   │   └── firstboot.py              # systemd oneshot for post-install Ansible
 │   │   ├── tui/
 │   │   │   ├── app.py                    # Textual app + screen routing + install state
@@ -382,13 +371,21 @@ arches/
 │       │   ├── test_template.py          # Template loading + validation tests
 │       │   ├── test_auto.py              # Auto-install config tests
 │       │   ├── test_bootloader.py        # Bootloader dispatch, GRUB + Limine tests
-│       │   └── test_disk.py              # Partition, mount detection, validation tests
+│       │   ├── test_disk.py              # Partition, mount detection, validation tests
+│       │   ├── test_install.py           # Core install logic tests
+│       │   ├── test_pipeline.py          # Install pipeline tests
+│       │   ├── test_run.py               # Command execution tests
+│       │   ├── test_firstboot.py         # First-boot service tests
+│       │   ├── test_snapper.py           # Snapshot configuration tests
+│       │   ├── test_host_install.py      # Host-install config + GRUB entry tests
+│       │   └── test_main.py              # CLI entry point tests
 │       └── tui/
 │           ├── test_welcome.py           # Disk selection screen tests
 │           ├── test_partition.py         # Partition screen (shell-first + auto) tests
 │           ├── test_template_select.py   # Template picker tests
 │           ├── test_user_setup.py        # Input validation tests
-│           └── test_confirm.py           # Confirmation summary tests
+│           ├── test_confirm.py           # Confirmation summary tests
+│           └── test_progress.py          # Install progress screen tests
 │
 ├── ansible/                              # Post-install configuration
 │   ├── playbook.yml                      # Tag-driven role dispatch
@@ -403,11 +400,14 @@ arches/
     ├── detect-platform.sh                # Auto-detect host platform (x86-64/aarch64-generic/aarch64-apple)
     ├── build-iso.sh                      # Build ISO inside Podman container (any platform)
     ├── build-usb.sh                      # Build ISO + write to USB (platform-aware)
-    ├── qemu-install.sh                   # Build ISO + boot QEMU VM with install disk
     ├── build-aur-repo.sh                 # Pre-build AUR packages into local repo
+    ├── cache-template-packages.sh        # Cache template packages for offline install
+    ├── qemu-install.sh                   # Build ISO + boot QEMU VM with install disk
+    ├── qemu-test.sh                      # Automated headless QEMU install test
     ├── iso-to-usb-image.sh              # Convert ISO to GPT+FAT32 USB image (aarch64)
     ├── write-usb.sh                      # Interactive USB drive writer (device select + confirm)
-    └── host-install.sh                   # Host install into btrfs subvolumes (Apple Silicon)
+    ├── host-install.sh                   # Host install into btrfs subvolumes (Apple Silicon)
+    └── host-clean.sh                     # Remove Arches subvolumes and GRUB entry
 ```
 
 ## Key Technical Decisions

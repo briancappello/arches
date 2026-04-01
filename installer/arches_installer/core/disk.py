@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,7 +28,12 @@ class BlockDevice:
 
 
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
-    """Run a command, raising on failure with stderr in the exception."""
+    """Run a command, raising on failure with stderr in the exception.
+
+    This is a lightweight wrapper used by disk operations that don't need
+    streaming log output. For operations that need real-time log streaming,
+    use ``arches_installer.core.run.run()`` instead.
+    """
     try:
         return subprocess.run(cmd, check=True, capture_output=True, text=True, **kwargs)
     except subprocess.CalledProcessError as e:
@@ -385,7 +391,8 @@ def prepare_subvolume(
     """
     from arches_installer.core.platform import PlatformConfig
 
-    assert isinstance(platform, PlatformConfig)
+    if not isinstance(platform, PlatformConfig):
+        raise TypeError(f"Expected PlatformConfig, got {type(platform).__name__}")
     layout = platform.disk_layout
 
     if layout.filesystem != "btrfs":
@@ -410,8 +417,6 @@ def prepare_subvolume(
         raise ValueError(f"Unknown subvolume mode: {mode}")
 
     # Mount the btrfs top-level (subvolid=5) to create subvolumes
-    import tempfile
-
     top_mount = Path(tempfile.mkdtemp(prefix="arches-btrfs-"))
     top_mount.mkdir(parents=True, exist_ok=True)
 
@@ -471,7 +476,8 @@ def prepare_disk(device: str, platform) -> PartitionMap:
     """
     from arches_installer.core.platform import PlatformConfig
 
-    assert isinstance(platform, PlatformConfig)
+    if not isinstance(platform, PlatformConfig):
+        raise TypeError(f"Expected PlatformConfig, got {type(platform).__name__}")
 
     if not platform.allow_auto_install:
         raise RuntimeError(

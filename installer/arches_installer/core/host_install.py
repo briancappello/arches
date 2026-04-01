@@ -13,9 +13,11 @@ Unlike the ISO-based auto.py flow, host-install:
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tomllib
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -325,7 +327,7 @@ def run_host_install(platform: PlatformConfig, config: HostInstallConfig) -> int
                 # Install the pacman hook for persistence
                 from arches_installer.core.bootloader import _install_alarm_vmlinuz_hook
 
-                _install_alarm_vmlinuz_hook(kernel_pkg, log)
+                _install_alarm_vmlinuz_hook(platform, log)
 
             chroot_run(["mkinitcpio", "-P"], log=log)
             log("Initramfs generated.")
@@ -376,16 +378,14 @@ def run_host_install(platform: PlatformConfig, config: HostInstallConfig) -> int
 
     except Exception as e:
         log(f"\nINSTALL FAILED: {e}")
-        import traceback
-
         traceback.print_exc(file=sys.stderr)
         return 1
     finally:
         # Always try to clean up mounts
         try:
             cleanup_mounts()
-        except Exception:
-            pass
+        except Exception as cleanup_err:
+            log(f"WARNING: Cleanup failed: {cleanup_err}")
 
 
 def _device_from_partition(partition: str) -> str:
@@ -394,8 +394,6 @@ def _device_from_partition(partition: str) -> str:
     /dev/nvme0n1p6 → /dev/nvme0n1
     /dev/sda2      → /dev/sda
     """
-    import re
-
     # NVMe/MMC: strip trailing pN
     m = re.match(r"(.+?)p\d+$", partition)
     if m and ("nvme" in partition or "mmcblk" in partition):

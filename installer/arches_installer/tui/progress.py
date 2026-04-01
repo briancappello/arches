@@ -53,7 +53,7 @@ class InstallProgressScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="outer", classes="panel"):
-            yield Label("Installing...", id="title")
+            yield Label("Installing...", classes="title")
             with VerticalScroll(id="log-container"):
                 yield RichLog(
                     highlight=True,
@@ -61,6 +61,7 @@ class InstallProgressScreen(Screen):
                     wrap=True,
                     id="install-log",
                 )
+            yield Label("")
             with HorizontalGroup(classes="button-row"):
                 yield Button(
                     "Reboot",

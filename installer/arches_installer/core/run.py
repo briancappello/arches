@@ -9,9 +9,11 @@ post-mortem debugging, regardless of whether a callback is provided.
 
 from __future__ import annotations
 
+import atexit
+import re
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import IO, Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
 
@@ -25,11 +27,27 @@ LogCallback = Callable[[str], None]
 #   2. /var/log/arches-install.log — local fallback, always available.
 _VIRTIO_LOG = Path("/dev/virtio-ports/arches-log")
 _FILE_LOG = Path("/var/log/arches-install.log")
-_log_files: list = []
+_log_files: list[IO] = []
 _log_initialized = False
 
+# Rich markup tag pattern — compiled once, reused on every log call.
+_MARKUP_RE = re.compile(r"\[/?[a-z_ ]+\]")
 
-def _get_log_files():
+
+def _cleanup_log_files() -> None:
+    """Close all open log file handles."""
+    for f in _log_files:
+        try:
+            f.close()
+        except OSError:
+            pass
+    _log_files.clear()
+
+
+atexit.register(_cleanup_log_files)
+
+
+def _get_log_files() -> list[IO]:
     """Lazily open log destinations on first write."""
     global _log_files, _log_initialized
     if _log_initialized:
@@ -53,19 +71,22 @@ def _get_log_files():
     return _log_files
 
 
-def _log(msg: str, callback: LogCallback | None = None) -> None:
+def log_step(msg: str, callback: LogCallback | None = None) -> None:
+    """Log a message to the callback (if any) and to persistent log files."""
     if callback:
         callback(msg)
     # Always write to log destinations (virtio port + local file)
-    import re
-
-    clean = re.sub(r"\[/?[a-z_ ]+\]", "", msg)
+    clean = _MARKUP_RE.sub("", msg)
     for f in _get_log_files():
         try:
             f.write(clean + "\n")
             f.flush()
         except OSError:
             pass
+
+
+# Backward-compatible alias
+_log = log_step
 
 
 def run(

@@ -1,11 +1,40 @@
 """Entry point for the Arches installer."""
 
+from __future__ import annotations
+
 import argparse
 import os
 import sys
 from pathlib import Path
 
+from arches_installer.core.platform import PlatformConfig
+from arches_installer.core.template import InstallTemplate
+
 AUTO_INSTALL_PATH = Path("/root/auto-install.toml")
+
+
+def _print_dry_run_summary(
+    *,
+    title: str,
+    platform: PlatformConfig,
+    template: InstallTemplate,
+    hostname: str,
+    username: str,
+    extra_lines: list[str] | None = None,
+) -> None:
+    """Print a dry-run configuration summary (shared by --auto and --host)."""
+    layout = platform.disk_layout
+    print(f"== {title} ==")
+    print(f"  Platform:    {platform.name} ({platform.arch})")
+    print(f"  Kernel:      {platform.kernel.package}")
+    print(f"  Bootloader:  {platform.bootloader.type}")
+    print(f"  Filesystem:  {layout.filesystem}")
+    if extra_lines:
+        for line in extra_lines:
+            print(line)
+    print(f"  Template:    {template.name}")
+    print(f"  Hostname:    {hostname}")
+    print(f"  User:        {username}")
 
 
 def main() -> int:
@@ -125,32 +154,30 @@ def _run_auto(
 
     if dry_run:
         layout = platform.disk_layout
-        print("== Arches Auto Install (dry run) ==")
-        print(f"  Platform:   {platform.name} ({platform.arch})")
-        print(f"  Kernel:     {platform.kernel.package}")
-        print(f"  Bootloader: {platform.bootloader.type}")
-        print(f"  Filesystem: {layout.filesystem}")
-        print(f"  Snapshots:  {platform.bootloader.snapshot_boot}")
-        print("  Device:     (auto-detect at install time)")
-        print(f"  Template:   {config.template.name}")
-        print(f"  Hostname:   {config.hostname}")
-        print(f"  User:       {config.username}")
-        print(f"  Reboot:     {config.reboot}")
-        print(f"  Shutdown:   {config.shutdown}")
-        print(f"  Packages:   {len(config.template.install.all_packages)}")
-        print(f"  Services:   {len(config.template.services)}")
+        extra = [
+            f"  Snapshots:   {platform.bootloader.snapshot_boot}",
+            "  Device:      (auto-detect at install time)",
+        ]
+        _print_dry_run_summary(
+            title="Arches Auto Install (dry run)",
+            platform=platform,
+            template=config.template,
+            hostname=config.hostname,
+            username=config.username,
+            extra_lines=extra,
+        )
+        print(f"  Reboot:      {config.reboot}")
+        print(f"  Shutdown:    {config.shutdown}")
+        print(f"  Packages:    {len(config.template.install.all_packages)}")
+        print(f"  Services:    {len(config.template.services)}")
         if layout.subvolumes:
-            print(f"  Subvolumes: {', '.join(layout.subvolumes)}")
-        if layout.boot_size_mib > 0:
-            print(f"  /boot:      {layout.boot_size_mib}M (ext4)")
-        if layout.home_partition:
-            print("  /home:      separate partition")
+            print(f"  Subvolumes:  {', '.join(layout.subvolumes)}")
         if config.template.ansible.firstboot_roles:
             print(
                 f"  Ansible (1st boot):  {', '.join(config.template.ansible.firstboot_roles)}"
             )
         if platform.hardware_detection.enabled:
-            print(f"  HW detect:  {platform.hardware_detection.tool}")
+            print(f"  HW detect:   {platform.hardware_detection.tool}")
         print("")
         print("Dry run complete. No changes made.")
         return 0
@@ -220,18 +247,19 @@ def _run_host(
         return 1
 
     if dry_run:
-        layout = platform.disk_layout
-        print("== Arches Host Install (dry run) ==")
-        print(f"  Platform:    {platform.name} ({platform.arch})")
-        print(f"  Kernel:      {platform.kernel.package}")
-        print(f"  Bootloader:  {platform.bootloader.type}")
-        print(f"  Filesystem:  {layout.filesystem}")
-        print(f"  Template:    {config.template.name}")
-        print(f"  Hostname:    {config.hostname}")
-        print(f"  User:        {config.username}")
-        print(f"  Partition:   {config.partition}")
-        print(f"  ESP:         {config.esp_partition}")
-        print(f"  Mode:        {config.mode}")
+        extra = [
+            f"  Partition:   {config.partition}",
+            f"  ESP:         {config.esp_partition}",
+            f"  Mode:        {config.mode}",
+        ]
+        _print_dry_run_summary(
+            title="Arches Host Install (dry run)",
+            platform=platform,
+            template=config.template,
+            hostname=config.hostname,
+            username=config.username,
+            extra_lines=extra,
+        )
         if config.mode == "alongside":
             print(
                 f"  Subvolumes:  {config.subvol_prefix}, {config.subvol_prefix}-home, {config.subvol_prefix}-var"
