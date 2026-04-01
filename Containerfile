@@ -94,7 +94,7 @@ RUN --mount=type=cache,target=/var/cache/pacman/pkg,sharing=locked \
 RUN --mount=type=cache,target=/var/cache/pacman/pkg,sharing=locked \
     pacman -Syu --noconfirm && \
     pacman -S --noconfirm \
-        grub squashfs-tools erofs-utils libisoburn mtools \
+        grub squashfs-tools erofs-utils libisoburn mtools rsync \
         dosfstools e2fsprogs arch-install-scripts base-devel git \
         cmake extra-cmake-modules qt6-base qt6-declarative \
         kconfig ki18n kio knotifications kservice kwindowsystem \

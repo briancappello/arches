@@ -53,7 +53,7 @@ class InstallProgressScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="outer", classes="panel"):
-            yield Label("Installing...", classes="title")
+            yield Label("Installing...", classes="title", id="title")
             with VerticalScroll(id="log-container"):
                 yield RichLog(
                     highlight=True,

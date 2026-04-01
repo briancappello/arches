@@ -9,6 +9,14 @@ USERNAME="liveuser"
 
 echo "arches-liveuser-setup: starting"
 
+# Remove KDE Welcome Center — pulled in transitively by plasma-meta,
+# not needed in the live environment. Must be done at boot since the
+# airootfs overlay can't remove packages installed by pacstrap.
+if pacman -Qi plasma-welcome &>/dev/null; then
+    echo "arches-liveuser-setup: removing plasma-welcome"
+    pacman -Rdd --noconfirm plasma-welcome >/dev/null 2>&1 || true
+fi
+
 # Skip if user already exists
 if id "$USERNAME" &>/dev/null; then
     echo "arches-liveuser-setup: user $USERNAME already exists, skipping"
@@ -25,6 +33,34 @@ fi
 # Set empty password (passwordless login via SDDM autologin)
 echo "arches-liveuser-setup: removing password for $USERNAME"
 passwd -d "$USERNAME" >/dev/null 2>&1 || true
+
+# Override default panel layout — pin konsole, firefox, and installer
+# This must happen at boot (not in airootfs staging) because
+# plasma-desktop owns the default layout.js file.
+LAYOUT_DIR="/usr/share/plasma/layout-templates/org.kde.plasma.desktop.defaultPanel/contents"
+if [ -d "$LAYOUT_DIR" ]; then
+    echo "arches-liveuser-setup: configuring panel layout"
+    cat > "$LAYOUT_DIR/layout.js" <<'LAYOUT'
+var panel = new Panel
+panel.location = "top"
+panel.height = 2 * gridUnit
+
+var kickoff = panel.addWidget("org.kde.plasma.kickoff")
+
+var taskmanager = panel.addWidget("org.kde.plasma.taskmanager")
+taskmanager.currentConfigGroup = ["General"]
+taskmanager.writeConfig("launchers", [
+    "applications:systemsettings.desktop",
+    "applications:org.kde.konsole.desktop",
+    "applications:firefox.desktop",
+    "applications:arches-install.desktop"
+].join(","))
+
+panel.addWidget("org.kde.plasma.marginsseparator")
+panel.addWidget("org.kde.plasma.systemtray")
+panel.addWidget("org.kde.plasma.digitalclock")
+LAYOUT
+fi
 
 # Ensure home ownership
 chown -R "$USERNAME":"$USERNAME" "/home/$USERNAME" 2>/dev/null || true
