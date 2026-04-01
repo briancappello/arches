@@ -1,8 +1,8 @@
 # Build artifacts
 out/
+.aur-repo/
 .pkg-cache/
-host-install.log
-container-build.log
+*.log
 
 # ─── Staged into ISO airootfs by Makefile ─────────────
 # These are copies of source files (installer/, ansible/, platforms/)
