@@ -12,9 +12,9 @@
 # starts.
 #
 # Usage:
-#   ./scripts/qemu-install.sh                    # interactive install
+#   ./scripts/qemu-install.sh                    # interactive install (online)
 #   ./scripts/qemu-install.sh --rebuild           # force ISO rebuild
-#   ./scripts/qemu-install.sh --no-network        # offline (for testing)
+#   OFFLINE=1 ./scripts/qemu-install.sh          # offline install (cache + no network)
 #   ./scripts/qemu-install.sh --log <file>        # installer log via virtio-serial
 #   ./scripts/qemu-install.sh --fresh-disk        # fresh disk (don't reuse)
 #
@@ -32,9 +32,9 @@ EFI_VARS="/tmp/arches-efi-vars.raw"
 MEM="4G"
 SMP="4"
 SSH_PORT="2222"
-NO_NETWORK=false
 LOG_FILE=""
 FRESH_DISK=false
+OFFLINE="${OFFLINE:-0}"
 
 # ── Parse arguments ───────────────────────────────────
 BUILD_ISO_ARGS=()
@@ -42,12 +42,14 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --rebuild) BUILD_ISO_ARGS+=(--rebuild) ;;
         --platform) BUILD_ISO_ARGS+=(--platform "$2"); PLATFORM="$2"; shift ;;
-        --no-network) NO_NETWORK=true ;;
         --log) LOG_FILE="$2"; shift ;;
         --fresh-disk) FRESH_DISK=true ;;
     esac
     shift
 done
+
+# Pass OFFLINE to the ISO build
+export OFFLINE
 
 # ── Detect platform ──────────────────────────────────
 # For QEMU, override aarch64-apple → aarch64-generic. The host is Apple
@@ -105,9 +107,9 @@ fi
 
 # ── Step 3: Build QEMU arguments ─────────────────────
 
-# Network
+# Network — OFFLINE=1 disables the virtual NIC
 NET_ARGS=()
-if [[ "$NO_NETWORK" == true ]]; then
+if [[ "$OFFLINE" == "1" ]]; then
     NET_ARGS=(-nic none)
 else
     NET_ARGS=(-net nic -net user,hostfwd=tcp::${SSH_PORT}-:22)
@@ -126,8 +128,10 @@ fi
 
 echo ""
 echo "══ Launching QEMU ══"
-if [[ "$NO_NETWORK" != true ]]; then
+if [[ "$OFFLINE" != "1" ]]; then
     echo "  SSH: ssh -p $SSH_PORT <user>@localhost"
+else
+    echo "  Mode: OFFLINE (no network, packages from ISO cache)"
 fi
 echo "  Quit: Ctrl-A X (serial) or close window"
 if [[ -n "$LOG_FILE" ]]; then

@@ -2,6 +2,7 @@
 out/
 .aur-repo/
 .pkg-cache/
+.offline-cache/
 *.log
 
 # ─── Staged into ISO airootfs by Makefile ─────────────

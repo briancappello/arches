@@ -402,6 +402,23 @@ def install_pacman_conf(log: LogCallback | None = None) -> None:
         shutil.copytree(iso_repo, target_repo)
 
 
+def copy_mirrorlists(log: LogCallback | None = None) -> None:
+    """Copy active mirrorlist files from the live ISO into the installed target.
+
+    pacstrap ``-M`` skips the host mirrorlist copy, leaving the target with
+    the package-default (empty/commented) mirrorlist files.  Copying the
+    live system's populated files gives the installed system working mirrors
+    immediately — even on offline installs where reflector can't run.
+    """
+    mirrorlists = ("mirrorlist", "cachyos-mirrorlist", "cachyos-v3-mirrorlist")
+    for name in mirrorlists:
+        src = Path("/etc/pacman.d") / name
+        dst = MOUNT_ROOT / "etc/pacman.d" / name
+        if src.exists() and dst.exists():
+            shutil.copy2(src, dst)
+            _log(f"Copied mirrorlist: {name}", log)
+
+
 def sync_chroot_databases(log: LogCallback | None = None) -> None:
     """Best-effort sync of pacman databases inside the chroot.
 
@@ -861,6 +878,7 @@ def install_system(
     pacstrap(platform, template, log)
     generate_fstab(log)
     install_pacman_conf(log)
+    copy_mirrorlists(log)
     sync_chroot_databases(log)
     install_override_packages(template, log)
     configure_locale(template.system.locale, log)

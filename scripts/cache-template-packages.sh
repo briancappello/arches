@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 INSTALLER_DIR="$PROJECT_ROOT/installer/arches_installer"
 TEMPLATES_DIR="$PROJECT_ROOT/templates"
-CACHE_DIR="$PROJECT_ROOT/iso/airootfs/opt/arches/pkg-cache"
+CACHE_DIR="$PROJECT_ROOT/.offline-cache"
 PLATFORM="${1:-}"
 
 if [[ -z "$PLATFORM" ]]; then

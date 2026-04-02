@@ -11,6 +11,7 @@
 #   sudo ./scripts/build-iso.sh --template dev-workstation  # explicit template
 #   sudo ./scripts/build-iso.sh --rebuild              # force container rebuild
 #   sudo FORCE=1 ./scripts/build-iso.sh               # force AUR repo rebuild
+#   sudo OFFLINE=1 ./scripts/build-iso.sh             # pre-cache all packages for offline install
 #
 set -euo pipefail
 
@@ -119,6 +120,8 @@ FORCE_FLAG=""
 [[ "${FORCE:-}" == "1" ]] && FORCE_FLAG="FORCE=1"
 TEMPLATE_FLAG=""
 [[ -n "$TEMPLATE" ]] && TEMPLATE_FLAG="TEMPLATE=$TEMPLATE"
+OFFLINE_FLAG=""
+[[ "${OFFLINE:-0}" == "1" ]] && OFFLINE_FLAG="OFFLINE=1"
 
 # Bash as PID 1 inside a container ignores SIGINT/SIGTERM by default.
 # We register a trap that forwards the signal to all child processes,
@@ -136,7 +139,7 @@ podman run --rm --privileged \
         groupmod -g '"$BUILD_GID"' builder &&
         chown -R builder:builder /tmp &&
         chown builder:builder /home/builder &&
-        make _iso PLATFORM='"$PLATFORM"' ARCHES_ARCH='"$ARCHES_ARCH"' '"$FORCE_FLAG"' '"$TEMPLATE_FLAG"' &
+        make _iso PLATFORM='"$PLATFORM"' ARCHES_ARCH='"$ARCHES_ARCH"' '"$FORCE_FLAG"' '"$TEMPLATE_FLAG"' '"$OFFLINE_FLAG"' &
         wait $!
     '
 

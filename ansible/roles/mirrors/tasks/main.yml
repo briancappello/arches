@@ -1,0 +1,37 @@
+---
+# Refresh pacman mirrorlists on first boot.
+#
+# The installer copies the live ISO's mirrorlists into the target, which
+# gives the installed system working mirrors immediately. This role runs
+# reflector and rate-mirrors on first boot to generate fresh, geographically
+# optimal mirrors.
+#
+# All tasks use ignore_errors so a failed mirror refresh never blocks the
+# first-boot experience (e.g., if the network isn't up yet).
+
+- name: Install reflector
+  pacman:
+    name: reflector
+    state: present
+  ignore_errors: true
+
+- name: Generate fresh Arch mirrorlist with reflector
+  command: >
+    reflector
+    --protocol https
+    --sort rate
+    --latest 10
+    --save /etc/pacman.d/mirrorlist
+  ignore_errors: true
+
+- name: Refresh CachyOS mirrorlist (if rate-mirrors is available)
+  command: rate-mirrors --save /etc/pacman.d/cachyos-mirrorlist cachyos
+  ignore_errors: true
+
+- name: Refresh CachyOS v3 mirrorlist (if rate-mirrors is available)
+  command: rate-mirrors --save /etc/pacman.d/cachyos-v3-mirrorlist cachyos
+  ignore_errors: true
+
+- name: Sync pacman databases with fresh mirrors
+  command: pacman -Sy --noconfirm
+  ignore_errors: true

@@ -70,8 +70,14 @@ sudo make iso
 # Explicit template override
 sudo TEMPLATE=vm-server make iso
 
+# Offline ISO — pre-cache all packages so installs work without internet
+sudo make iso OFFLINE=1
+
 # Install into a QEMU VM (builds ISO if needed, creates disk, boots QEMU)
 make qemu-install
+
+# Offline QEMU test — builds offline ISO + boots VM without network
+make qemu-install OFFLINE=1
 ```
 
 **USB boot on Apple Silicon:**
@@ -403,7 +409,7 @@ arches/
     ├── build-aur-repo.sh                 # Pre-build AUR packages into local repo
     ├── cache-template-packages.sh        # Cache template packages for offline install
     ├── qemu-install.sh                   # Build ISO + boot QEMU VM with install disk
-    ├── qemu-test.sh                      # Automated headless QEMU install test
+    ├── detect-esp.sh                     # Auto-detect ESP partition and bootloader
     ├── iso-to-usb-image.sh              # Convert ISO to GPT+FAT32 USB image (aarch64)
     ├── write-usb.sh                      # Interactive USB drive writer (device select + confirm)
     ├── host-install.sh                   # Host install into btrfs subvolumes (Apple Silicon)

@@ -51,4 +51,4 @@ enable = [
 ]
 
 [ansible]
-firstboot_roles = ["base", "zsh", "vm-server"]
+firstboot_roles = ["mirrors", "base", "zsh", "vm-server"]

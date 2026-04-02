@@ -12,18 +12,19 @@ PLATFORMS   := $(PROJECT_DIR)/platforms
 SCRIPTS     := $(PROJECT_DIR)/scripts
 WORK_DIR    := /tmp/arches-work
 OUT_DIR     := $(PROJECT_DIR)/out
+OFFLINE     ?= 0
 
 # ─── Phony targets ────────────────────────────────────
 
 .PHONY: help \
         iso usb \
-        host-install host-install-rebuild host-install-dry host-clean \
+        sv-install sv-dry-run sv-uninstall \
         fmt test test-unit test-template dry-run \
-        qemu-install qemu-test qemu-boot qemu-raid qemu-disk qemu-ansible \
-        clean clean-work clean-all \
+        qemu-install qemu-boot qemu-raid qemu-disk qemu-ansible \
+        clean clean-caches clean-all \
         _iso _aur-repo \
         _stage-installer _stage-ansible _stage-platform _stage-bootconfig \
-        _assemble-packages _stage-graphical _cache-packages \
+        _assemble-packages _stage-graphical _cache-packages _stage-offline-cache \
         _check-root _check-deps
 
 # ─── Default ──────────────────────────────────────────
@@ -50,8 +51,8 @@ help: ## Show this help
 
 ##@ Build
 
-iso: ## Build ISO for auto-detected platform (requires sudo + Podman)
-	$(SCRIPTS)/build-iso.sh
+iso: ## Build ISO (OFFLINE=1 to pre-cache all packages for offline install)
+	OFFLINE=$(OFFLINE) $(SCRIPTS)/build-iso.sh
 
 usb: ## Build install media and write to USB drive (requires sudo + Podman)
 	$(SCRIPTS)/build-usb.sh
@@ -107,11 +108,8 @@ dry-run: ## Dry-run the example auto-install config
 
 ##@ QEMU
 
-qemu-install: ## Build ISO and boot QEMU VM with install disk attached
-	$(SCRIPTS)/qemu-install.sh
-
-qemu-test: ## Automated install test — headless QEMU, auto-install, verify (TIMEOUT=900)
-	$(SCRIPTS)/qemu-test.sh
+qemu-install: ## Build ISO + boot QEMU VM (OFFLINE=1 for offline install, no network)
+	OFFLINE=$(OFFLINE) $(SCRIPTS)/qemu-install.sh
 
 qemu-boot: ## Boot the installed test disk in QEMU (UEFI, no ISO)
 	@echo "══ Booting installed disk in QEMU (UEFI) ══"
@@ -173,6 +171,7 @@ clean: ## Remove staged files from ISO airootfs
 	rm -f  $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
 	rm -f  $(ISO_PROFILE)/airootfs/root/auto-install.toml
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches-repo
+	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache
 	rm -f  $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub
 	rm -f  $(ISO_PROFILE)/packages.x86_64
 	rm -f  $(ISO_PROFILE)/packages.aarch64
@@ -195,11 +194,13 @@ clean: ## Remove staged files from ISO airootfs
 	rm -rf $(ISO_PROFILE)/airootfs/home
 
 
-clean-work: ## Remove mkarchiso work directory
-	@echo "══ Cleaning work directory ══"
-	rm -rf $(WORK_DIR)
+clean-caches: ## Remove AUR repo, pacman cache, and offline package cache
+	@echo "══ Cleaning caches ══"
+	rm -rf .aur-repo
+	rm -rf .pkg-cache
+	rm -rf .offline-cache
 
-clean-all: clean clean-work ## Remove all build artifacts
+clean-all: clean clean-caches ## Remove all build artifacts
 	@echo "══ Cleaning output ══"
 	rm -rf $(OUT_DIR)
 	rm -f /tmp/arches-test-disk.qcow2
@@ -215,8 +216,13 @@ clean-all: clean clean-work ## Remove all build artifacts
 # PLATFORM, ARCHES_ARCH, and TEMPLATE are passed in by the container.
 _iso: export ARCHES_ARCH := $(ARCHES_ARCH)
 _iso: export ARCHES_PLATFORM := $(PLATFORM)
-_iso: _check-root _check-deps _aur-repo _stage-installer _stage-ansible _stage-platform _stage-bootconfig _assemble-packages _stage-graphical _cache-packages
-	@echo "══ Building Arches ISO ($(PLATFORM), template: $(TEMPLATE)) ══"
+_iso: _check-root _check-deps _aur-repo _stage-installer _stage-ansible _stage-platform _stage-bootconfig _assemble-packages _stage-graphical $(if $(filter 1,$(OFFLINE)),_cache-packages _stage-offline-cache)
+	@# Ensure pkg-cache is NOT in airootfs for online builds (may be left over
+	@# from a prior OFFLINE=1 build). The host-side .offline-cache/ is untouched.
+	@if [ "$(OFFLINE)" != "1" ]; then \
+		rm -rf $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache; \
+	fi
+	@echo "══ Building Arches ISO ($(PLATFORM), template: $(TEMPLATE)$(if $(filter 1,$(OFFLINE)), — OFFLINE)) ══"
 	@rm -rf $(WORK_DIR)
 	@mkdir -p $(OUT_DIR)
 	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
@@ -433,8 +439,14 @@ Categories=System;\n' > $(ISO_PROFILE)/airootfs/usr/share/applications/arches-in
 	fi
 
 _cache-packages:
-	@echo "══ Caching template packages ══"
+	@echo "══ Caching template packages (into .offline-cache/) ══"
 	@$(SCRIPTS)/cache-template-packages.sh $(PLATFORM)
+
+_stage-offline-cache:
+	@echo "══ Staging offline package cache into ISO ══"
+	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache
+	@cp -a .offline-cache/* $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache/ 2>/dev/null || true
+	@echo "  Staged $$(ls .offline-cache/*.pkg.tar.* 2>/dev/null | wc -l) packages"
 
 # ─── Checks ──────────────────────────────────────────
 

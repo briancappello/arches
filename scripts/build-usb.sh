@@ -28,6 +28,9 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+# Pass OFFLINE through to build-iso.sh
+export OFFLINE="${OFFLINE:-0}"
+
 # ── Detect platform ──────────────────────────────────
 source "$SCRIPT_DIR/detect-platform.sh"
 echo "Platform: $PLATFORM"

@@ -104,4 +104,4 @@ enable = [
 ]
 
 [ansible]
-firstboot_roles = ["base", "zsh", "kde", "dev-tools"]
+firstboot_roles = ["mirrors", "base", "zsh", "kde", "dev-tools"]
