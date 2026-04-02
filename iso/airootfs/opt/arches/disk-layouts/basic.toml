@@ -1,0 +1,34 @@
+# Basic disk layout — standard single-disk install
+#
+# 2 GiB ESP (doubles as /boot for Limine, or /boot/efi for GRUB),
+# btrfs root filling the rest with @, @home, @var subvolumes.
+
+[meta]
+name = "Basic"
+description = "2 GiB ESP, btrfs root filling the rest. Standard single-disk install."
+bootloaders = ["limine", "grub"]
+
+[[partitions]]
+filesystem = "vfat"
+size = "2G"
+mount_point = "/boot"
+label = "ESP"
+
+[[partitions]]
+filesystem = "btrfs"
+size = "*"
+mount_point = "/"
+label = "archroot"
+mount_options = "compress=zstd:1,noatime,ssd,discard=async"
+
+[[partitions.subvolumes]]
+name = "@"
+mount_point = "/"
+
+[[partitions.subvolumes]]
+name = "@home"
+mount_point = "/home"
+
+[[partitions.subvolumes]]
+name = "@var"
+mount_point = "/var"

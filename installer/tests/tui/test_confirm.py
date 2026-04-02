@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from textual.widgets import Static
 
-from textual.widgets import Input, OptionList, Static
-
-from arches_installer.core.disk import BlockDevice
+from arches_installer.core.disk_layout import (
+    DiskLayout,
+    PartitionSpec,
+    SubvolumeSpec,
+)
 from arches_installer.core.platform import (
     BootloaderPlatformConfig,
-    DiskLayoutConfig,
     HardwareDetectionConfig,
     KernelConfig,
     KernelVariant,
@@ -24,22 +25,35 @@ from arches_installer.core.template import (
 from arches_installer.tui.app import ArchesApp
 
 
-FAKE_DEVICES = [
-    BlockDevice("vda", "/dev/vda", "20G", "QEMU HARDDISK", False, []),
-]
-
-FAKE_TEMPLATES = [
-    InstallTemplate(
-        name="Dev Workstation",
-        description="KDE + btrfs",
-        system=SystemConfig(),
-        install=InstallPhases(pacstrap=["git", "neovim"]),
-        services=["NetworkManager", "sddm"],
-        ansible=AnsibleConfig(
-            firstboot_roles=["base", "zsh", "kde"],
-        ),
+FAKE_TEMPLATE = InstallTemplate(
+    name="Dev Workstation",
+    description="KDE + btrfs",
+    system=SystemConfig(),
+    install=InstallPhases(pacstrap=["git", "neovim"]),
+    services=["NetworkManager", "sddm"],
+    ansible=AnsibleConfig(
+        firstboot_roles=["base", "zsh", "kde"],
     ),
-]
+)
+
+FAKE_LAYOUT = DiskLayout(
+    name="Basic",
+    description="Test layout",
+    bootloaders=["limine"],
+    partitions=[
+        PartitionSpec(size="2G", filesystem="vfat", mount_point="/boot", label="ESP"),
+        PartitionSpec(
+            size="*",
+            filesystem="btrfs",
+            mount_point="/",
+            label="archroot",
+            subvolumes=[
+                SubvolumeSpec(name="@", mount_point="/"),
+                SubvolumeSpec(name="@home", mount_point="/home"),
+            ],
+        ),
+    ],
+)
 
 TEST_PLATFORM = PlatformConfig(
     name="x86-64",
@@ -51,61 +65,31 @@ TEST_PLATFORM = PlatformConfig(
         ]
     ),
     bootloader=BootloaderPlatformConfig(snapshot_boot=True),
-    disk_layout=DiskLayoutConfig(
-        filesystem="btrfs",
-        subvolumes=["@", "@home", "@var", "@snapshots"],
-    ),
     hardware_detection=HardwareDetectionConfig(
         enabled=True, tool="chwd", args=["-a"], optional=True
     ),
 )
 
 
-async def _navigate_to_confirm(pilot) -> None:
-    """Navigate all the way from welcome to confirm screen."""
-    # Welcome — select disk
-    option_list = pilot.app.query_one("#disk-list", OptionList)
-    option_list.highlighted = 0
-    await pilot.click("#btn-continue")
-    await pilot.wait_for_animation()
-
-    # Partition — auto
-    await pilot.click("#btn-auto")
-    await pilot.wait_for_animation()
-
-    # Template — select first
-    template_list = pilot.app.screen.query_one("#template-list", OptionList)
-    template_list.highlighted = 0
-    await pilot.click("#btn-continue")
-    await pilot.wait_for_animation()
-
-    # User setup — fill in and continue
-    pilot.app.screen.query_one("#input-hostname", Input).value = "testbox"
-    pilot.app.screen.query_one("#input-username", Input).value = "testuser"
-    pilot.app.screen.query_one("#input-password", Input).value = "pass1234"
-    pilot.app.screen.query_one("#input-password-confirm", Input).value = "pass1234"
-    await pilot.click("#btn-continue")
-    await pilot.wait_for_animation()
-
-
-@patch(
-    "arches_installer.tui.welcome.detect_block_devices",
-    return_value=FAKE_DEVICES,
-)
-@patch(
-    "arches_installer.tui.template_select.discover_templates",
-    return_value=FAKE_TEMPLATES,
-)
-@patch("arches_installer.tui.partition.subprocess")
-async def test_confirm_shows_summary(
-    mock_subprocess, mock_templates, mock_devices
-) -> None:
-    """Confirm screen should show a summary of all selections."""
-    mock_subprocess.run.return_value.stdout = "NAME SIZE\nvda 20G\n"
+def _setup_app_for_confirm() -> ArchesApp:
+    """Create an app with all state pre-populated for the confirm screen."""
     app = ArchesApp(platform=TEST_PLATFORM)
+    app.selected_device = "/dev/vda"
+    app.selected_template = FAKE_TEMPLATE
+    app.selected_layout = FAKE_LAYOUT
+    app.partition_mode = "auto"
+    app.hostname = "testbox"
+    app.username = "testuser"
+    app.password = "pass1234"
+    app.push_screen_on_mount = "confirm"
+    return app
+
+
+async def test_confirm_shows_summary() -> None:
+    """Confirm screen should show a summary of all selections."""
+    app = _setup_app_for_confirm()
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.wait_for_animation()
-        await _navigate_to_confirm(pilot)
 
         assert app.screen.__class__.__name__ == "ConfirmScreen"
 
@@ -114,59 +98,32 @@ async def test_confirm_shows_summary(
 
         assert "Dev Workstation" in rendered
         assert "/dev/vda" in rendered
-        assert "btrfs" in rendered
+        assert "Basic" in rendered
         assert "testbox" in rendered
         assert "testuser" in rendered
         assert "linux-cachyos" in rendered
         assert "x86-64" in rendered
 
 
-@patch(
-    "arches_installer.tui.welcome.detect_block_devices",
-    return_value=FAKE_DEVICES,
-)
-@patch(
-    "arches_installer.tui.template_select.discover_templates",
-    return_value=FAKE_TEMPLATES,
-)
-@patch("arches_installer.tui.partition.subprocess")
-async def test_confirm_shows_subvolumes(
-    mock_subprocess, mock_templates, mock_devices
-) -> None:
-    """Confirm screen should list btrfs subvolumes."""
-    mock_subprocess.run.return_value.stdout = "NAME SIZE\nvda 20G\n"
-    app = ArchesApp(platform=TEST_PLATFORM)
+async def test_confirm_shows_layout_partitions() -> None:
+    """Confirm screen should show partition layout details."""
+    app = _setup_app_for_confirm()
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.wait_for_animation()
-        await _navigate_to_confirm(pilot)
 
         summary = app.screen.query_one("#summary", Static)
         rendered = str(summary.render())
 
+        assert "vfat" in rendered
+        assert "btrfs" in rendered
         assert "@home" in rendered
-        assert "@snapshots" in rendered
 
 
-@patch(
-    "arches_installer.tui.welcome.detect_block_devices",
-    return_value=FAKE_DEVICES,
-)
-@patch(
-    "arches_installer.tui.template_select.discover_templates",
-    return_value=FAKE_TEMPLATES,
-)
-@patch("arches_installer.tui.partition.subprocess")
-async def test_confirm_shows_ansible_roles(
-    mock_subprocess,
-    mock_templates,
-    mock_devices,
-) -> None:
-    """Confirm screen should list chroot and first-boot ansible roles."""
-    mock_subprocess.run.return_value.stdout = "NAME SIZE\nvda 20G\n"
-    app = ArchesApp(platform=TEST_PLATFORM)
+async def test_confirm_shows_ansible_roles() -> None:
+    """Confirm screen should list ansible roles."""
+    app = _setup_app_for_confirm()
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.wait_for_animation()
-        await _navigate_to_confirm(pilot)
 
         summary = app.screen.query_one("#summary", Static)
         rendered = str(summary.render())
@@ -176,26 +133,12 @@ async def test_confirm_shows_ansible_roles(
         assert "kde" in rendered
 
 
-@patch(
-    "arches_installer.tui.welcome.detect_block_devices",
-    return_value=FAKE_DEVICES,
-)
-@patch(
-    "arches_installer.tui.template_select.discover_templates",
-    return_value=FAKE_TEMPLATES,
-)
-@patch("arches_installer.tui.partition.subprocess")
-async def test_confirm_back_returns_to_user_setup(
-    mock_subprocess,
-    mock_templates,
-    mock_devices,
-) -> None:
-    """Back button should return to user setup screen."""
-    mock_subprocess.run.return_value.stdout = "NAME SIZE\nvda 20G\n"
-    app = ArchesApp(platform=TEST_PLATFORM)
+async def test_confirm_back_returns_to_user_setup() -> None:
+    """Back button should return to the previous screen."""
+    app = _setup_app_for_confirm()
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.wait_for_animation()
-        await _navigate_to_confirm(pilot)
+        assert app.screen.__class__.__name__ == "ConfirmScreen"
         await pilot.click("#btn-back")
-
-        assert app.screen.__class__.__name__ == "UserSetupScreen"
+        # After popping confirm, we should be back to whatever was before
+        assert app.screen.__class__.__name__ != "ConfirmScreen"

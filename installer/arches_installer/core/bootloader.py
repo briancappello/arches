@@ -11,7 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from arches_installer.core.disk import MOUNT_ROOT
+from arches_installer.core.disk import MOUNT_ROOT, PartitionMap
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.run import LogCallback, _log, chroot_run, run
 
@@ -51,16 +51,24 @@ def get_root_partuuid(root_partition: str) -> str:
 def write_limine_defaults(
     platform: PlatformConfig,
     root_partition: str,
+    parts: PartitionMap | None = None,
     log: LogCallback | None = None,
 ) -> None:
-    """Write /etc/default/limine for limine-entry-tool to use."""
+    """Write /etc/default/limine for limine-entry-tool to use.
+
+    Args:
+        platform: Platform configuration (kernel flags, bootloader config).
+        root_partition: Root partition device path (for UUID lookup).
+        parts: PartitionMap with filesystem metadata. Used to determine
+            whether rootflags=subvol=/@ is needed.
+        log: Optional log callback.
+    """
     root_uuid = get_root_uuid(root_partition)
-    layout = platform.disk_layout
 
     # Build kernel cmdline
     cmdline_parts = [f"root=UUID={root_uuid}", "rw"]
 
-    if layout.filesystem == "btrfs" and layout.subvolumes:
+    if parts and parts.root_filesystem == "btrfs" and parts.root_subvolumes:
         cmdline_parts.append("rootflags=subvol=/@")
 
     # Platform-specific kernel flags (console, loglevel, video, etc.)
@@ -157,6 +165,7 @@ def _install_limine(
     device: str,
     esp_partition: str,
     root_partition: str,
+    parts: PartitionMap | None = None,
     log: LogCallback | None = None,
 ) -> None:
     """Full Limine install pipeline."""
@@ -164,7 +173,7 @@ def _install_limine(
     _log(f"Detected firmware: {firmware}", log)
 
     # Write /etc/default/limine config
-    write_limine_defaults(platform, root_partition, log)
+    write_limine_defaults(platform, root_partition, parts=parts, log=log)
 
     # limine-mkinitcpio-hook is installed by pacstrap (via base_packages).
     # It automatically regenerates limine.conf from boot entries whenever
@@ -440,13 +449,26 @@ def install_bootloader(
     device: str,
     esp_partition: str,
     root_partition: str,
+    parts: PartitionMap | None = None,
     log: LogCallback | None = None,
 ) -> None:
-    """Install the bootloader specified by the platform config."""
+    """Install the bootloader specified by the platform config.
+
+    Args:
+        platform: Platform configuration.
+        device: The target block device (e.g. /dev/sda).
+        esp_partition: ESP partition device path.
+        root_partition: Root partition device path.
+        parts: PartitionMap with filesystem metadata (used by Limine to
+            determine btrfs rootflags).
+        log: Optional log callback.
+    """
     bootloader_type = platform.bootloader.type
 
     if bootloader_type == "limine":
-        _install_limine(platform, device, esp_partition, root_partition, log)
+        _install_limine(
+            platform, device, esp_partition, root_partition, parts=parts, log=log
+        )
     elif bootloader_type == "grub":
         _install_grub(platform, device, esp_partition, root_partition, log)
     else:

@@ -9,6 +9,12 @@ Unlike the ISO-based auto.py flow, host-install:
   - Creates btrfs subvolumes on the existing partition
   - Optionally generates a GRUB boot entry on the host for dual-boot
   - Copies Apple Silicon firmware from the host into the target
+
+TODO(asahi): This module still references platform.disk_layout which has
+been removed from PlatformConfig.  The prepare_subvolume() function was
+also removed from disk.py.  This module needs to be refactored to work
+with the new DiskLayout model.  It is intentionally left in a broken state
+until the Apple Silicon host-install work is picked up.
 """
 
 from __future__ import annotations
@@ -26,7 +32,6 @@ from arches_installer.core.bootloader import install_bootloader
 from arches_installer.core.disk import (
     MOUNT_ROOT,
     cleanup_mounts,
-    prepare_subvolume,
 )
 from arches_installer.core.firstboot import inject_firstboot_service
 from arches_installer.core.install import install_system
@@ -37,6 +42,16 @@ from arches_installer.core.template import (
     load_template,
     resolve_template,
 )
+
+
+# TODO(asahi): prepare_subvolume was removed from disk.py as part of the
+# disk layout refactor.  This module needs to be refactored to use the
+# new DiskLayout model.  For now, define a stub that raises.
+def prepare_subvolume(*args, **kwargs):
+    raise NotImplementedError(
+        "prepare_subvolume has been removed. "
+        "host_install.py needs refactoring for the new DiskLayout model."
+    )
 
 
 @dataclass

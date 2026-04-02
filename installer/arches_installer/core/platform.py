@@ -1,9 +1,9 @@
 """Load and validate platform configuration from TOML files.
 
 A platform defines the hardware-level foundation: kernel, package repos,
-bootloader, disk layout, hardware detection, and base packages. Templates
-build on top of the platform to define workload-specific packages and
-configuration.
+bootloader, hardware detection, and base packages. Templates build on top
+of the platform to define workload-specific packages and configuration.
+Disk layouts are now a separate concept (see ``disk_layout.py``).
 """
 
 from __future__ import annotations
@@ -67,24 +67,6 @@ class BootloaderPlatformConfig:
 
 
 @dataclass
-class DiskLayoutConfig:
-    """Default disk layout for auto-install.
-
-    On x86-64 (Limine): ESP doubles as /boot, btrfs root with subvolumes.
-    On aarch64 (GRUB): ESP at /boot/efi, btrfs root with subvolumes.
-        GRUB reads kernels from btrfs natively — no separate /boot needed.
-    """
-
-    filesystem: str = "ext4"
-    mount_options: str = "noatime"
-    subvolumes: list[str] = field(default_factory=list)
-    esp_size_mib: int = 512
-    boot_size_mib: int = 0  # 0 = no separate /boot (ESP is /boot)
-    home_partition: bool = False  # separate /home partition
-    swap: str = "zram"
-
-
-@dataclass
 class HardwareDetectionConfig:
     enabled: bool = False
     tool: str = ""
@@ -101,16 +83,18 @@ class PlatformConfig:
     arch: str
     kernel: KernelConfig
     bootloader: BootloaderPlatformConfig
-    disk_layout: DiskLayoutConfig
     hardware_detection: HardwareDetectionConfig
     base_packages: list[str] = field(default_factory=list)
+    # Swap strategy — typically "zram" for compressed in-memory swap.
+    # Moved here from the removed DiskLayoutConfig.
+    swap: str = "zram"
     # CachyOS optimization tier for x86-64 platforms.  Controls which
     # CachyOS repo tier is used for optimized packages (affects the
     # entire package set, not just the kernel).  Valid values:
-    #   "x86-64"     — baseline (no tier-specific repos, kernels only)
-    #   "x86-64-v3"  — AVX2/SSE4.2 (2011+ hardware)
-    #   "x86-64-v4"  — AVX-512 (Zen 4+, Haswell+)
-    #   "znver4"     — AMD Zen 4/5 specific tuning
+    #   "x86-64"     -- baseline (no tier-specific repos, kernels only)
+    #   "x86-64-v3"  -- AVX2/SSE4.2 (2011+ hardware)
+    #   "x86-64-v4"  -- AVX-512 (Zen 4+, Haswell+)
+    #   "znver4"     -- AMD Zen 4/5 specific tuning
     # Empty string for non-x86 platforms (CachyOS is x86-64 only).
     cachyos_optimization_tier: str = ""
     # Platform-specific kernel command-line parameters (console, loglevel,
@@ -133,11 +117,10 @@ class PlatformConfig:
         plat = data.get("platform", {})
         kern = data.get("kernel", {})
         boot = data.get("bootloader", {})
-        disk = data.get("disk_layout", {})
         hw = data.get("hardware_detection", {})
         base = data.get("base_packages", {})
 
-        # Parse kernel variants — supports the variants list format:
+        # Parse kernel variants -- supports the variants list format:
         #   [kernel]
         #   variants = [
         #       { package = "linux-cachyos", headers = "linux-cachyos-headers" },
@@ -153,7 +136,7 @@ class PlatformConfig:
                 for v in raw_variants
             ]
         else:
-            # Fallback for empty/missing variants — use generic defaults
+            # Fallback for empty/missing variants -- use generic defaults
             variants = [
                 KernelVariant(
                     package=kern.get("package", "linux"),
@@ -168,6 +151,9 @@ class PlatformConfig:
         if not cachyos_tier and arch == "x86_64":
             cachyos_tier = "x86-64"
 
+        # Swap strategy (was in [disk_layout], now top-level in [platform])
+        swap = plat.get("swap", "zram")
+
         return cls(
             name=plat.get("name", "unknown"),
             description=plat.get("description", ""),
@@ -180,15 +166,6 @@ class PlatformConfig:
                 supports_bios=boot.get("supports_bios", True),
                 snapshot_boot=boot.get("snapshot_boot", False),
             ),
-            disk_layout=DiskLayoutConfig(
-                filesystem=disk.get("filesystem", "ext4"),
-                mount_options=disk.get("mount_options", "noatime"),
-                subvolumes=disk.get("subvolumes", []),
-                esp_size_mib=disk.get("esp_size_mib", 512),
-                boot_size_mib=disk.get("boot_size_mib", 0),
-                home_partition=disk.get("home_partition", False),
-                swap=disk.get("swap", "zram"),
-            ),
             hardware_detection=HardwareDetectionConfig(
                 enabled=hw.get("enabled", False),
                 tool=hw.get("tool", ""),
@@ -196,6 +173,7 @@ class PlatformConfig:
                 optional=hw.get("optional", True),
             ),
             base_packages=base.get("install", []),
+            swap=swap,
             cachyos_optimization_tier=cachyos_tier,
             kernel_flags=kern.get("flags", []),
             default_template=plat.get("default_template", ""),

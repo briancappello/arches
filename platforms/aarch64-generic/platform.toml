@@ -8,6 +8,7 @@ name = "aarch64-generic"
 description = "Generic ARM64 with Arch Linux ARM"
 arch = "aarch64"
 default_template = "dev-workstation"
+swap = "zram"
 
 [kernel]
 variants = [
@@ -26,16 +27,6 @@ efi_binary = "BOOTAA64.EFI"
 efi_fallback_path = "EFI/BOOT/BOOTAA64.EFI"
 supports_bios = false
 snapshot_boot = true
-
-[disk_layout]
-# ESP + btrfs root with subvolumes. GRUB reads btrfs natively so
-# /boot lives on the @ subvolume — no separate /boot partition needed.
-# ESP mounts at /boot/efi for GRUB's EFI binary only.
-filesystem = "btrfs"
-mount_options = "compress=zstd:1,noatime"
-subvolumes = ["@", "@home", "@var"]
-esp_size_mib = 512
-swap = "zram"
 
 [hardware_detection]
 enabled = false

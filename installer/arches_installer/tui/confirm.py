@@ -1,4 +1,4 @@
-"""Confirmation screen — review selections before install."""
+"""Confirmation screen -- review selections before install."""
 
 from __future__ import annotations
 
@@ -48,9 +48,10 @@ class ConfirmScreen(Screen):
             summary.update("Error: no template selected")
             return
 
-        layout = platform.disk_layout
         mode = self.app.partition_mode
         parts = self.app.partition_map
+        layout = self.app.selected_layout
+        raid = self.app.raid_config
 
         text = (
             f"  Platform:    {platform.name}\n"
@@ -61,6 +62,15 @@ class ConfirmScreen(Screen):
             f"  Bootloader:  {platform.bootloader.type}\n"
         )
 
+        # Show RAID config if set
+        if raid:
+            text += (
+                f"  RAID:        {raid.backend.value} "
+                f"RAID{raid.level.value} "
+                f"({len(raid.devices)} disks)\n"
+            )
+            text += f"  RAID disks:  {', '.join(raid.devices)}\n"
+
         if mode == "manual" and parts:
             text += f"  Root:        {parts.root}\n"
             text += f"  ESP:         {parts.esp}\n"
@@ -68,10 +78,15 @@ class ConfirmScreen(Screen):
                 text += f"  Boot:        {parts.boot}\n"
             if parts.home:
                 text += f"  Home:        {parts.home}\n"
-        else:
-            text += f"  Filesystem:  {layout.filesystem}\n"
-            if layout.filesystem == "btrfs" and layout.subvolumes:
-                text += f"  Subvolumes:  {', '.join(layout.subvolumes)}\n"
+        elif layout:
+            text += f"  Disk layout: {layout.name}\n"
+            for i, part in enumerate(layout.partitions):
+                fs = part.filesystem or "raw"
+                mp = part.mount_point or "(none)"
+                text += f"    Part {i + 1}: {fs}  {part.size}  -> {mp}\n"
+                for sv in part.subvolumes:
+                    sv_mp = sv.mount_point or "(none)"
+                    text += f"      subvol: {sv.name} -> {sv_mp}\n"
 
         text += (
             f"  Snapshots:   {'Yes' if platform.bootloader.snapshot_boot else 'No'}\n"

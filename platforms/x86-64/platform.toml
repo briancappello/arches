@@ -12,6 +12,7 @@ description = "x86-64 with CachyOS x86-64-v3 optimized packages (AVX2/SSE4.2)"
 arch = "x86_64"
 cachyos_optimization_tier = "x86-64-v3"
 default_template = "dev-workstation"
+swap = "zram"
 
 [kernel]
 # Multiple kernel variants produce multiple bootloader entries.
@@ -37,14 +38,6 @@ efi_binary = "BOOTX64.EFI"
 efi_fallback_path = "EFI/BOOT/BOOTX64.EFI"
 supports_bios = true
 snapshot_boot = true
-
-[disk_layout]
-# Default auto-install layout: ESP doubles as /boot, btrfs with subvolumes
-filesystem = "btrfs"
-mount_options = "compress=zstd:1,noatime,ssd,discard=async"
-subvolumes = ["@", "@home", "@var"]
-esp_size_mib = 2048  # large ESP for snapshot kernel copies
-swap = "zram"
 
 [hardware_detection]
 enabled = true

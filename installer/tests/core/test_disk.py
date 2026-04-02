@@ -1,4 +1,4 @@
-"""Tests for disk partitioning, mount detection, and block device discovery."""
+"""Tests for disk detection, mount validation, and block device discovery."""
 
 from __future__ import annotations
 
@@ -15,9 +15,6 @@ from arches_installer.core.disk import (
     detect_block_devices,
     detect_mounts,
     detect_single_disk,
-    partition_disk_aarch64,
-    partition_disk_x86,
-    prepare_subvolume,
     validate_mounts,
 )
 
@@ -34,6 +31,8 @@ def test_partition_map_defaults() -> None:
     assert pm.root == "/dev/sda2"
     assert pm.boot == ""
     assert pm.home == ""
+    assert pm.root_filesystem == ""
+    assert pm.root_subvolumes == []
 
 
 def test_partition_map_all_fields() -> None:
@@ -42,11 +41,15 @@ def test_partition_map_all_fields() -> None:
         root="/dev/sda3",
         boot="/dev/sda2",
         home="/dev/sda4",
+        root_filesystem="btrfs",
+        root_subvolumes=["@", "@home", "@var"],
     )
     assert pm.esp == "/dev/sda1"
     assert pm.boot == "/dev/sda2"
     assert pm.root == "/dev/sda3"
     assert pm.home == "/dev/sda4"
+    assert pm.root_filesystem == "btrfs"
+    assert pm.root_subvolumes == ["@", "@home", "@var"]
 
 
 # ---------------------------------------------------------------------------
@@ -67,67 +70,6 @@ def test_part_name_nvme() -> None:
 def test_part_name_mmc() -> None:
     assert _part_name("/dev/mmcblk0", 1) == "/dev/mmcblk0p1"
     assert _part_name("/dev/mmcblk0", 2) == "/dev/mmcblk0p2"
-
-
-# ---------------------------------------------------------------------------
-# partition_disk_x86()
-# ---------------------------------------------------------------------------
-
-
-@patch("arches_installer.core.disk.run")
-def test_partition_disk_x86(mock_run: MagicMock) -> None:
-    """x86 partitioning: two sgdisk calls, returns ESP + root, no boot/home."""
-    pm = partition_disk_x86("/dev/sda", esp_size_mib=2048)
-
-    assert mock_run.call_count == 2
-    mock_run.assert_any_call(["sgdisk", "-n", "1:0:+2048M", "-t", "1:EF00", "/dev/sda"])
-    mock_run.assert_any_call(["sgdisk", "-n", "2:0:0", "-t", "2:8300", "/dev/sda"])
-
-    assert pm.esp == "/dev/sda1"
-    assert pm.root == "/dev/sda2"
-    assert pm.boot == ""
-    assert pm.home == ""
-
-
-@patch("arches_installer.core.disk.run")
-def test_partition_disk_x86_nvme(mock_run: MagicMock) -> None:
-    """x86 partitioning on NVMe uses the 'p' partition separator."""
-    pm = partition_disk_x86("/dev/nvme0n1", esp_size_mib=512)
-
-    assert pm.esp == "/dev/nvme0n1p1"
-    assert pm.root == "/dev/nvme0n1p2"
-
-
-# ---------------------------------------------------------------------------
-# partition_disk_aarch64()
-# ---------------------------------------------------------------------------
-
-
-@patch("arches_installer.core.disk.run")
-def test_partition_disk_aarch64(mock_run: MagicMock) -> None:
-    """aarch64 partitioning: four sgdisk calls, returns all four fields."""
-    pm = partition_disk_aarch64("/dev/sda", esp_size_mib=512, boot_size_mib=1024)
-
-    assert mock_run.call_count == 4
-    mock_run.assert_any_call(["sgdisk", "-n", "1:0:+512M", "-t", "1:EF00", "/dev/sda"])
-    mock_run.assert_any_call(["sgdisk", "-n", "2:0:+1024M", "-t", "2:8300", "/dev/sda"])
-    mock_run.assert_any_call(["sgdisk", "-n", "3:0:+50%", "-t", "3:8300", "/dev/sda"])
-    mock_run.assert_any_call(["sgdisk", "-n", "4:0:0", "-t", "4:8300", "/dev/sda"])
-
-    assert pm.esp == "/dev/sda1"
-    assert pm.boot == "/dev/sda2"
-    assert pm.root == "/dev/sda3"
-    assert pm.home == "/dev/sda4"
-
-
-@patch("arches_installer.core.disk.run")
-def test_partition_disk_aarch64_nvme(mock_run: MagicMock) -> None:
-    pm = partition_disk_aarch64("/dev/nvme0n1", esp_size_mib=512, boot_size_mib=1024)
-
-    assert pm.esp == "/dev/nvme0n1p1"
-    assert pm.boot == "/dev/nvme0n1p2"
-    assert pm.root == "/dev/nvme0n1p3"
-    assert pm.home == "/dev/nvme0n1p4"
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +96,7 @@ def test_detect_mounts_no_root() -> None:
 
 
 def test_detect_mounts_limine_style() -> None:
-    """Root at /mnt + ESP at /mnt/boot → Limine-style PartitionMap."""
+    """Root at /mnt + ESP at /mnt/boot -> Limine-style PartitionMap."""
     content = _proc_mounts(
         [
             "/dev/sda2 /mnt ext4 rw,noatime 0 0",
@@ -172,7 +114,7 @@ def test_detect_mounts_limine_style() -> None:
 
 
 def test_detect_mounts_grub_style() -> None:
-    """Root at /mnt + /boot at /mnt/boot + ESP at /mnt/boot/efi → GRUB ext4-style."""
+    """Root at /mnt + /boot at /mnt/boot + ESP at /mnt/boot/efi -> GRUB ext4-style."""
     content = _proc_mounts(
         [
             "/dev/sda3 /mnt ext4 rw,noatime 0 0",
@@ -191,7 +133,7 @@ def test_detect_mounts_grub_style() -> None:
 
 
 def test_detect_mounts_grub_btrfs_style() -> None:
-    """Root at /mnt (btrfs) + ESP at /mnt/boot/efi, no separate /boot → GRUB+btrfs."""
+    """Root at /mnt (btrfs) + ESP at /mnt/boot/efi, no separate /boot -> GRUB+btrfs."""
     content = _proc_mounts(
         [
             "/dev/sda2 /mnt btrfs rw,noatime,compress=zstd:1,subvol=/@ 0 0",
@@ -209,7 +151,7 @@ def test_detect_mounts_grub_btrfs_style() -> None:
 
 
 def test_detect_mounts_full() -> None:
-    """Root + boot + ESP + home → all four fields populated."""
+    """Root + boot + ESP + home -> all four fields populated."""
     content = _proc_mounts(
         [
             "/dev/sda3 /mnt ext4 rw,noatime 0 0",
@@ -241,7 +183,7 @@ def test_detect_mounts_oserror_returns_none() -> None:
 
 
 def test_validate_mounts_valid() -> None:
-    """A PartitionMap with root + esp → no errors."""
+    """A PartitionMap with root + esp -> no errors."""
     pm = PartitionMap(esp="/dev/sda1", root="/dev/sda2")
     errors = validate_mounts(pm)
     assert errors == []
@@ -528,86 +470,3 @@ def test_cleanup_mounts_oserror_is_safe() -> None:
     with patch("builtins.open", side_effect=OSError("permission denied")):
         # Should not raise
         cleanup_mounts()
-
-
-# ---------------------------------------------------------------------------
-# prepare_subvolume()
-# ---------------------------------------------------------------------------
-
-
-@patch("arches_installer.core.disk.run")
-def test_prepare_subvolume_alongside(
-    mock_run, aarch64_apple_platform, tmp_path
-) -> None:
-    """Alongside mode creates @arches, @arches-home, @arches-var subvolumes."""
-    mount_root = tmp_path / "mnt"
-
-    with patch("arches_installer.core.disk.MOUNT_ROOT", mount_root):
-        pm = prepare_subvolume(
-            partition="/dev/nvme0n1p6",
-            esp_partition="/dev/nvme0n1p4",
-            platform=aarch64_apple_platform,
-            mode="alongside",
-            subvol_prefix="@arches",
-        )
-
-    assert pm.esp == "/dev/nvme0n1p4"
-    assert pm.root == "/dev/nvme0n1p6"
-
-    # Verify subvolume creation commands were issued
-    run_cmds = [c[0][0] for c in mock_run.call_args_list]
-    subvol_creates = [
-        c for c in run_cmds if len(c) >= 3 and c[:3] == ["btrfs", "subvolume", "create"]
-    ]
-    assert len(subvol_creates) == 3  # @arches, @arches-home, @arches-var
-
-    # Verify mount commands include the subvolume options
-    mount_cmds = [c for c in run_cmds if c[0] == "mount"]
-    assert len(mount_cmds) >= 4  # top-level, root, home, var, ESP
-
-
-@patch("arches_installer.core.disk.run")
-def test_prepare_subvolume_replace(mock_run, aarch64_apple_platform, tmp_path) -> None:
-    """Replace mode creates standard @, @home, @var subvolumes."""
-    mount_root = tmp_path / "mnt"
-
-    with patch("arches_installer.core.disk.MOUNT_ROOT", mount_root):
-        pm = prepare_subvolume(
-            partition="/dev/nvme0n1p6",
-            esp_partition="/dev/nvme0n1p4",
-            platform=aarch64_apple_platform,
-            mode="replace",
-        )
-
-    assert pm.esp == "/dev/nvme0n1p4"
-    assert pm.root == "/dev/nvme0n1p6"
-
-    # Verify subvolume creation commands include @, @home, @var
-    run_cmds = [c[0][0] for c in mock_run.call_args_list]
-    subvol_creates = [
-        c for c in run_cmds if len(c) >= 3 and c[:3] == ["btrfs", "subvolume", "create"]
-    ]
-    assert len(subvol_creates) == 3
-
-
-def test_prepare_subvolume_rejects_ext4(aarch64_apple_platform) -> None:
-    """prepare_subvolume raises if platform uses ext4."""
-    aarch64_apple_platform.disk_layout.filesystem = "ext4"
-    with pytest.raises(RuntimeError, match="requires btrfs"):
-        prepare_subvolume(
-            partition="/dev/sda2",
-            esp_partition="/dev/sda1",
-            platform=aarch64_apple_platform,
-            mode="alongside",
-        )
-
-
-def test_prepare_subvolume_rejects_invalid_mode(aarch64_apple_platform) -> None:
-    """prepare_subvolume raises on invalid mode."""
-    with pytest.raises(ValueError, match="Unknown subvolume mode"):
-        prepare_subvolume(
-            partition="/dev/sda2",
-            esp_partition="/dev/sda1",
-            platform=aarch64_apple_platform,
-            mode="invalid",
-        )

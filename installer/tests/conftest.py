@@ -7,9 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
+from arches_installer.core.disk_layout import (
+    DiskLayout,
+    PartitionSpec,
+    SubvolumeSpec,
+)
 from arches_installer.core.platform import (
     BootloaderPlatformConfig,
-    DiskLayoutConfig,
     HardwareDetectionConfig,
     KernelConfig,
     KernelVariant,
@@ -45,13 +49,6 @@ def x86_64_platform() -> PlatformConfig:
             supports_bios=True,
             snapshot_boot=True,
         ),
-        disk_layout=DiskLayoutConfig(
-            filesystem="btrfs",
-            mount_options="compress=zstd:1,noatime,ssd,discard=async",
-            subvolumes=["@", "@home", "@var", "@snapshots"],
-            esp_size_mib=2048,
-            swap="zram",
-        ),
         hardware_detection=HardwareDetectionConfig(
             enabled=True,
             tool="chwd",
@@ -73,6 +70,7 @@ def x86_64_platform() -> PlatformConfig:
             "efibootmgr",
             "chwd",
         ],
+        swap="zram",
         cachyos_optimization_tier="x86-64-v3",
         kernel_flags=[
             "console=ttyS0,115200",
@@ -102,13 +100,6 @@ def aarch64_platform() -> PlatformConfig:
             supports_bios=False,
             snapshot_boot=True,
         ),
-        disk_layout=DiskLayoutConfig(
-            filesystem="btrfs",
-            mount_options="compress=zstd:1,noatime",
-            subvolumes=["@", "@home", "@var"],
-            esp_size_mib=512,
-            swap="zram",
-        ),
         hardware_detection=HardwareDetectionConfig(enabled=False),
         base_packages=[
             "base",
@@ -123,6 +114,7 @@ def aarch64_platform() -> PlatformConfig:
             "grub-btrfs",
             "btrfs-progs",
         ],
+        swap="zram",
         kernel_flags=[
             "console=ttyAMA0,115200",
             "console=tty0",
@@ -151,13 +143,6 @@ def aarch64_apple_platform() -> PlatformConfig:
             supports_bios=False,
             snapshot_boot=False,
         ),
-        disk_layout=DiskLayoutConfig(
-            filesystem="btrfs",
-            mount_options="compress=zstd:1,noatime",
-            subvolumes=["@", "@home", "@var"],
-            esp_size_mib=512,
-            swap="zram",
-        ),
         hardware_detection=HardwareDetectionConfig(enabled=False),
         base_packages=[
             "base",
@@ -175,11 +160,42 @@ def aarch64_apple_platform() -> PlatformConfig:
             "asahi-fwextract",
             "asahi-scripts",
         ],
+        swap="zram",
         kernel_flags=[
             "console=ttyAMA0,115200",
             "console=tty0",
             "loglevel=5",
             "video=1920x1080",
+        ],
+    )
+
+
+@pytest.fixture
+def basic_disk_layout() -> DiskLayout:
+    """A basic disk layout for testing."""
+    return DiskLayout(
+        name="Basic",
+        description="2 GiB ESP, btrfs root filling the rest",
+        bootloaders=["limine", "grub"],
+        partitions=[
+            PartitionSpec(
+                size="2G",
+                filesystem="vfat",
+                mount_point="/boot",
+                label="ESP",
+            ),
+            PartitionSpec(
+                size="*",
+                filesystem="btrfs",
+                mount_point="/",
+                label="archroot",
+                mount_options="compress=zstd:1,noatime,ssd,discard=async",
+                subvolumes=[
+                    SubvolumeSpec(name="@", mount_point="/"),
+                    SubvolumeSpec(name="@home", mount_point="/home"),
+                    SubvolumeSpec(name="@var", mount_point="/var"),
+                ],
+            ),
         ],
     )
 
@@ -209,7 +225,7 @@ def vm_server_template() -> InstallTemplate:
     """A VM-server-style template."""
     return InstallTemplate(
         name="VM Server",
-        description="Headless server — ext4",
+        description="Headless server -- ext4",
         system=SystemConfig(
             timezone="America/New_York",
             locale="en_US.UTF-8",
@@ -245,6 +261,7 @@ name = "x86-64"
 description = "x86-64 with CachyOS x86-64-v3"
 arch = "x86_64"
 cachyos_optimization_tier = "x86-64-v3"
+swap = "zram"
 
 [kernel]
 variants = [
@@ -259,13 +276,6 @@ efi_binary = "BOOTX64.EFI"
 efi_fallback_path = "EFI/BOOT/BOOTX64.EFI"
 supports_bios = true
 snapshot_boot = true
-
-[disk_layout]
-filesystem = "btrfs"
-mount_options = "compress=zstd:1,noatime,ssd,discard=async"
-subvolumes = ["@", "@home", "@var", "@snapshots"]
-esp_size_mib = 2048
-swap = "zram"
 
 [hardware_detection]
 enabled = true
@@ -345,16 +355,66 @@ firstboot_roles = ["base", "zsh", "vm-server"]
 
 
 @pytest.fixture
-def auto_config_file(tmp_path: Path, templates_dir: Path) -> Path:
+def disk_layouts_dir(tmp_path: Path) -> Path:
+    """Create a temp directory with sample disk layout TOML files.
+
+    Also patches ``resolve_disk_layout`` so that bare filenames resolve
+    against this temp directory.
+    """
+    d = tmp_path / "disk-layouts"
+    d.mkdir()
+
+    (d / "basic.toml").write_text("""\
+[meta]
+name = "Basic"
+description = "2 GiB ESP, btrfs root filling the rest"
+bootloaders = ["limine", "grub"]
+
+[[partitions]]
+filesystem = "vfat"
+size = "2G"
+mount_point = "/boot"
+label = "ESP"
+
+[[partitions]]
+filesystem = "btrfs"
+size = "*"
+mount_point = "/"
+label = "archroot"
+mount_options = "compress=zstd:1,noatime,ssd,discard=async"
+
+[[partitions.subvolumes]]
+name = "@"
+mount_point = "/"
+
+[[partitions.subvolumes]]
+name = "@home"
+mount_point = "/home"
+
+[[partitions.subvolumes]]
+name = "@var"
+mount_point = "/var"
+""")
+
+    _resolve = lambda name: d / name  # noqa: E731
+    with patch("arches_installer.core.auto.resolve_disk_layout", side_effect=_resolve):
+        yield d
+
+
+@pytest.fixture
+def auto_config_file(
+    tmp_path: Path, templates_dir: Path, disk_layouts_dir: Path
+) -> Path:
     """Create a valid auto-install TOML config file.
 
-    Depends on ``templates_dir`` so that ``resolve_template`` is patched
-    to find the test templates by bare filename.
+    Depends on ``templates_dir`` and ``disk_layouts_dir`` so that resolve
+    functions are patched to find the test files by bare filename.
     """
     config = tmp_path / "auto.toml"
     config.write_text("""\
 [install]
 template = "dev-workstation.toml"
+disk_layout = "basic.toml"
 hostname = "testbox"
 username = "testuser"
 password = "testpass"
@@ -407,5 +467,15 @@ def mock_discover_templates(dev_workstation_template, vm_server_template):
     with patch(
         "arches_installer.core.template.discover_templates",
         return_value=[dev_workstation_template, vm_server_template],
+    ) as m:
+        yield m
+
+
+@pytest.fixture
+def mock_discover_disk_layouts(basic_disk_layout):
+    """Mock disk layout discovery to return test layouts."""
+    with patch(
+        "arches_installer.core.disk_layout.discover_disk_layouts",
+        return_value=[basic_disk_layout],
     ) as m:
         yield m

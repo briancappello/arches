@@ -208,9 +208,9 @@ fi
 # ── Confirm ───────────────────────────────────────────
 TARGET_SIZE=$(lsblk -dno SIZE "$TARGET" 2>/dev/null | tr -d ' ')
 echo ""
-echo "  ┌─────────────────────────────────────────────────┐"
+echo "  ┌──────────────────────────────────────────────────┐"
 echo "  │  ALL DATA ON $TARGET ($TARGET_SIZE) WILL BE DESTROYED  │"
-echo "  └─────────────────────────────────────────────────┘"
+echo "  └──────────────────────────────────────────────────┘"
 echo ""
 echo "  Image: $IMG ($IMG_SIZE)"
 echo "  Target: $TARGET ($TARGET_SIZE)"

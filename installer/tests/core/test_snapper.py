@@ -6,9 +6,9 @@ import subprocess
 from unittest.mock import patch
 
 
+from arches_installer.core.disk import PartitionMap
 from arches_installer.core.platform import (
     BootloaderPlatformConfig,
-    DiskLayoutConfig,
 )
 from arches_installer.core.snapper import (
     ROOT_SNAPPER_CONFIG,
@@ -44,16 +44,10 @@ def test_configure_snapper_writes_config_files(mock_chroot, x86_64_platform, tmp
 @patch("arches_installer.core.snapper.chroot_run")
 def test_configure_snapper_skips_non_btrfs(mock_chroot, x86_64_platform, tmp_path):
     """configure_snapper should skip setup when filesystem is not btrfs."""
-    x86_64_platform.disk_layout = DiskLayoutConfig(
-        filesystem="ext4",
-        mount_options="defaults",
-        subvolumes=[],
-        esp_size_mib=512,
-        swap="zram",
-    )
+    ext4_parts = PartitionMap(esp="/dev/vda1", root="/dev/vda2", root_filesystem="ext4")
 
     with patch("arches_installer.core.snapper.MOUNT_ROOT", tmp_path):
-        configure_snapper(x86_64_platform)
+        configure_snapper(x86_64_platform, parts=ext4_parts)
 
     mock_chroot.assert_not_called()
     assert not (tmp_path / "etc" / "snapper" / "configs" / "root").exists()
@@ -156,5 +150,5 @@ def test_setup_snapshots_calls_both(mock_snapper, mock_boot, x86_64_platform):
     """setup_snapshots should call configure_snapper and configure_snapshot_boot."""
     setup_snapshots(x86_64_platform)
 
-    mock_snapper.assert_called_once_with(x86_64_platform, None)
+    mock_snapper.assert_called_once_with(x86_64_platform, parts=None, log=None)
     mock_boot.assert_called_once_with(x86_64_platform, None)

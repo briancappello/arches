@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 
-from arches_installer.core.disk import MOUNT_ROOT
+from arches_installer.core.disk import MOUNT_ROOT, PartitionMap
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.run import LogCallback, _log, chroot_run
 
@@ -40,12 +40,26 @@ ALLOW_GROUPS="wheel"
 
 def configure_snapper(
     platform: PlatformConfig,
+    parts: PartitionMap | None = None,
     log: LogCallback | None = None,
 ) -> None:
-    """Set up snapper for btrfs snapshot management."""
-    if platform.disk_layout.filesystem != "btrfs":
+    """Set up snapper for btrfs snapshot management.
+
+    Args:
+        platform: Platform configuration.
+        parts: PartitionMap with filesystem metadata. Used to check whether
+            the root filesystem is btrfs.
+        log: Optional log callback.
+    """
+    if parts and parts.root_filesystem != "btrfs":
         _log("Filesystem is not btrfs, skipping snapper setup.", log)
         return
+    elif not parts:
+        _log(
+            "[yellow]Warning: no PartitionMap provided to snapper, "
+            "proceeding anyway.[/yellow]",
+            log,
+        )
 
     _log("Configuring snapper...", log)
 
@@ -155,8 +169,15 @@ def _configure_snapshot_boot_limine(
 
 def setup_snapshots(
     platform: PlatformConfig,
+    parts: PartitionMap | None = None,
     log: LogCallback | None = None,
 ) -> None:
-    """Full snapshot setup pipeline."""
-    configure_snapper(platform, log)
+    """Full snapshot setup pipeline.
+
+    Args:
+        platform: Platform configuration.
+        parts: PartitionMap with filesystem metadata.
+        log: Optional log callback.
+    """
+    configure_snapper(platform, parts=parts, log=log)
     configure_snapshot_boot(platform, log)

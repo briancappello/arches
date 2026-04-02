@@ -154,7 +154,6 @@ class TestPrintDryRunSummary:
         assert "x86-64" in out
         assert "linux-cachyos" in out
         assert "limine" in out
-        assert "btrfs" in out
         assert "Dev Workstation" in out
         assert "myhost" in out
         assert "myuser" in out

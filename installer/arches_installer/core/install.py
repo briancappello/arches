@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from arches_installer.core.disk import MOUNT_ROOT
+from arches_installer.core.network import copy_network_profiles
 from arches_installer.core.platform import ISO_PLATFORM_DIR, PlatformConfig
 from arches_installer.core.run import LogCallback, _log, chroot_run, run
 from arches_installer.core.template import InstallTemplate
@@ -869,6 +870,7 @@ def install_system(
     deploy_ssh_key(username, log)
     copy_apple_firmware(platform, log)
     configure_apple_input(platform, log)
+    copy_network_profiles(log)
     preseed_network_deps(username, log)
     run_hardware_detection(platform, log)
     _unmount_iso_cache_from_target(log)

@@ -1,11 +1,11 @@
-"""Partition screen — shell-first partitioning with mount validation.
+"""Partition screen -- shell-first partitioning with mount validation.
 
 The primary flow is: user drops to a shell, partitions/formats/mounts their
 disks onto /mnt, then returns to the installer. We validate the mounts and
 detect ESP, root, boot, and home partitions automatically.
 
-An auto-partition option is available for VMs and unattended installs — it
-uses the platform's disk_layout config to wipe and partition the selected disk.
+This screen is reached from the layout selection screen when the user
+chooses "Open Shell (Manual)" instead of a predefined layout.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from textual.widgets import Button, Label, Static
 
 
 class PartitionScreen(Screen):
-    """Partition screen — drop to shell or auto-partition."""
+    """Partition screen -- drop to shell for manual partitioning."""
 
     BINDINGS = [
         ("up", "prev_button", "Previous"),
@@ -35,7 +35,7 @@ class PartitionScreen(Screen):
     def compose(self) -> ComposeResult:
         with Center():
             with Vertical(classes="panel"):
-                yield Label("Disk Setup", classes="title")
+                yield Label("Manual Disk Setup", classes="title")
                 yield Static(id="disk-info")
                 yield Label("")
                 yield Label(
@@ -60,11 +60,6 @@ class PartitionScreen(Screen):
                     "Validate Mounts & Continue",
                     variant="success",
                     id="btn-validate",
-                )
-                yield Button(
-                    "Auto-partition (VM only)",
-                    variant="warning",
-                    id="btn-auto",
                 )
                 yield Button("Back", variant="default", id="btn-back")
 
@@ -100,7 +95,7 @@ class PartitionScreen(Screen):
         if errors:
             msg = "[yellow]Mount issues:[/yellow]\n"
             for err in errors:
-                msg += f"  • {err}\n"
+                msg += f"  * {err}\n"
             status.update(msg)
         else:
             msg = (
@@ -119,8 +114,6 @@ class PartitionScreen(Screen):
             self._drop_to_shell()
         elif event.button.id == "btn-validate":
             self._validate_and_continue()
-        elif event.button.id == "btn-auto":
-            self._auto_partition()
         elif event.button.id == "btn-back":
             self.app.pop_screen()
 
@@ -144,7 +137,7 @@ class PartitionScreen(Screen):
             input=(
                 'PS1="\\[\\033[1;33m\\]arches-disk\\[\\033[0m\\]% "\n'
                 'echo ""\n'
-                'echo "══ Arches Disk Setup Shell ══"\n'
+                'echo "== Arches Disk Setup Shell =="\n'
                 'echo ""\n'
                 f'echo "Target device: {device}"\n'
                 'echo ""\n'
@@ -182,28 +175,14 @@ class PartitionScreen(Screen):
         errors = validate_mounts(parts)
         if errors:
             status = self.query_one("#mount-status", Static)
-            msg = "[red]Cannot continue — mount issues:[/red]\n"
+            msg = "[red]Cannot continue -- mount issues:[/red]\n"
             for err in errors:
-                msg += f"  • {err}\n"
+                msg += f"  * {err}\n"
             status.update(msg)
             return
 
-        # Mounts are valid — store them and advance
+        # Mounts are valid -- store them and advance to template selection
+        # (manual mode bypasses layout selection entirely)
         self.app.partition_mode = "manual"
         self.app.partition_map = parts
-        self.app.push_screen("template_select")
-
-    def _auto_partition(self) -> None:
-        """Use auto-partition (wipes disk, uses platform disk_layout)."""
-        if not self.app.platform.allow_auto_install:
-            status = self.query_one("#mount-status", Static)
-            status.update(
-                "[red]Auto-partition is disabled for this platform.[/red]\n"
-                f"Platform '{self.app.platform.name}' has a disk layout managed\n"
-                "externally and must not be wiped. Use the shell to set up\n"
-                "your mounts manually, or use host-install instead."
-            )
-            return
-        self.app.partition_mode = "auto"
-        self.app.partition_map = None
         self.app.push_screen("template_select")

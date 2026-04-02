@@ -1130,7 +1130,6 @@ class TestRunHardwareDetection:
         from arches_installer.core.install import run_hardware_detection
         from arches_installer.core.platform import (
             BootloaderPlatformConfig,
-            DiskLayoutConfig,
             HardwareDetectionConfig,
             KernelConfig,
             KernelVariant,
@@ -1145,7 +1144,6 @@ class TestRunHardwareDetection:
                 variants=[KernelVariant(package="linux", headers="linux-headers")]
             ),
             bootloader=BootloaderPlatformConfig(),
-            disk_layout=DiskLayoutConfig(),
             hardware_detection=HardwareDetectionConfig(
                 enabled=True,
                 tool="some-tool",

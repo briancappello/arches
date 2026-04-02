@@ -293,10 +293,7 @@ class TestLoadAarch64Platforms:
         assert platform.cachyos_optimization_tier == ""
         assert platform.bootloader.type == "grub"
         assert platform.bootloader.snapshot_boot is True
-        assert platform.disk_layout.filesystem == "btrfs"
-        assert platform.disk_layout.boot_size_mib == 0
-        assert platform.disk_layout.home_partition is False
-        assert platform.disk_layout.subvolumes == ["@", "@home", "@var"]
+        assert platform.swap == "zram"
 
     def test_load_aarch64_apple(self) -> None:
         toml_path = self.PROJECT_ROOT / "platforms" / "aarch64-apple" / "platform.toml"
@@ -309,36 +306,24 @@ class TestLoadAarch64Platforms:
         assert platform.cachyos_optimization_tier == ""
         assert platform.bootloader.type == "grub"
         assert platform.bootloader.snapshot_boot is False
-        assert platform.disk_layout.filesystem == "btrfs"
+        assert platform.swap == "zram"
         assert "asahi-alarm-keyring" in platform.base_packages
         assert "asahi-fwextract" in platform.base_packages
         assert "grub" in platform.base_packages
         assert "efibootmgr" in platform.base_packages
         assert "btrfs-progs" in platform.base_packages
 
-    def test_aarch64_generic_disk_layout(self) -> None:
+    def test_aarch64_generic_swap(self) -> None:
         toml_path = (
             self.PROJECT_ROOT / "platforms" / "aarch64-generic" / "platform.toml"
         )
         platform = load_platform(toml_path)
-        dl = platform.disk_layout
-        assert dl.filesystem == "btrfs"
-        assert dl.esp_size_mib == 512
-        assert dl.boot_size_mib == 0
-        assert dl.home_partition is False
-        assert dl.swap == "zram"
-        assert dl.subvolumes == ["@", "@home", "@var"]
+        assert platform.swap == "zram"
 
-    def test_aarch64_apple_disk_layout(self) -> None:
+    def test_aarch64_apple_swap(self) -> None:
         toml_path = self.PROJECT_ROOT / "platforms" / "aarch64-apple" / "platform.toml"
         platform = load_platform(toml_path)
-        dl = platform.disk_layout
-        assert dl.filesystem == "btrfs"
-        assert dl.esp_size_mib == 512
-        assert dl.boot_size_mib == 0
-        assert dl.home_partition is False
-        assert dl.swap == "zram"
-        assert dl.subvolumes == ["@", "@home", "@var"]
+        assert platform.swap == "zram"
 
 
 class TestDefaultTemplate:

@@ -23,12 +23,10 @@ def _print_dry_run_summary(
     extra_lines: list[str] | None = None,
 ) -> None:
     """Print a dry-run configuration summary (shared by --auto and --host)."""
-    layout = platform.disk_layout
     print(f"== {title} ==")
     print(f"  Platform:    {platform.name} ({platform.arch})")
     print(f"  Kernel:      {platform.kernel.package}")
     print(f"  Bootloader:  {platform.bootloader.type}")
-    print(f"  Filesystem:  {layout.filesystem}")
     if extra_lines:
         for line in extra_lines:
             print(line)
@@ -153,8 +151,9 @@ def _run_auto(
         return 1
 
     if dry_run:
-        layout = platform.disk_layout
+        dl = config.disk_layout
         extra = [
+            f"  Disk layout: {dl.name}",
             f"  Snapshots:   {platform.bootloader.snapshot_boot}",
             "  Device:      (auto-detect at install time)",
         ]
@@ -170,17 +169,62 @@ def _run_auto(
         print(f"  Shutdown:    {config.shutdown}")
         print(f"  Packages:    {len(config.template.install.all_packages)}")
         print(f"  Services:    {len(config.template.services)}")
-        if layout.subvolumes:
-            print(f"  Subvolumes:  {', '.join(layout.subvolumes)}")
+        # Show partition summary from disk layout
+        for i, part in enumerate(dl.partitions):
+            fs = part.filesystem or "raw"
+            mp = part.mount_point or "(none)"
+            print(f"  Partition {i + 1}: {fs}  {part.size}  -> {mp}")
+            for sv in part.subvolumes:
+                print(f"    Subvol: {sv.name} -> {sv.mount_point or '(none)'}")
         if config.template.ansible.firstboot_roles:
             print(
                 f"  Ansible (1st boot):  {', '.join(config.template.ansible.firstboot_roles)}"
             )
         if platform.hardware_detection.enabled:
             print(f"  HW detect:   {platform.hardware_detection.tool}")
+        if config.wifi:
+            print(f"  WiFi:        {config.wifi.ssid}")
+        if config.wired:
+            print(f"  Static IP:   {config.wired.interface} → {config.wired.static_ip}")
         print("")
         print("Dry run complete. No changes made.")
         return 0
+
+    # Connect to network if configured (before disk detection / install)
+    if config.wifi or config.wired:
+        from arches_installer.core.network import (
+            StaticIPConfig,
+            connect_ethernet_static,
+            connect_wifi,
+        )
+
+        if config.wifi:
+            print(f"Connecting to WiFi: {config.wifi.ssid}...")
+            static = None
+            if config.wifi.static_ip and config.wifi.gateway:
+                static = StaticIPConfig(
+                    ip_cidr=config.wifi.static_ip,
+                    gateway=config.wifi.gateway,
+                    dns=config.wifi.dns,
+                )
+            ok, err = connect_wifi(config.wifi.ssid, config.wifi.psk, static)
+            if not ok:
+                _auto_install_error(f"WiFi connection failed: {err}", fallback_to_tui)
+                return 1
+            print("  WiFi connected.")
+
+        if config.wired:
+            print(f"Configuring static IP on {config.wired.interface}...")
+            static = StaticIPConfig(
+                ip_cidr=config.wired.static_ip,
+                gateway=config.wired.gateway,
+                dns=config.wired.dns,
+            )
+            ok, err = connect_ethernet_static(config.wired.interface, static)
+            if not ok:
+                _auto_install_error(f"Wired connection failed: {err}", fallback_to_tui)
+                return 1
+            print("  Network configured.")
 
     # Detect target disk
     try:
@@ -196,6 +240,7 @@ def _run_auto(
     app = ArchesApp(platform=platform)
     app.selected_device = disk.path
     app.selected_template = config.template
+    app.selected_layout = config.disk_layout
     app.partition_mode = "auto"
     app.hostname = config.hostname
     app.username = config.username

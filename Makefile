@@ -19,7 +19,7 @@ OUT_DIR     := $(PROJECT_DIR)/out
         iso usb \
         host-install host-install-rebuild host-install-dry host-clean \
         fmt test test-unit test-template dry-run \
-        qemu-install qemu-test qemu-boot qemu-disk qemu-ansible \
+        qemu-install qemu-test qemu-boot qemu-raid qemu-disk qemu-ansible \
         clean clean-work clean-all \
         _iso _aur-repo \
         _stage-installer _stage-ansible _stage-platform _stage-bootconfig \
@@ -139,6 +139,9 @@ qemu-boot: ## Boot the installed test disk in QEMU (UEFI, no ISO)
 			-net nic -net user,hostfwd=tcp::2222-:22; \
 	fi
 
+qemu-raid: ## Boot QEMU VM with multiple disks for RAID testing (RAID_DISKS=2 RAID_DISK_SIZE=120G)
+	$(SCRIPTS)/qemu-raid.sh
+
 qemu-disk: ## Create a fresh QEMU test disk image (60G)
 	@echo "══ Creating test disk ══"
 	qemu-img create -f qcow2 /tmp/arches-test-disk.qcow2 60G
@@ -164,6 +167,7 @@ clean: ## Remove staged files from ISO airootfs
 	@echo "══ Cleaning staged files ══"
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/installer
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/templates
+	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/disk-layouts
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/ansible
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/platform
 	rm -f  $(ISO_PROFILE)/airootfs/usr/local/bin/arches-install
@@ -200,6 +204,8 @@ clean-all: clean clean-work ## Remove all build artifacts
 	rm -rf $(OUT_DIR)
 	rm -f /tmp/arches-test-disk.qcow2
 	rm -f /tmp/arches-efi-vars.raw
+	rm -f /tmp/arches-raid-disk-*.qcow2
+	rm -f /tmp/arches-raid-efi-vars.raw
 
 # ─────────────────────────────────────────────────────────
 # Internal targets (not shown in help)
@@ -233,6 +239,10 @@ _stage-installer:
 	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/templates
 	@cp $(TEMPLATES)/*.toml $(ISO_PROFILE)/airootfs/opt/arches/templates/
 	@echo "  Staged templates: $$(ls $(TEMPLATES)/*.toml | xargs -n1 basename | tr '\n' ' ')"
+	@# Stage disk layouts (the installer discovers them at /opt/arches/disk-layouts/)
+	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/disk-layouts
+	@cp $(PROJECT_DIR)/disk-layouts/*.toml $(ISO_PROFILE)/airootfs/opt/arches/disk-layouts/
+	@echo "  Staged disk layouts: $$(ls $(PROJECT_DIR)/disk-layouts/*.toml | xargs -n1 basename | tr '\n' ' ')"
 	@# Stage auto-install config into /root/ for auto-detect on boot
 	@if [ -f "$(TEMPLATES)/auto-install.toml" ]; then \
 		cp "$(TEMPLATES)/auto-install.toml" $(ISO_PROFILE)/airootfs/root/auto-install.toml; \

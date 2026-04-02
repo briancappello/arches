@@ -1,41 +1,17 @@
-"""Welcome screen — disk detection and selection."""
+"""Welcome screen -- network check and entry point."""
 
 from __future__ import annotations
-
-import subprocess
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Label, OptionList, Static
-from textual.widgets.option_list import Option
+from textual.widgets import Button, Label, Static
 
-from arches_installer.core.disk import BlockDevice, detect_block_devices
-
-
-def _check_network() -> bool:
-    """Return True if we have internet connectivity."""
-    try:
-        subprocess.run(
-            [
-                "curl",
-                "-s",
-                "--max-time",
-                "3",
-                "-o",
-                "/dev/null",
-                "https://archlinux.org",
-            ],
-            capture_output=True,
-            check=True,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+from arches_installer.core.network import check_connectivity
 
 
 class WelcomeScreen(Screen):
-    """Welcome screen with disk detection and selection."""
+    """Welcome screen with network status and navigation."""
 
     def compose(self) -> ComposeResult:
         with Center():
@@ -46,8 +22,7 @@ class WelcomeScreen(Screen):
                     classes="subtitle",
                 )
                 yield Static(id="net-status")
-                yield Label("Select target disk:")
-                yield OptionList(id="disk-list")
+                yield Label("")
                 yield Button(
                     "Continue",
                     variant="primary",
@@ -55,9 +30,9 @@ class WelcomeScreen(Screen):
                     classes="btn-primary",
                 )
                 yield Button(
-                    "Configure WiFi",
+                    "Configure Network",
                     variant="warning",
-                    id="btn-wifi",
+                    id="btn-network",
                 )
                 yield Button(
                     "Exit Installer",
@@ -66,62 +41,31 @@ class WelcomeScreen(Screen):
                 )
 
     def on_mount(self) -> None:
-        """Detect disks and check network."""
-        disk_list = self.query_one("#disk-list", OptionList)
-        self._devices: list[BlockDevice] = []
-
-        try:
-            devices = detect_block_devices()
-            self._devices = [d for d in devices if not d.removable]
-
-            if not self._devices:
-                disk_list.add_option(Option("No disks found", id="none"))
-            else:
-                for dev in self._devices:
-                    disk_list.add_option(Option(dev.display, id=dev.path))
-                disk_list.highlighted = 0
-                disk_list.focus()
-        except Exception as e:
-            disk_list.add_option(Option(f"Error: {e}", id="error"))
-
+        """Check network on mount."""
         self._update_net_status()
 
     def _update_net_status(self) -> None:
         """Check and display network connectivity."""
         status = self.query_one("#net-status", Static)
-        if _check_network():
+        if check_connectivity():
             status.update("[green]Network: connected[/green]")
         else:
             status.update(
-                "[red]Network: offline[/red]  —  WiFi required? Use the button below."
+                "[red]Network: offline[/red]  -- Use the button below to configure."
             )
 
-    def _select_disk(self) -> None:
-        """Accept the currently highlighted disk and advance."""
-        disk_list = self.query_one("#disk-list", OptionList)
-        if disk_list.highlighted is not None and self._devices:
-            device = self._devices[disk_list.highlighted]
-            self.app.selected_device = device.path
-            self.app.push_screen("partition")
-
-    def on_option_list_option_selected(
-        self,
-        event: OptionList.OptionSelected,
-    ) -> None:
-        """Enter pressed on a disk option — select it and advance."""
-        self._select_disk()
+    def on_screen_resume(self) -> None:
+        """Re-check network when returning from the network screen."""
+        self._update_net_status()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-shell":
             self.app.exit(return_code=2)
             return
 
-        if event.button.id == "btn-wifi":
-            self.app.suspend()
-            subprocess.run(["nmtui"])
-            self.app.resume()
-            self._update_net_status()
+        if event.button.id == "btn-network":
+            self.app.push_screen("network")
             return
 
         if event.button.id == "btn-continue":
-            self._select_disk()
+            self.app.push_screen("disk_select")

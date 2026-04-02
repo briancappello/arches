@@ -124,6 +124,10 @@ class InstallProgressScreen(Screen):
                 partition_map=self.app.partition_map
                 if partition_mode == "manual"
                 else None,
+                disk_layout=self.app.selected_layout
+                if partition_mode != "manual"
+                else None,
+                raid_config=self.app.raid_config,
             )
 
             parts = run_install_pipeline(params, log=self.log_msg)

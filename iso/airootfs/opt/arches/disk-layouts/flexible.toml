@@ -1,0 +1,43 @@
+# Flexible disk layout — multi-root with spare partition
+#
+# 8 GiB ESP, 100 GiB btrfs root (with @ and @var subvolumes),
+# 100 GiB raw spare (unformatted, reserved for a future distro install),
+# btrfs /home filling the rest.
+
+[meta]
+name = "Flexible"
+description = "8 GiB ESP, 100 GiB root, 100 GiB spare (raw, unmounted), /home filling the rest."
+bootloaders = ["limine", "grub"]
+
+[[partitions]]
+filesystem = "vfat"
+size = "8G"
+mount_point = "/boot"
+label = "ESP"
+
+[[partitions]]
+filesystem = "btrfs"
+size = "100G"
+mount_point = "/"
+label = "archroot"
+mount_options = "compress=zstd:1,noatime,ssd,discard=async"
+
+[[partitions.subvolumes]]
+name = "@"
+mount_point = "/"
+
+[[partitions.subvolumes]]
+name = "@var"
+mount_point = "/var"
+
+[[partitions]]
+size = "100G"
+# No filesystem — raw, unformatted partition reserved for future use
+label = "spare"
+
+[[partitions]]
+filesystem = "btrfs"
+size = "*"
+mount_point = "/home"
+label = "archhome"
+mount_options = "compress=zstd:1,noatime,ssd,discard=async"

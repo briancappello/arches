@@ -24,6 +24,7 @@ default_template = "dev-workstation"
 # partitions) and must never be wiped. Use host-install or manual
 # partitioning instead.
 allow_auto_install = false
+swap = "zram"
 
 [kernel]
 variants = [
@@ -45,15 +46,6 @@ efi_binary = "BOOTAA64.EFI"
 efi_fallback_path = "EFI/BOOT/BOOTAA64.EFI"
 supports_bios = false
 snapshot_boot = false
-
-[disk_layout]
-# GRUB reads kernels from btrfs natively — no separate /boot needed.
-# ESP mounts at /boot/efi. Subvolume layout matches aarch64-generic.
-filesystem = "btrfs"
-mount_options = "compress=zstd:1,noatime"
-subvolumes = ["@", "@home", "@var"]
-esp_size_mib = 512
-swap = "zram"
 
 [hardware_detection]
 # Asahi mesa and device trees handle hardware; no chwd equivalent

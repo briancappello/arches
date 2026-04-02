@@ -7,9 +7,14 @@ from textual.binding import Binding
 from textual.screen import Screen
 
 from arches_installer.core.disk import PartitionMap
+from arches_installer.core.disk_layout import DiskLayout, RaidConfig
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.template import InstallTemplate
 from arches_installer.tui.welcome import WelcomeScreen
+from arches_installer.tui.network import NetworkScreen
+from arches_installer.tui.disk_select import DiskSelectScreen
+from arches_installer.tui.raid_config import RaidConfigScreen
+from arches_installer.tui.layout_select import LayoutSelectScreen
 from arches_installer.tui.partition import PartitionScreen
 from arches_installer.tui.template_select import TemplateSelectScreen
 from arches_installer.tui.user_setup import UserSetupScreen
@@ -57,16 +62,18 @@ class ArchesApp(App):
         Binding("q", "quit", "Quit", show=True),
     ]
 
-    # Install state — populated as user progresses through screens
+    # Install state -- populated as user progresses through screens
     selected_device: str = ""
     selected_template: InstallTemplate | None = None
+    selected_layout: DiskLayout | None = None
+    raid_config: RaidConfig | None = None
     partition_mode: str = ""  # "auto" or "manual"
     partition_map: PartitionMap | None = None  # set by manual flow or progress
     hostname: str = ""
     username: str = ""
     password: str = ""
 
-    # Auto-install mode — when True, skip to progress screen and
+    # Auto-install mode -- when True, skip to progress screen and
     # handle reboot/shutdown on completion.
     auto_install: bool = False
     auto_shutdown: bool = False
@@ -78,6 +85,10 @@ class ArchesApp(App):
 
     SCREENS = {
         "welcome": WelcomeScreen,
+        "network": NetworkScreen,
+        "disk_select": DiskSelectScreen,
+        "raid_config": RaidConfigScreen,
+        "layout_select": LayoutSelectScreen,
         "partition": PartitionScreen,
         "template_select": TemplateSelectScreen,
         "user_setup": UserSetupScreen,

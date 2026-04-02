@@ -1,7 +1,25 @@
 [install]
 template = "dev-workstation.toml"
+disk_layout = "basic.toml"
 hostname = "arches"
 username = "arches"
-password = "password"  # FIXME
+password = "password"  # FIXME -- change before building
 reboot = false
 shutdown = false  # takes precedence over reboot if true
+
+# Optional: connect to WiFi before installing.
+# Uncomment to enable. Omit psk for open networks.
+# [wifi]
+# ssid = "MyNetwork"
+# psk  = "hunter2"
+# static_ip = "192.168.1.50/24"  # omit for DHCP
+# gateway   = "192.168.1.1"
+# dns       = ["1.1.1.1", "8.8.8.8"]
+
+# Optional: configure a wired interface with static IP before installing.
+# Uncomment to enable. Not needed if DHCP works on your wired connection.
+# [network]
+# interface = "eth0"
+# static_ip = "192.168.1.50/24"
+# gateway   = "192.168.1.1"
+# dns       = ["1.1.1.1", "8.8.8.8"]

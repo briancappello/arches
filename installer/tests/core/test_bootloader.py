@@ -81,7 +81,8 @@ def test_install_bootloader_dispatches_limine(mock_limine, x86_64_platform):
         "/dev/sda",
         "/dev/sda1",
         "/dev/sda2",
-        None,
+        parts=None,
+        log=None,
     )
 
 
@@ -189,7 +190,9 @@ def test_install_limine_uefi_path(
         (tmp_path / "boot").mkdir(parents=True, exist_ok=True)
         _install_limine(x86_64_platform, "/dev/sda", "/dev/sda1", "/dev/sda2")
 
-    mock_defaults.assert_called_once_with(x86_64_platform, "/dev/sda2", None)
+    mock_defaults.assert_called_once_with(
+        x86_64_platform, "/dev/sda2", parts=None, log=None
+    )
     assert mock_chroot.call_args_list == [
         call(
             ["pacman", "-Q", "limine-mkinitcpio-hook"],

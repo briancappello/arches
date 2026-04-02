@@ -30,6 +30,7 @@ packages = [
     "pipewire-pulse",
     "pipewire-jack",
     "wireplumber",
+    "sof-firmware",
     # Networking
     "networkmanager",
     "firewalld",
