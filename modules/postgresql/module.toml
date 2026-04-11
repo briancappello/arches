@@ -1,0 +1,14 @@
+[meta]
+name = "PostgreSQL"
+description = "PostgreSQL relational database server"
+category = "service"
+
+[install.pacstrap]
+packages = [
+    "postgresql",
+]
+
+[services]
+enable = [
+    "postgresql",
+]

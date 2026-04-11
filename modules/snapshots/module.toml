@@ -1,0 +1,16 @@
+[meta]
+name = "Btrfs Snapshots"
+description = "Automatic Btrfs snapshots with snapper and snap-pac"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    "snapper",
+    "snap-pac",
+]
+
+[services]
+enable = [
+    "snapper-timeline.timer",
+    "snapper-cleanup.timer",
+]

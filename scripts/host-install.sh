@@ -147,19 +147,21 @@ else
         -v "$PROJECT_DIR:/build"
     )
 
-    # Mount sibling repos at the paths build-aur-repo.sh expects.
-    # The script uses $PROJECT_ROOT/../<sibling>, where PROJECT_ROOT=/build,
-    # so the sibling path resolves to /<sibling> inside the container.
-    for sibling in kde-task-manager plasma-ai-usage-monitor; do
-        sibling_path="$PROJECT_DIR/../$sibling"
-        if [[ -d "$sibling_path" ]]; then
-            abs_sibling="$(cd "$sibling_path" && pwd)"
-            BUILD_VOLUMES+=(-v "$abs_sibling:/$sibling:ro")
-            echo "  Sibling: $sibling (found)"
-        else
-            echo "  WARNING: Sibling repo not found: $sibling_path"
-            echo "           Custom package build for $sibling will fail."
-        fi
+    # Module build source mounts — discover from modules/*/build.mounts
+    for mounts_file in "$PROJECT_DIR"/modules/*/build.mounts; do
+        [[ -f "$mounts_file" ]] || continue
+        module_name=$(basename "$(dirname "$mounts_file")")
+        while IFS= read -r rel_path; do
+            [[ "$rel_path" =~ ^#.*$ || -z "$rel_path" ]] && continue
+            src_path="$PROJECT_DIR/$rel_path"
+            if [[ -d "$src_path" ]]; then
+                abs_src="$(cd "$src_path" && pwd)"
+                BUILD_VOLUMES+=(-v "$abs_src:/build/$rel_path:ro")
+                echo "  Build source: $rel_path (module: $module_name)"
+            else
+                echo "  WARNING: Build source not found: $src_path (module: $module_name)"
+            fi
+        done < "$mounts_file"
     done
 
     # CACHE_DIR set above (shared .pkg-cache/ for all container builds).

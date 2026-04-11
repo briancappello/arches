@@ -1,16 +1,41 @@
 ---
 # Arches post-install Ansible playbook
 #
-# Roles are selected by the install template via --tags.
-# First-boot phase runs all applicable roles for the template.
+# Roles are selected via --tags. The first-boot script passes only the
+# tags for modules that have ansible roles and were selected during
+# installation.
+#
+# Module roles are staged from modules/*/ansible/ into ansible/roles/
+# at ISO build time. Hardware-injected roles (power) live here permanently.
+#
+# Roles are ordered by category:
+#   base -> networking -> desktop -> dev-toolchain -> topic -> service
+#
+# Within a category, roles are listed alphabetically.
+# Only modules that have an ansible/ directory appear here.
 
 - name: Arches system configuration
   hosts: all
   become: yes
 
   roles:
+    # ── base ──────────────────────────────────────────────
     - { role: base, tags: ['base'] }
+    - { role: containers, tags: ['containers'] }
     - { role: zsh, tags: ['zsh'] }
+
+    # ── desktop ───────────────────────────────────────────
+    - { role: cosmic, tags: ['cosmic'] }
     - { role: kde, tags: ['kde'] }
-    - { role: dev-tools, tags: ['dev-tools'] }
-    - { role: vm-server, tags: ['vm-server'] }
+
+    # ── dev-toolchain ─────────────────────────────────────
+    - { role: rust, tags: ['rust'] }
+
+    # ── service ───────────────────────────────────────────
+    - { role: nginx, tags: ['nginx'] }
+    - { role: postgresql, tags: ['postgresql'] }
+    - { role: rabbitmq, tags: ['rabbitmq'] }
+    - { role: redis, tags: ['redis'] }
+
+    # ── hardware-injected (not user-selectable modules) ───
+    - { role: power, tags: ['power'] }

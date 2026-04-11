@@ -1,0 +1,13 @@
+[meta]
+name = "Fonts"
+description = "Noto, JetBrains Mono Nerd, and DejaVu Nerd fonts"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    "noto-fonts",
+    "noto-fonts-cjk",
+    "noto-fonts-emoji",
+    "ttf-jetbrains-mono-nerd",
+    "ttf-dejavu-nerd",
+]

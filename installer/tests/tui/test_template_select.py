@@ -88,7 +88,7 @@ async def test_template_select_sets_template(mock_templates) -> None:
 
         assert app.selected_template is not None
         assert app.selected_template.name == "VM Server"
-        assert app.screen.__class__.__name__ == "UserSetupScreen"
+        assert app.screen.__class__.__name__ == "ModuleSelectScreen"
 
 
 @patch(

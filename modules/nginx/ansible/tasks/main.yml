@@ -1,0 +1,15 @@
+---
+# nginx — localhost-only dev reverse proxy
+
+- name: "nginx: create conf.d directory for project drop-ins"
+  file:
+    path: /etc/nginx/conf.d
+    state: directory
+    mode: '0755'
+
+- name: "nginx: deploy localhost-only config"
+  copy:
+    src: nginx-dev.conf
+    dest: /etc/nginx/nginx.conf
+    mode: '0644'
+  notify: restart nginx

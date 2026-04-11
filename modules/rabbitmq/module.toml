@@ -1,0 +1,14 @@
+[meta]
+name = "RabbitMQ"
+description = "RabbitMQ message broker"
+category = "service"
+
+[install.pacstrap]
+packages = [
+    "rabbitmq",
+]
+
+[services]
+enable = [
+    "rabbitmq",
+]

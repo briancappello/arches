@@ -1,0 +1,9 @@
+[meta]
+name = "Containers"
+description = "Podman rootless container runtime"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    "podman",
+]

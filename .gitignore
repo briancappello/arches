@@ -10,7 +10,9 @@ out/
 # placed into iso/airootfs/ at build time. The originals are tracked.
 iso/airootfs/opt/arches/installer/
 iso/airootfs/opt/arches/templates/
+iso/airootfs/opt/arches/modules/
 iso/airootfs/opt/arches/ansible/
+iso/airootfs/opt/arches/hardware/
 iso/airootfs/opt/arches/platform/
 iso/airootfs/usr/local/bin/arches-install
 iso/airootfs/root/auto-install.toml

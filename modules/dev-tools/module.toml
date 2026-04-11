@@ -1,0 +1,21 @@
+[meta]
+name = "Dev Tools"
+description = "Developer CLI utilities — tmux, lazygit, ripgrep, fd, fzf, and more"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    "tk",
+    "tmux",
+    "ripgrep",
+    "fd",
+    "eza",
+    "fzf",
+    "lazygit",
+    "bottom",
+    "dust",
+    "duf",
+]
+
+[dependencies]
+requires = ["base"]

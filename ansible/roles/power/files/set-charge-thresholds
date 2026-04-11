@@ -1,0 +1,52 @@
+#!/bin/bash
+#
+# set-charge-thresholds — Privileged helper for battery charge thresholds
+#
+# Usage: set-charge-thresholds <start> <stop>
+#
+# Writes to ThinkPad battery charge threshold sysfs files.
+# Intended to be called via sudoers with NOPASSWD so that
+# background processes (e.g., the charge monitor) can restore
+# thresholds without a terminal.
+#
+# Input is validated: both args must be integers 0-100 with start < stop.
+#
+
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+    echo "Usage: set-charge-thresholds <start> <stop>" >&2
+    exit 1
+fi
+
+START="$1"
+STOP="$2"
+
+# Validate integers
+if ! [[ "$START" =~ ^[0-9]+$ ]] || ! [[ "$STOP" =~ ^[0-9]+$ ]]; then
+    echo "Error: both arguments must be integers" >&2
+    exit 1
+fi
+
+# Validate range
+if [[ "$START" -lt 0 || "$START" -gt 100 || "$STOP" -lt 0 || "$STOP" -gt 100 ]]; then
+    echo "Error: values must be between 0 and 100" >&2
+    exit 1
+fi
+
+if [[ "$START" -ge "$STOP" ]]; then
+    echo "Error: start ($START) must be less than stop ($STOP)" >&2
+    exit 1
+fi
+
+SYSFS_START="/sys/class/power_supply/BAT0/charge_start_threshold"
+SYSFS_STOP="/sys/class/power_supply/BAT0/charge_stop_threshold"
+
+if [[ ! -w "$SYSFS_STOP" ]] || [[ ! -w "$SYSFS_START" ]]; then
+    echo "Error: cannot write to charge threshold sysfs files (not root?)" >&2
+    exit 1
+fi
+
+# Write stop threshold first (must be >= start, so raise ceiling before floor)
+echo "$STOP" > "$SYSFS_STOP"
+echo "$START" > "$SYSFS_START"

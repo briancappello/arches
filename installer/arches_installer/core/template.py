@@ -1,8 +1,9 @@
 """Load and validate install templates from TOML files.
 
-Templates define the userspace workload: packages, services, Ansible roles,
-timezone, and locale. They are platform-independent — disk layout, bootloader,
-kernel, and base packages all come from the platform config.
+Templates define a system workload by selecting composable modules and
+setting system-level defaults (timezone, locale).  They are platform-
+independent -- disk layout, bootloader, kernel, and base packages all
+come from the platform config.
 
 Templates live in ``<project>/templates/`` (development) or
 ``/opt/arches/templates/`` (live ISO).  Install-specific templates
@@ -12,6 +13,7 @@ Templates live in ``<project>/templates/`` (development) or
 
 from __future__ import annotations
 
+import dataclasses
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,26 +63,28 @@ class InstallTemplate:
     install: InstallPhases
     services: list[str] = field(default_factory=list)
     ansible: AnsibleConfig = field(default_factory=AnsibleConfig)
-    # When True, the ISO boots into a graphical desktop (SDDM + Plasma)
-    # with a liveuser autologin. When False, the ISO boots to a text
-    # console with the TUI installer on tty1.
+    # When True, the ISO boots into a graphical desktop with a liveuser
+    # autologin. When False, the ISO boots to a text console with the
+    # TUI installer on tty1. Derived from whether a desktop module is
+    # selected.
     graphical: bool = False
+    # Module slugs selected by this template.
+    module_slugs: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InstallTemplate:
-        """Build an InstallTemplate from a parsed TOML dict."""
+        """Build an InstallTemplate from a parsed TOML dict.
+
+        Templates declare ``[modules].include`` to select composable modules.
+        The ``install``, ``services``, ``ansible``, and ``graphical`` fields
+        are left empty here and populated later by
+        ``resolve_and_merge_modules()``.
+        """
         meta = data.get("meta", {})
         sys_raw = data.get("system", {})
-        svc_raw = data.get("services", {})
-        ans_raw = data.get("ansible", {})
-        install_raw = data.get("install", {})
+        modules_raw = data.get("modules", {})
 
-        # Support old format: [system] packages = [...]
-        # as well as new format: [install.pacstrap] packages = [...]
-        old_packages = sys_raw.get("packages", [])
-        pacstrap_packages = install_raw.get("pacstrap", {}).get(
-            "packages", old_packages
-        )
+        module_slugs = modules_raw.get("include", [])
 
         return cls(
             name=meta.get("name", "Unknown"),
@@ -89,17 +93,37 @@ class InstallTemplate:
                 timezone=sys_raw.get("timezone", "America/Denver"),
                 locale=sys_raw.get("locale", "en_US.UTF-8"),
             ),
-            install=InstallPhases(
-                pacstrap=pacstrap_packages,
-                override=install_raw.get("override", {}).get("packages", []),
-                firstboot=install_raw.get("firstboot", {}).get("packages", []),
-            ),
-            services=svc_raw.get("enable", []),
-            ansible=AnsibleConfig(
-                firstboot_roles=ans_raw.get("firstboot_roles", []),
-            ),
-            graphical=meta.get("graphical", False),
+            install=InstallPhases(),
+            services=[],
+            ansible=AnsibleConfig(),
+            graphical=False,
+            module_slugs=module_slugs,
         )
+
+
+def resolve_and_merge_modules(template: InstallTemplate) -> InstallTemplate:
+    """Resolve a template's modules and merge their contents.
+
+    Loads, validates, and merges the modules declared in
+    ``template.module_slugs`` into the template's ``install``, ``services``,
+    ``ansible``, and ``graphical`` fields.
+
+    This import is deferred to avoid circular imports at module level.
+    """
+    from arches_installer.core.module import resolve_modules
+
+    if not template.module_slugs:
+        return template
+
+    resolved = resolve_modules(template.module_slugs)
+
+    return dataclasses.replace(
+        template,
+        install=resolved.merged_install(),
+        services=resolved.merged_services(),
+        ansible=AnsibleConfig(firstboot_roles=resolved.ansible_roles),
+        graphical=resolved.graphical,
+    )
 
 
 def load_template(path: Path) -> InstallTemplate:
@@ -137,8 +161,12 @@ def discover_templates() -> list[InstallTemplate]:
     """Discover all install templates (system templates only).
 
     Returns templates that define a system workload (have ``[meta]`` with a
-    name).  Config files like auto-install.toml and host-install.toml are
-    excluded — they reference templates by filename, not define them.
+    name and ``[modules]`` with an include list).  Config files like
+    auto-install.toml and host-install.toml are excluded -- they reference
+    templates by filename, not define them.
+
+    Templates are returned with their modules resolved and merged, so
+    downstream code sees fully-populated ``InstallTemplate`` objects.
     """
     templates_dir = _find_templates_dir()
     templates: list[InstallTemplate] = []
@@ -147,8 +175,10 @@ def discover_templates() -> list[InstallTemplate]:
         if item.name.endswith(".toml"):
             try:
                 tmpl = load_template(item)
-                # Only include system templates (have a meaningful name)
-                if tmpl.name != "Unknown":
+                # Only include system templates (have a meaningful name
+                # and module selections)
+                if tmpl.name != "Unknown" and tmpl.module_slugs:
+                    tmpl = resolve_and_merge_modules(tmpl)
                     templates.append(tmpl)
             except (KeyError, tomllib.TOMLDecodeError):
                 pass  # Skip non-template TOML files (auto-install, etc.)

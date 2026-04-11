@@ -1,0 +1,46 @@
+# Machine profile: QEMU/KVM virtual machine
+#
+# Optimized for virtual hardware: installs guest agents for host
+# communication, ensures virtio modules load early, tunes the kernel
+# for a virtualized environment, and disables services that have no
+# purpose without physical hardware.
+
+[machine]
+name = "Virtual Machine (QEMU/KVM)"
+description = "Guest agents, virtio tuning, stripped unnecessary hardware services"
+platform = "x86-64"
+
+[match]
+sys_vendor_pattern = "QEMU*"
+product_name_pattern = "Standard PC*"
+
+[packages]
+install = [
+    "qemu-guest-agent",     # Host communication, graceful shutdown, clock sync
+    "spice-vdagent",        # Clipboard sharing, dynamic display resize (SPICE/VNC)
+]
+
+[services]
+enable = [
+    "qemu-guest-agent",
+]
+disable = [
+    "bluetooth",            # No bluetooth hardware in VMs
+    "fstrim.timer",         # Host manages SSD TRIM via virtio discard=unmap
+]
+
+[modprobe]
+# Ensure virtio modules load before dependent block/net drivers
+"arches-vm-virtio.conf" = """\
+softdep virtio_blk pre: virtio_pci
+softdep virtio_net pre: virtio_pci\
+"""
+
+[sysctl]
+"90-arches-vm.conf" = """\
+# VM-optimized kernel tuning
+# Disable NMI watchdog — no real hardware, wastes CPU cycles
+kernel.nmi_watchdog = 0
+# Lower swappiness — host manages memory overcommit, guest should prefer cache
+vm.swappiness = 10\
+"""

@@ -99,6 +99,19 @@ class ConfirmScreen(Screen):
         if tmpl.ansible.firstboot_roles:
             text += f"  Ansible (1st boot): {', '.join(tmpl.ansible.firstboot_roles)}\n"
 
+        # Hardware configuration
+        hw = self.app.hardware_config
+        if hw and (hw.machine or hw.quirks):
+            text += "\n  [bold]Hardware:[/bold]\n"
+            if hw.machine:
+                text += f"  Machine:     {hw.machine.name}\n"
+            if hw.quirks:
+                text += f"  Quirks:      {', '.join(q.name for q in hw.quirks)}\n"
+            if hw.all_packages:
+                text += f"  HW packages: {len(hw.all_packages)}\n"
+            if hw.all_firstboot_roles:
+                text += f"  HW ansible:  {', '.join(hw.all_firstboot_roles)}\n"
+
         summary.update(text)
 
         # Set appropriate warning based on partition mode

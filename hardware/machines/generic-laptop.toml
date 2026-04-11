@@ -1,0 +1,12 @@
+# Machine profile: Generic laptop
+#
+# Fallback for unrecognized laptops.  No machine-specific packages or
+# services — only auto-detected quirks are applied.
+
+[machine]
+name = "Generic Laptop"
+description = "Unrecognized laptop — auto-detected quirks only"
+platform = "x86-64"
+
+[match]
+chassis_type = [8, 9, 10, 11, 14]   # laptop, notebook, sub-notebook, mini, sub

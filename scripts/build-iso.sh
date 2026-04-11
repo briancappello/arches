@@ -102,15 +102,19 @@ if [[ -d "$BUILD_HOME/.ssh" ]]; then
     VOLUMES+=(-v "$BUILD_HOME/.ssh:/home/builder/.ssh:ro")
 fi
 
-# Custom plasmoid sibling repos — mount if they exist
-for sibling in kde-task-manager plasma-ai-usage-monitor; do
-    sibling_path="$PROJECT_DIR/../$sibling"
-    if [[ -d "$sibling_path" ]]; then
-        VOLUMES+=(-v "$(cd "$sibling_path" && pwd):/build/../$sibling:ro")
-    else
-        echo "  WARNING: Sibling repo not found: $sibling_path"
-        echo "           Custom plasmoid build for $sibling will fail."
-    fi
+# Module build source mounts — discover from modules/*/build.mounts
+for mounts_file in "$PROJECT_DIR"/modules/*/build.mounts; do
+    [[ -f "$mounts_file" ]] || continue
+    module_name=$(basename "$(dirname "$mounts_file")")
+    while IFS= read -r rel_path; do
+        [[ "$rel_path" =~ ^#.*$ || -z "$rel_path" ]] && continue
+        src_path="$PROJECT_DIR/$rel_path"
+        if [[ -d "$src_path" ]]; then
+            VOLUMES+=(-v "$(cd "$src_path" && pwd):/build/$rel_path:ro")
+        else
+            echo "  WARNING: Build source not found: $src_path (module: $module_name)"
+        fi
+    done < "$mounts_file"
 done
 
 # ── Run the build ─────────────────────────────────────

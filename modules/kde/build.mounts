@@ -1,0 +1,6 @@
+# Host source directories needed by build.sh
+# Paths are relative to the project root directory.
+# Each line is mounted read-only into the build container.
+../kde-task-manager
+../plasma-ai-usage-monitor
+../kwin-gestures

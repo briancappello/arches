@@ -237,6 +237,32 @@ def _run_auto(
     # The app skips straight to the progress screen.
     from arches_installer.tui.app import ArchesApp
 
+    # Auto-detect hardware for unattended installs
+    from arches_installer.core.hardware import (
+        detect_pci_ids,
+        discover_machines,
+        discover_quirks,
+        get_dmi_info,
+        match_quirks,
+        resolve_hardware,
+        suggest_machine,
+    )
+
+    try:
+        pci_ids = detect_pci_ids()
+        dmi = get_dmi_info()
+        all_quirks = discover_quirks()
+        all_machines = discover_machines()
+        matched_quirks = match_quirks(all_quirks, pci_ids, dmi.chassis_type)
+        suggested_machine = suggest_machine(all_machines, dmi)
+        hw_config = resolve_hardware(suggested_machine, matched_quirks, all_quirks)
+        if hw_config.machine:
+            print(f"  Hardware:    {hw_config.machine.name}")
+        if hw_config.quirks:
+            print(f"  Quirks:      {', '.join(q.name for q in hw_config.quirks)}")
+    except Exception:
+        hw_config = None
+
     app = ArchesApp(platform=platform)
     app.selected_device = disk.path
     app.selected_template = config.template
@@ -245,6 +271,7 @@ def _run_auto(
     app.hostname = config.hostname
     app.username = config.username
     app.password = config.password
+    app.hardware_config = hw_config
     app.auto_install = True
     app.auto_shutdown = config.shutdown
     app.auto_reboot = config.reboot

@@ -1,0 +1,7 @@
+---
+# Container runtime configuration
+
+- name: Ensure podman is available for rootless containers
+  pacman:
+    name: podman
+    state: present

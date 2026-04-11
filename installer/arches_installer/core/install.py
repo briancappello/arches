@@ -15,6 +15,12 @@ from arches_installer.core.platform import ISO_PLATFORM_DIR, PlatformConfig
 from arches_installer.core.run import LogCallback, _log, chroot_run, run
 from arches_installer.core.template import InstallTemplate
 
+# Type import only — avoid circular dependency at runtime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from arches_installer.core.hardware import HardwareConfig
+
 # Path to the pacman.conf that includes platform-specific repos.
 # This is the platform pacman.conf staged into the ISO (with correct
 # repo URLs for the live environment), NOT /etc/pacman.conf (which is
@@ -236,6 +242,7 @@ def pacstrap(
     platform: PlatformConfig,
     template: InstallTemplate,
     log: LogCallback | None = None,
+    hardware: HardwareConfig | None = None,
 ) -> None:
     """Install base packages into MOUNT_ROOT via pacstrap."""
     _log("Running pacstrap...", log)
@@ -252,6 +259,11 @@ def pacstrap(
     # Template-specific packages (pacstrap phase only).
     # Override and firstboot packages are handled in separate pipeline steps.
     all_packages = base_packages + template.install.pacstrap
+
+    # Hardware-specific packages (from machine profile)
+    if hardware and hardware.all_packages:
+        _log(f"Adding {len(hardware.all_packages)} hardware packages", log)
+        all_packages = all_packages + hardware.all_packages
 
     _log(f"Total packages: {len(all_packages)}", log)
 
@@ -402,15 +414,24 @@ def install_pacman_conf(log: LogCallback | None = None) -> None:
         shutil.copytree(iso_repo, target_repo)
 
 
-def copy_mirrorlists(log: LogCallback | None = None) -> None:
+def copy_mirrorlists(
+    platform: PlatformConfig,
+    log: LogCallback | None = None,
+) -> None:
     """Copy active mirrorlist files from the live ISO into the installed target.
 
     pacstrap ``-M`` skips the host mirrorlist copy, leaving the target with
     the package-default (empty/commented) mirrorlist files.  Copying the
     live system's populated files gives the installed system working mirrors
     immediately — even on offline installs where reflector can't run.
+
+    The tier-specific CachyOS mirrorlist (e.g. ``cachyos-v3-mirrorlist``)
+    is derived from the platform's ``cachyos_optimization_tier`` so the
+    correct file is copied for v3, v4, and znver4 configurations.
     """
-    mirrorlists = ("mirrorlist", "cachyos-mirrorlist", "cachyos-v3-mirrorlist")
+    mirrorlists = ["mirrorlist", "cachyos-mirrorlist"]
+    if platform.cachyos_mirrorlist_name:
+        mirrorlists.append(platform.cachyos_mirrorlist_name)
     for name in mirrorlists:
         src = Path("/etc/pacman.d") / name
         dst = MOUNT_ROOT / "etc/pacman.d" / name
@@ -452,8 +473,11 @@ def install_override_packages(
     _log(f"Installing override packages: {', '.join(template.install.override)}", log)
     # Databases are already synced from pacstrap.  Use -S (not -Sy) so
     # this works offline.  The local arches-repo is already available.
+    # --ask 4 auto-confirms package conflict replacements
+    # (e.g. kwin -> arches-kwin-patched which declares conflicts=('kwin'))
     chroot_run(
-        ["pacman", "-S", "--noconfirm", "--overwrite", "*"] + template.install.override,
+        ["pacman", "-S", "--noconfirm", "--overwrite", "*", "--ask", "4"]
+        + template.install.override,
         log=log,
     )
 
@@ -627,14 +651,28 @@ def stage_ansible(
 ) -> None:
     """Copy ansible playbooks into the target for firstboot use."""
     if not template.ansible.firstboot_roles:
+        _log("No first-boot roles configured, skipping ansible staging.", log)
         return
+
+    _log(
+        f"Staging ansible for first-boot (roles: "
+        f"{', '.join(template.ansible.firstboot_roles)})...",
+        log,
+    )
 
     target_ansible = MOUNT_ROOT / "opt" / "arches" / "ansible"
     if ISO_ANSIBLE_DIR.exists():
-        _log("Copying ansible playbooks into target...", log)
+        _log(f"Copying {ISO_ANSIBLE_DIR} -> {target_ansible}...", log)
         if target_ansible.exists():
             shutil.rmtree(target_ansible)
         shutil.copytree(ISO_ANSIBLE_DIR, target_ansible)
+        _log("Ansible playbooks staged.", log)
+    else:
+        _log(
+            f"WARNING: Ansible directory not found at {ISO_ANSIBLE_DIR}, "
+            f"first-boot roles will not be available!",
+            log,
+        )
 
 
 def run_mkinitcpio(
@@ -871,14 +909,15 @@ def install_system(
     hostname: str,
     username: str,
     password: str,
+    hardware: HardwareConfig | None = None,
     log: LogCallback | None = None,
 ) -> None:
     """Full install pipeline after disk is prepared and mounted."""
     _pre_pacstrap_setup(log)
-    pacstrap(platform, template, log)
+    pacstrap(platform, template, log, hardware=hardware)
     generate_fstab(log)
     install_pacman_conf(log)
-    copy_mirrorlists(log)
+    copy_mirrorlists(platform, log)
     sync_chroot_databases(log)
     install_override_packages(template, log)
     configure_locale(template.system.locale, log)
@@ -888,6 +927,11 @@ def install_system(
     deploy_ssh_key(username, log)
     copy_apple_firmware(platform, log)
     configure_apple_input(platform, log)
+    # Deploy hardware quirk/machine config files (modprobe, udev, sysctl)
+    if hardware:
+        from arches_installer.core.hardware import deploy_hardware_files
+
+        deploy_hardware_files(hardware, log)
     copy_network_profiles(log)
     preseed_network_deps(username, log)
     run_hardware_detection(platform, log)
@@ -895,5 +939,18 @@ def install_system(
     # NOTE: mkinitcpio is NOT run here — it's handled by
     # limine-mkinitcpio in the bootloader phase (Phase 3),
     # which generates both the initramfs and limine.conf entries.
-    enable_services(template.services, log)
+    # Merge hardware services with template services
+    services = list(template.services)
+    if hardware:
+        for svc in hardware.all_services:
+            if svc not in services:
+                services.append(svc)
+        # Remove services the machine profile explicitly disables
+        if hardware.all_services_disable:
+            disabled = set(hardware.all_services_disable)
+            removed = [s for s in services if s in disabled]
+            if removed:
+                _log(f"Hardware profile disabling services: {', '.join(removed)}", log)
+            services = [s for s in services if s not in disabled]
+    enable_services(services, log)
     stage_ansible(template, log)

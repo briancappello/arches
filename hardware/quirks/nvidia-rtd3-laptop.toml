@@ -1,0 +1,28 @@
+# Hardware quirk: NVIDIA RTD3 dynamic power management for hybrid laptops
+#
+# Enables fine-grained Runtime D3 (RTD3) power management on laptops
+# with NVIDIA discrete GPUs.  When no processes hold /dev/nvidia* open,
+# the GPU suspends to D3 and draws ~0 W.  It wakes automatically when
+# a CUDA or graphics process starts.
+#
+# Requires both the modprobe option (driver-level) and udev rules
+# (to set power/control=auto and remove USB/audio sub-devices that
+# would otherwise prevent D3 entry).
+
+[quirk]
+name = "NVIDIA RTD3 power management"
+description = "Fine-grained GPU power management for hybrid laptops"
+
+[match]
+pci_vendor = "10de"
+chassis_type = [8, 9, 10, 11, 14]   # laptop, notebook, sub-notebook, mini, sub
+
+[modprobe]
+"arches-nvidia-rtd3.conf" = """\
+# 0x02 = fine-grained power management — GPU enters D3 when idle,
+# wakes on demand.  Requires udev rules in 80-nvidia-rtd3.rules.
+options nvidia NVreg_DynamicPowerManagement=0x02\
+"""
+
+[udev]
+"80-nvidia-rtd3.rules" = "nvidia-rtd3.rules"

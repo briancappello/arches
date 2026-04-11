@@ -8,6 +8,7 @@ error handling, and phase ordering are consistent regardless of the entry point.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from arches_installer.core.bootloader import install_bootloader
 from arches_installer.core.disk import PartitionMap
@@ -22,6 +23,7 @@ from arches_installer.core.disk_layout import (
     _part_name,
 )
 from arches_installer.core.firstboot import inject_firstboot_service
+from arches_installer.core.hardware import HardwareConfig, deploy_hardware_files
 from arches_installer.core.install import install_system
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.run import LogCallback
@@ -47,6 +49,10 @@ class InstallParams:
     disk_layout: DiskLayout | None = None
     # Optional RAID configuration (btrfs multi-device or mdadm).
     raid_config: RaidConfig | None = None
+    # Hardware configuration (machine profile + auto-detected quirks).
+    # When set, hardware-specific packages, services, modprobe/udev
+    # configs, and Ansible roles are merged into the install.
+    hardware: HardwareConfig | None = None
 
 
 def run_install_pipeline(
@@ -124,6 +130,7 @@ def run_install_pipeline(
         params.hostname,
         params.username,
         params.password,
+        hardware=params.hardware,
         log=log,
     )
     log("[green]System installed successfully.[/green]")
@@ -170,10 +177,35 @@ def run_install_pipeline(
     inject_firstboot_service(
         template,
         params.username,
+        platform=platform,
+        hardware=params.hardware,
         log=log,
     )
+
+    # Copy install log to the installed system for post-mortem debugging
+    _persist_install_log(log)
 
     log("")
     log("== Installation complete ==")
 
     return parts
+
+
+def _persist_install_log(log: LogCallback | None = None) -> None:
+    """Copy the install log from the live ISO tmpfs into the installed system."""
+    from arches_installer.core.disk import MOUNT_ROOT
+    from arches_installer.core.run import _log
+
+    src = Path("/var/log/arches-install.log")
+    if not src.exists():
+        return
+
+    target_log = MOUNT_ROOT / "var" / "log" / "arches-install.log"
+    try:
+        target_log.parent.mkdir(parents=True, exist_ok=True)
+        import shutil
+
+        shutil.copy2(src, target_log)
+        _log(f"Install log saved to {target_log}.", log)
+    except OSError as e:
+        _log(f"WARNING: Could not save install log: {e}", log)

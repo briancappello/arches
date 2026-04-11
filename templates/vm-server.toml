@@ -6,49 +6,15 @@ description = "Headless server — nginx, postgres, redis, SSH"
 timezone = "America/Denver"
 locale = "en_US.UTF-8"
 
-[install.pacstrap]
-packages = [
-    # Server
-    "openssh",
-    "nginx",
-    "postgresql",
-    "redis",
-    "ansible",
-    # Networking
-    "networkmanager",
-    "firewalld",
-    "nftables",
-    # Monitoring
-    "htop",
-    "btop",
-    "iotop",
-    # Tools
-    "git",
-    "neovim",
-    "tmux",
+[modules]
+include = [
+    # Base
+    "base",
     "zsh",
-    "rsync",
-    "curl",
-    "wget",
-    "jq",
-]
-
-[install.override]
-packages = []
-
-[install.firstboot]
-packages = []
-
-[services]
-enable = [
-    "NetworkManager",
-    "sshd",
-    "nginx",
+    # Networking
+    "networking",
+    # Services
     "postgresql",
     "redis",
-    "firewalld",
-    "fstrim.timer",
+    "nginx",
 ]
-
-[ansible]
-firstboot_roles = ["mirrors", "base", "zsh", "vm-server"]

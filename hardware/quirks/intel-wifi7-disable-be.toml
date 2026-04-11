@@ -1,0 +1,22 @@
+# Hardware quirk: Intel Wi-Fi 7 (BE200/BE201) stability fix
+#
+# The 802.11be firmware code paths in Intel BE200/BE201 cards have a
+# known bug that causes firmware crash loops (~every 5 minutes).
+# Each crash triggers a synchronous PCIe bus reset that can stall the
+# KWin Wayland compositor, freezing mouse/keyboard input for seconds.
+#
+# Disabling 802.11be forces Wi-Fi 6E mode, which uses stable firmware
+# paths while still supporting up to 2.4 Gbps.
+
+[quirk]
+name = "Intel Wi-Fi 7 stability fix"
+description = "Disable 802.11be to prevent firmware crash loops on BE200/BE201"
+
+[match]
+pci_ids = [
+    "8086:272b",   # Intel BE200 320MHz
+    "8086:272e",   # Intel BE201 160MHz
+]
+
+[modprobe]
+"arches-intel-wifi7.conf" = "options iwlwifi disable_11be=1"

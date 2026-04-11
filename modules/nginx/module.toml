@@ -1,0 +1,14 @@
+[meta]
+name = "nginx"
+description = "nginx HTTP server and reverse proxy"
+category = "service"
+
+[install.pacstrap]
+packages = [
+    "nginx",
+]
+
+[services]
+enable = [
+    "nginx",
+]

@@ -9,6 +9,7 @@ import pytest
 from arches_installer.core.template import (
     InstallTemplate,
     load_template,
+    resolve_and_merge_modules,
 )
 
 
@@ -18,20 +19,45 @@ class TestLoadTemplate:
     def test_load_dev_workstation_template(self, templates_dir: Path) -> None:
         tmpl = load_template(templates_dir / "dev-workstation.toml")
         assert tmpl.name == "Dev Workstation"
-        assert "git" in tmpl.install.pacstrap
-        assert "NetworkManager" in tmpl.services
-        assert "base" in tmpl.ansible.firstboot_roles
-        assert "zsh" in tmpl.ansible.firstboot_roles
-        assert tmpl.graphical is True
+        assert tmpl.module_slugs == ["base", "zsh", "networking", "kde"]
+        # Before resolve, install/services/ansible are empty
+        assert tmpl.install.pacstrap == []
 
     def test_load_vm_server_template(self, templates_dir: Path) -> None:
         tmpl = load_template(templates_dir / "vm-server.toml")
         assert tmpl.name == "VM Server"
-        assert "openssh" in tmpl.install.pacstrap
-        assert "sshd" in tmpl.services
-        assert "base" in tmpl.ansible.firstboot_roles
-        assert "zsh" in tmpl.ansible.firstboot_roles
-        assert tmpl.graphical is False
+        assert tmpl.module_slugs == ["base", "zsh", "networking", "postgresql"]
+
+    def test_resolve_populates_packages(self, templates_dir: Path) -> None:
+        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        resolved = resolve_and_merge_modules(tmpl)
+        assert "git" in resolved.install.pacstrap
+        assert "plasma-meta" in resolved.install.pacstrap
+        assert "zsh" in resolved.install.pacstrap
+        assert "networkmanager" in resolved.install.pacstrap
+
+    def test_resolve_populates_services(self, templates_dir: Path) -> None:
+        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        resolved = resolve_and_merge_modules(tmpl)
+        assert "NetworkManager" in resolved.services
+        assert "sddm" in resolved.services
+
+    def test_resolve_populates_ansible_roles(self, templates_dir: Path) -> None:
+        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        resolved = resolve_and_merge_modules(tmpl)
+        assert "base" in resolved.ansible.firstboot_roles
+        assert "kde" in resolved.ansible.firstboot_roles
+        assert "zsh" in resolved.ansible.firstboot_roles
+
+    def test_resolve_sets_graphical(self, templates_dir: Path) -> None:
+        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        resolved = resolve_and_merge_modules(tmpl)
+        assert resolved.graphical is True
+
+    def test_resolve_not_graphical_for_server(self, templates_dir: Path) -> None:
+        tmpl = load_template(templates_dir / "vm-server.toml")
+        resolved = resolve_and_merge_modules(tmpl)
+        assert resolved.graphical is False
 
     def test_load_nonexistent_file(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
@@ -47,9 +73,8 @@ class TestLoadTemplate:
         empty = tmp_path / "empty.toml"
         empty.write_text("")
         tmpl = load_template(empty)
-        # Should use all defaults
         assert tmpl.name == "Unknown"
-        assert tmpl.install.pacstrap == []
+        assert tmpl.module_slugs == []
 
     def test_template_has_no_disk_or_bootloader(self, templates_dir: Path) -> None:
         """Templates should not have disk or bootloader attributes."""
@@ -65,28 +90,27 @@ class TestInstallTemplateFromDict:
         tmpl = InstallTemplate.from_dict({})
         assert tmpl.name == "Unknown"
         assert tmpl.description == ""
-        assert tmpl.install.pacstrap == []
+        assert tmpl.module_slugs == []
 
-    def test_full_dict(self) -> None:
+    def test_modules_dict(self) -> None:
         data = {
             "meta": {"name": "Test", "description": "A test template"},
             "system": {
                 "timezone": "Europe/London",
                 "locale": "en_GB.UTF-8",
             },
-            "install": {
-                "pacstrap": {"packages": ["vim", "curl"]},
-            },
-            "services": {"enable": ["sshd"]},
-            "ansible": {
-                "firstboot_roles": ["base", "zsh"],
+            "modules": {
+                "include": ["base", "networking"],
             },
         }
         tmpl = InstallTemplate.from_dict(data)
         assert tmpl.name == "Test"
         assert tmpl.system.timezone == "Europe/London"
-        assert tmpl.services == ["sshd"]
-        assert tmpl.ansible.firstboot_roles == ["base", "zsh"]
+        assert tmpl.module_slugs == ["base", "networking"]
+        # Install/services/ansible are empty before resolve
+        assert tmpl.install.pacstrap == []
+        assert tmpl.services == []
+        assert tmpl.ansible.firstboot_roles == []
 
     def test_unknown_keys_ignored(self) -> None:
         data = {
@@ -96,38 +120,7 @@ class TestInstallTemplateFromDict:
         tmpl = InstallTemplate.from_dict(data)
         assert tmpl.name == "Test"
 
-    def test_legacy_disk_and_bootloader_ignored(self) -> None:
-        """Templates with legacy [disk] and [bootloader] sections should still load."""
-        data = {
-            "meta": {"name": "Legacy"},
-            "disk": {"filesystem": "btrfs", "subvolumes": ["@"]},
-            "bootloader": {"type": "limine", "snapshot_boot": True},
-            "system": {"packages": ["git"]},
-        }
-        tmpl = InstallTemplate.from_dict(data)
-        assert tmpl.name == "Legacy"
-        assert not hasattr(tmpl, "disk")
-        assert not hasattr(tmpl, "bootloader")
-        assert tmpl.install.pacstrap == ["git"]
-
-    def test_kernel_in_system_ignored(self) -> None:
-        """Templates with a legacy kernel field should still load (ignored)."""
-        data = {
-            "system": {
-                "kernel": "linux-cachyos",
-                "packages": ["git"],
-            },
-        }
-        tmpl = InstallTemplate.from_dict(data)
-        assert not hasattr(tmpl.system, "kernel")
-        assert tmpl.install.pacstrap == ["git"]
-
-    def test_graphical_true(self) -> None:
-        data = {"meta": {"name": "Desktop", "graphical": True}}
-        tmpl = InstallTemplate.from_dict(data)
-        assert tmpl.graphical is True
-
-    def test_graphical_default_false(self) -> None:
-        data = {"meta": {"name": "Server"}}
-        tmpl = InstallTemplate.from_dict(data)
-        assert tmpl.graphical is False
+    def test_system_defaults(self) -> None:
+        tmpl = InstallTemplate.from_dict({"meta": {"name": "Test"}})
+        assert tmpl.system.timezone == "America/Denver"
+        assert tmpl.system.locale == "en_US.UTF-8"

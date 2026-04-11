@@ -1,0 +1,14 @@
+[meta]
+name = "PipeWire Audio"
+description = "PipeWire audio stack with ALSA, PulseAudio, and JACK compatibility"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    "pipewire",
+    "pipewire-alsa",
+    "pipewire-pulse",
+    "pipewire-jack",
+    "wireplumber",
+    "sof-firmware",
+]

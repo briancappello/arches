@@ -1515,7 +1515,7 @@ class TestInstallSystem:
             )
 
         mock_pacstrap.assert_called_once_with(
-            x86_64_platform, dev_workstation_template, log_fn
+            x86_64_platform, dev_workstation_template, log_fn, hardware=None
         )
         mock_locale.assert_called_once_with(
             dev_workstation_template.system.locale, log_fn

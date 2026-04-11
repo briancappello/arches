@@ -71,7 +71,7 @@ class TemplateSelectScreen(Screen):
         template_list = self.query_one("#template-list", OptionList)
         if template_list.highlighted is not None and self._templates:
             self.app.selected_template = self._templates[template_list.highlighted]
-            self.app.push_screen("user_setup")
+            self.app.push_screen("module_select")
 
     def on_option_list_option_selected(
         self,

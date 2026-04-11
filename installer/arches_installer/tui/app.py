@@ -8,6 +8,7 @@ from textual.screen import Screen
 
 from arches_installer.core.disk import PartitionMap
 from arches_installer.core.disk_layout import DiskLayout, RaidConfig
+from arches_installer.core.hardware import HardwareConfig
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.template import InstallTemplate
 from arches_installer.tui.welcome import WelcomeScreen
@@ -17,6 +18,8 @@ from arches_installer.tui.raid_config import RaidConfigScreen
 from arches_installer.tui.layout_select import LayoutSelectScreen
 from arches_installer.tui.partition import PartitionScreen
 from arches_installer.tui.template_select import TemplateSelectScreen
+from arches_installer.tui.module_select import ModuleSelectScreen
+from arches_installer.tui.hardware_confirm import HardwareConfirmScreen
 from arches_installer.tui.user_setup import UserSetupScreen
 from arches_installer.tui.confirm import ConfirmScreen
 from arches_installer.tui.progress import InstallProgressScreen
@@ -69,6 +72,7 @@ class ArchesApp(App):
     raid_config: RaidConfig | None = None
     partition_mode: str = ""  # "auto" or "manual"
     partition_map: PartitionMap | None = None  # set by manual flow or progress
+    hardware_config: HardwareConfig | None = None  # set by hardware confirm screen
     hostname: str = ""
     username: str = ""
     password: str = ""
@@ -91,6 +95,8 @@ class ArchesApp(App):
         "layout_select": LayoutSelectScreen,
         "partition": PartitionScreen,
         "template_select": TemplateSelectScreen,
+        "module_select": ModuleSelectScreen,
+        "hardware_confirm": HardwareConfirmScreen,
         "user_setup": UserSetupScreen,
         "confirm": ConfirmScreen,
         "progress": InstallProgressScreen,

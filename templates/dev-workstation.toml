@@ -1,107 +1,33 @@
 [meta]
 name = "Dev Workstation"
 description = "KDE Plasma desktop with full development toolchain"
-graphical = true
 
 [system]
 timezone = "America/Denver"
 locale = "en_US.UTF-8"
 
-# ─── Package installation phases ──────────────────────
-# pacstrap:  Installed via pacstrap during initial system setup
-# override:  Installed after pacstrap with --overwrite (conflicts with stock packages)
-# firstboot: Installed on first boot (needs running system, network, etc.)
-
-[install.pacstrap]
-packages = [
-    # Desktop
-    "plasma-meta",
-    "sddm",
-    "konsole",
-    "dolphin",
-    "kate",
-    "ark",
-    "spectacle",
-    "gwenview",
-    "firefox",
-    # Audio
-    "pipewire",
-    "pipewire-alsa",
-    "pipewire-pulse",
-    "pipewire-jack",
-    "wireplumber",
-    "sof-firmware",
-    # Networking
-    "networkmanager",
-    "firewalld",
-    "openssh",
-    # Fonts
-    "noto-fonts",
-    "noto-fonts-cjk",
-    "noto-fonts-emoji",
-    "ttf-jetbrains-mono-nerd",
-    "ttf-dejavu-nerd",
-    # Dev tools
-    "git",
-    "neovim",
-    "tmux",
+[modules]
+include = [
+    # Base
+    "base",
     "zsh",
-    "base-devel",
-    "rustup",
+    "dev-tools",
+    "fonts",
+    "pipewire",
+    "snapshots",
+    "containers",
+    # Networking
+    "networking",
+    # Desktop
+    "kde",
+    # Dev toolchains
+    "rust",
     "go",
     "python",
-    "python-pip",
     "nodejs",
-    "npm",
-    "podman",
-    # CLI utilities
-    "ripgrep",
-    "fd",
-    "bat",
-    "eza",
-    "fzf",
-    "lazygit",
-    "bottom",
-    "dust",
-    "duf",
-    # Snapshot support
-    "snapper",
-    "snap-pac",
-    # Custom plasmoids (from arches-local repo)
-    "plasma-ai-usage-monitor",
-    # server
+    # Services
     "postgresql",
     "redis",
     "rabbitmq",
     "nginx",
 ]
-
-[install.override]
-# Packages that replace files from stock packages.
-# Installed with `pacman --overwrite` after pacstrap.
-packages = [
-    "arches-taskmanager-patched",
-]
-
-[install.firstboot]
-# Packages that need a running system or network.
-# Installed via pacman on first boot.
-packages = []
-
-[services]
-enable = [
-    "NetworkManager",
-    "sddm",
-    "sshd",
-    "firewalld",
-    "fstrim.timer",
-    "snapper-timeline.timer",
-    "snapper-cleanup.timer",
-    "nginx",
-    "redis",
-    "rabbitmq",
-    "postgresql",
-]
-
-[ansible]
-firstboot_roles = ["mirrors", "base", "zsh", "kde", "dev-tools"]

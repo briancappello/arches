@@ -134,6 +134,7 @@ class TestRunInstallPipelineLayoutBased:
             "testbox",
             "testuser",
             "testpass",
+            hardware=None,
             log=log,
         )
 

@@ -1,0 +1,40 @@
+[meta]
+name = "COSMIC"
+description = "System76 COSMIC desktop environment with cosmic-greeter"
+category = "desktop"
+
+[install.pacstrap]
+packages = [
+    # COSMIC desktop session (pulls in compositor, applets, panel, etc.)
+    "cosmic-session",
+    # COSMIC greeter (display manager based on greetd)
+    "cosmic-greeter",
+    # COSMIC applications
+    "cosmic-text-editor",
+    "cosmic-files",
+    "cosmic-terminal",
+    "cosmic-player",
+    # Wallpapers
+    "cosmic-wallpapers",
+    # Firefox (not bundled with COSMIC)
+    "firefox",
+    # Hardware integration
+    "wl-clipboard",
+    "bluez-utils",
+    # Keyring for password storage (COSMIC doesn't ship its own)
+    "gnome-keyring",
+    # GVFS for network shares in COSMIC Files
+    "gvfs",
+    "gvfs-smb",
+    # Xwayland for X11 app compatibility
+    "xorg-xwayland",
+]
+
+[services]
+enable = [
+    "cosmic-greeter",
+    "bluetooth",
+]
+
+[dependencies]
+conflicts = ["kde"]

@@ -1,0 +1,19 @@
+---
+# COSMIC desktop environment configuration defaults.
+#
+# COSMIC stores settings in RON (Rusty Object Notation) files under
+# ~/.config/cosmic/. This role deploys sensible defaults.
+
+# ── Input ──────────────────────────────────────────────
+cosmic_touchpad_tap_to_click: true
+cosmic_touchpad_natural_scroll: true
+
+# ── Appearance ─────────────────────────────────────────
+cosmic_theme: "dark"
+
+# ── Session ────────────────────────────────────────────
+cosmic_disable_screen_lock: true
+
+# ── XDG directories ───────────────────────────────────
+# Flatten XDG user dirs to $HOME (same convention as the KDE module)
+cosmic_xdg_flatten: true

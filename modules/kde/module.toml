@@ -1,0 +1,40 @@
+[meta]
+name = "KDE Plasma"
+description = "Full KDE Plasma desktop environment with SDDM display manager"
+category = "desktop"
+
+[install.pacstrap]
+packages = [
+    "plasma-meta",
+    "sddm",
+    "konsole",
+    "dolphin",
+    "kate",
+    "ark",
+    "spectacle",
+    "gwenview",
+    "firefox",
+    # Discover package management backend
+    "packagekit-qt6",
+    # Hardware integration
+    "powertop",
+    "wl-clipboard",
+    "bluez-utils",
+    # Custom plasmoids (from arches-local repo)
+    "plasma-ai-usage-monitor",
+]
+
+[install.override]
+packages = [
+    "arches-taskmanager-patched",
+    "arches-kwin-patched",
+]
+
+[services]
+enable = [
+    "sddm",
+    "bluetooth",
+]
+
+[dependencies]
+conflicts = ["cosmic"]

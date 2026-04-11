@@ -1,0 +1,8 @@
+---
+# Rust toolchain initialization
+
+- name: Initialize rustup default toolchain
+  become_user: "{{ ansible_user | default('brian') }}"
+  command: rustup default stable
+  args:
+    creates: "/home/{{ ansible_user | default('brian') }}/.rustup/toolchains/stable-*"

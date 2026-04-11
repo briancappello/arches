@@ -1,0 +1,10 @@
+[meta]
+name = "Python"
+description = "Python interpreter and pip package manager"
+category = "dev-toolchain"
+
+[install.pacstrap]
+packages = [
+    "python",
+    "python-pip",
+]

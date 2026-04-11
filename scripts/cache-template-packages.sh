@@ -47,23 +47,23 @@ for v in platform.kernel.variants:
     print(v.headers)
 ")
 
-# Collect all template packages (from all install phases)
+# Collect all template packages via the module system.
+# Templates declare [modules].include; we resolve modules and merge
+# their packages to get the full package list.
 template_packages=()
 for tmpl in "$TEMPLATES_DIR"/*.toml; do
     echo "  Reading template: $(basename "$tmpl")"
     while IFS= read -r pkg; do
         [[ -n "$pkg" ]] && template_packages+=("$pkg")
-    done < <(python3 -c "
-import tomllib
-d = tomllib.load(open('$tmpl', 'rb'))
-i = d.get('install', {})
-# New format: [install.pacstrap], [install.override], [install.firstboot]
-for phase in ('pacstrap', 'override', 'firstboot'):
-    for p in i.get(phase, {}).get('packages', []):
+    done < <(PYTHONPATH="$INSTALLER_DIR/.." python3 -c "
+from arches_installer.core.template import load_template, resolve_and_merge_modules
+from pathlib import Path
+
+tmpl = load_template(Path('$tmpl'))
+if tmpl.module_slugs:
+    resolved = resolve_and_merge_modules(tmpl)
+    for p in resolved.install.all_packages:
         print(p)
-# Old format: [system] packages = [...]
-for p in d.get('system', {}).get('packages', []):
-    print(p)
 ")
 done
 
@@ -85,8 +85,28 @@ hw_driver_packages=(
     xorg-server xorg-xinit
 )
 
+# Packages from hardware machine profiles (e.g. qemu-guest-agent for VMs,
+# tuned/thermald for ThinkPads).  These are auto-detected at install time
+# via DMI matching and must be pre-cached for offline installs.
+machine_packages=()
+echo "  Reading hardware machine profiles..."
+for machine_toml in "$PROJECT_ROOT"/hardware/machines/*.toml; do
+    [[ -f "$machine_toml" ]] || continue
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] && machine_packages+=("$pkg")
+    done < <(python3 -c "
+import tomllib
+d = tomllib.load(open('$machine_toml', 'rb'))
+for p in d.get('packages', {}).get('install', []):
+    print(p)
+")
+done
+if [[ ${#machine_packages[@]} -gt 0 ]]; then
+    echo "  Machine profile packages: ${machine_packages[*]}"
+fi
+
 # Deduplicate
-all_packages=($(printf '%s\n' "${base_packages[@]}" "${template_packages[@]}" "${hw_driver_packages[@]}" | sort -u))
+all_packages=($(printf '%s\n' "${base_packages[@]}" "${template_packages[@]}" "${hw_driver_packages[@]}" "${machine_packages[@]}" | sort -u))
 
 echo "  Packages to cache: ${#all_packages[@]}"
 echo "  Package list: ${all_packages[*]}"

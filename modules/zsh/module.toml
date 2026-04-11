@@ -1,0 +1,12 @@
+[meta]
+name = "Zsh"
+description = "Zsh shell with Oh-My-Zsh and custom themes"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    "zsh",
+]
+
+[dependencies]
+requires = ["base"]

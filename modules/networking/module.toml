@@ -1,0 +1,20 @@
+[meta]
+name = "Networking"
+description = "NetworkManager, firewalld, and OpenSSH"
+category = "networking"
+
+[install.pacstrap]
+packages = [
+    "networkmanager",
+    "firewalld",
+    "openssh",
+]
+
+[services]
+enable = [
+    "NetworkManager",
+    "NetworkManager-dispatcher",
+    "sshd",
+    "firewalld",
+    "fstrim.timer",
+]

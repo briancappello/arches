@@ -1,0 +1,39 @@
+# Machine profile: Lenovo ThinkPad P1 Gen 7
+#
+# Intel Meteor Lake-P (Intel Arc Graphics) + NVIDIA RTX 3000 Ada
+# hybrid laptop.  Custom tuned power profiles, NVIDIA RTD3 GPU power
+# management, and ThinkPad-specific battery charge threshold control.
+
+[machine]
+name = "ThinkPad P1 Gen 7"
+description = "Intel Meteor Lake + NVIDIA RTX 3000 Ada hybrid laptop"
+platform = "x86-64"
+
+[match]
+sys_vendor = "LENOVO"
+product_name_pattern = "21KW*"
+
+[quirks]
+include = [
+    "intel-wifi7-disable-be",
+    "nvidia-rtd3-laptop",
+]
+
+[packages]
+install = [
+    "tp_smapi",          # ThinkPad battery management (SMAPI interface)
+    "acpi_call",         # ACPI call interface for battery thresholds
+    "tuned",             # Power profile daemon
+    "tuned-ppd",         # power-profiles-daemon compatibility layer
+    "thermald",          # Intel thermal management daemon
+]
+
+[services]
+enable = [
+    "tuned",
+    "tuned-ppd",
+    "thermald",
+]
+
+[ansible]
+firstboot_roles = ["power"]

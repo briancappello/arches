@@ -1,0 +1,152 @@
+---
+# ============================================================================
+# Power Management — ThinkPad P1 Gen 7
+# ============================================================================
+#
+# Installs tuned + tuned-ppd with custom power profiles and sets up
+# NVIDIA RTD3 for on-demand GPU power management.
+#
+# Profiles (switchable from KDE panel):
+#   power-saver  -> p1-powersave   (turbo off, low-power firmware, wifi PS)
+#   balanced     -> p1-balanced    (schedutil, balanced firmware)
+#   performance  -> p1-performance (max freq, max firmware envelope)
+#
+# GPU + Ollama and battery charge thresholds are managed via the
+# `power` CLI tool.
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# 1. Packages
+# --------------------------------------------------------------------------
+- name: "Power: install tuned and tuned-ppd"
+  pacman:
+    name:
+      - tuned
+      - tuned-ppd
+    state: present
+
+# --------------------------------------------------------------------------
+# 2. NVIDIA RTD3 — now handled by hardware quirk (nvidia-rtd3-laptop)
+# --------------------------------------------------------------------------
+# The modprobe config and udev rules for NVIDIA RTD3 are deployed at
+# install time by the nvidia-rtd3-laptop hardware quirk.  The files
+# are kept in hardware/quirks/nvidia-rtd3-laptop/ for reference.
+
+# --------------------------------------------------------------------------
+# 3. Tuned profiles
+# --------------------------------------------------------------------------
+- name: "Power: create tuned profiles directory"
+  file:
+    path: "/etc/tuned/profiles/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - p1-powersave
+    - p1-balanced
+    - p1-performance
+
+- name: "Power: deploy p1-powersave profile"
+  copy:
+    src: "tuned/p1-powersave/{{ item.src }}"
+    dest: "/etc/tuned/profiles/p1-powersave/{{ item.src }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: tuned.conf, mode: "0644" }
+    - { src: script.sh,  mode: "0755" }
+
+- name: "Power: deploy p1-balanced profile"
+  copy:
+    src: "tuned/p1-balanced/{{ item.src }}"
+    dest: "/etc/tuned/profiles/p1-balanced/{{ item.src }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: tuned.conf, mode: "0644" }
+    - { src: script.sh,  mode: "0755" }
+
+- name: "Power: deploy p1-performance profile"
+  copy:
+    src: tuned/p1-performance/tuned.conf
+    dest: /etc/tuned/profiles/p1-performance/tuned.conf
+    mode: "0644"
+
+# --------------------------------------------------------------------------
+# 5. tuned-ppd configuration
+# --------------------------------------------------------------------------
+- name: "Power: deploy tuned-ppd profile mapping"
+  copy:
+    src: ppd.conf
+    dest: /etc/tuned/ppd.conf
+    mode: "0644"
+
+# --------------------------------------------------------------------------
+# 6. `power` CLI tool
+# --------------------------------------------------------------------------
+- name: "Power: deploy power CLI script"
+  copy:
+    src: power
+    dest: /usr/local/bin/power
+    mode: "0755"
+
+- name: "Power: create helper directory"
+  file:
+    path: /usr/local/lib/power
+    state: directory
+    mode: "0755"
+
+- name: "Power: deploy charge threshold helper"
+  copy:
+    src: set-charge-thresholds
+    dest: /usr/local/lib/power/set-charge-thresholds
+    mode: "0755"
+
+- name: "Power: deploy sudoers rules"
+  copy:
+    src: power-sudoers
+    dest: /etc/sudoers.d/power
+    mode: "0440"
+    validate: 'visudo -cf %s'
+
+# --------------------------------------------------------------------------
+# 7. Clean up old gpu-ollama files
+# --------------------------------------------------------------------------
+- name: "Power: remove old gpu-ollama script"
+  file:
+    path: /usr/local/bin/gpu-ollama
+    state: absent
+
+- name: "Power: remove old gpu-ollama sudoers"
+  file:
+    path: /etc/sudoers.d/gpu-ollama
+    state: absent
+
+# --------------------------------------------------------------------------
+# 8. Enable services
+# --------------------------------------------------------------------------
+- name: "Power: enable tuned"
+  systemd:
+    name: tuned.service
+    enabled: yes
+    state: started
+
+- name: "Power: enable tuned-ppd"
+  systemd:
+    name: tuned-ppd.service
+    enabled: yes
+    state: started
+
+# --------------------------------------------------------------------------
+# 9. Disable ollama and open-webui auto-start (managed by `power` script)
+# --------------------------------------------------------------------------
+- name: "Power: disable ollama auto-start"
+  systemd:
+    name: ollama.service
+    enabled: no
+  failed_when: false
+
+- name: "Power: disable open-webui auto-start (user service)"
+  become_user: "{{ ansible_user | default('brian') }}"
+  systemd:
+    name: open-webui.service
+    scope: user
+    enabled: no
+  failed_when: false

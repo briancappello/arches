@@ -1,0 +1,17 @@
+---
+# Redis — localhost-only, protected mode on
+
+- name: "Redis: bind to localhost only"
+  lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^bind'
+    line: 'bind 127.0.0.1 -::1'
+    create: yes
+  notify: restart redis
+
+- name: "Redis: enable protected mode"
+  lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^protected-mode'
+    line: 'protected-mode yes'
+  notify: restart redis

@@ -40,6 +40,7 @@ from arches_installer.core.snapper import setup_snapshots
 from arches_installer.core.template import (
     InstallTemplate,
     load_template,
+    resolve_and_merge_modules,
     resolve_template,
 )
 
@@ -85,7 +86,9 @@ class HostInstallConfig:
         template_name = install.get("template")
         if not template_name:
             raise ValueError("install.template is required")
-        template = load_template(resolve_template(template_name))
+        template = resolve_and_merge_modules(
+            load_template(resolve_template(template_name))
+        )
 
         hostname = install.get("hostname", "arches")
         username = install.get("username")
@@ -361,6 +364,7 @@ def run_host_install(platform: PlatformConfig, config: HostInstallConfig) -> int
         inject_firstboot_service(
             config.template,
             config.username,
+            platform=platform,
             log=log,
         )
 

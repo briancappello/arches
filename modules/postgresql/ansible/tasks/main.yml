@@ -1,0 +1,28 @@
+---
+# PostgreSQL — localhost-only, trust local connections (dev default)
+
+- name: "PostgreSQL: initialize data directory"
+  command: su - postgres -c "initdb -D /var/lib/postgres/data"
+  args:
+    creates: /var/lib/postgres/data/PG_VERSION
+
+- name: "PostgreSQL: bind to localhost only"
+  lineinfile:
+    path: /var/lib/postgres/data/postgresql.conf
+    regexp: "^#?listen_addresses"
+    line: "listen_addresses = 'localhost'"
+  notify: restart postgresql
+
+- name: "PostgreSQL: trust local connections (no password for dev)"
+  copy:
+    dest: /var/lib/postgres/data/pg_hba.conf
+    owner: postgres
+    group: postgres
+    mode: '0600'
+    content: |
+      # Arches dev workstation — trust all local connections
+      # TYPE  DATABASE  USER  ADDRESS      METHOD
+      local   all       all                trust
+      host    all       all   127.0.0.1/32 trust
+      host    all       all   ::1/128      trust
+  notify: restart postgresql

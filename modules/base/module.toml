@@ -1,0 +1,21 @@
+[meta]
+name = "Base System"
+description = "Core system configuration — pacman, journald, NTP, neovim, mirror optimization"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    "base-devel",
+    "neovim",
+    "git",
+    "ansible",
+    "reflector",
+    # CLI utilities
+    "htop",
+    "btop",
+    "rsync",
+    "curl",
+    "wget",
+    "jq",
+    "unzip",
+]

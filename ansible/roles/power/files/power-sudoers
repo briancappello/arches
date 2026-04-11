@@ -1,0 +1,8 @@
+# Power management — passwordless sudo for the `power` script
+#
+# Ollama service start/stop (used by `power gpu on/off`)
+%wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl start ollama.service
+%wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop ollama.service
+
+# Battery charge threshold helper (used by `power charge` and background monitor)
+%wheel ALL=(ALL) NOPASSWD: /usr/local/lib/power/set-charge-thresholds

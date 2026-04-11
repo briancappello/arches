@@ -1,0 +1,14 @@
+[meta]
+name = "Redis"
+description = "Redis in-memory data store"
+category = "service"
+
+[install.pacstrap]
+packages = [
+    "redis",
+]
+
+[services]
+enable = [
+    "redis",
+]

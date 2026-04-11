@@ -7,12 +7,13 @@ PROJECT_DIR := $(shell pwd)
 ISO_PROFILE := $(PROJECT_DIR)/iso
 INSTALLER   := $(PROJECT_DIR)/installer
 TEMPLATES   := $(PROJECT_DIR)/templates
+MODULES_DIR := $(PROJECT_DIR)/modules
 ANSIBLE_DIR := $(PROJECT_DIR)/ansible
 PLATFORMS   := $(PROJECT_DIR)/platforms
 SCRIPTS     := $(PROJECT_DIR)/scripts
 WORK_DIR    := /tmp/arches-work
 OUT_DIR     := $(PROJECT_DIR)/out
-OFFLINE     ?= 0
+OFFLINE     ?= 1
 
 # ─── Phony targets ────────────────────────────────────
 
@@ -23,7 +24,7 @@ OFFLINE     ?= 0
         qemu-install qemu-boot qemu-raid qemu-disk qemu-ansible \
         clean clean-caches clean-all \
         _iso _aur-repo \
-        _stage-installer _stage-ansible _stage-platform _stage-bootconfig \
+        _stage-installer _stage-modules _stage-ansible _stage-hardware _stage-platform _stage-bootconfig \
         _assemble-packages _stage-graphical _cache-packages _stage-offline-cache \
         _check-root _check-deps
 
@@ -51,11 +52,11 @@ help: ## Show this help
 
 ##@ Build
 
-iso: ## Build ISO (OFFLINE=1 to pre-cache all packages for offline install)
+iso: ## Build ISO (offline-capable by default; OFFLINE=0 to skip package cache)
 	OFFLINE=$(OFFLINE) $(SCRIPTS)/build-iso.sh
 
 usb: ## Build install media and write to USB drive (requires sudo + Podman)
-	$(SCRIPTS)/build-usb.sh
+	OFFLINE=$(OFFLINE) $(SCRIPTS)/build-usb.sh
 
 ##@ Host Install (Apple Silicon)
 
@@ -156,6 +157,10 @@ qemu-ansible: ## Run Ansible roles against the QEMU VM (TAGS=all)
 		--become \
 		-e ansible_user=$(VM_USER) \
 		-e install_user=$(VM_USER) \
+		-e platform_arch=x86_64 \
+		-e cachyos_optimization_tier=x86-64-v3 \
+		-e pacman_architectures=x86_64,x86_64_v2,x86_64_v3 \
+		-e cachyos_tier_mirrorlist=cachyos-v3-mirrorlist \
 		--tags $(TAGS) \
 		-v
 
@@ -165,6 +170,7 @@ clean: ## Remove staged files from ISO airootfs
 	@echo "══ Cleaning staged files ══"
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/installer
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/templates
+	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/modules
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/disk-layouts
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/ansible
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/platform
@@ -216,7 +222,7 @@ clean-all: clean clean-caches ## Remove all build artifacts
 # PLATFORM, ARCHES_ARCH, and TEMPLATE are passed in by the container.
 _iso: export ARCHES_ARCH := $(ARCHES_ARCH)
 _iso: export ARCHES_PLATFORM := $(PLATFORM)
-_iso: _check-root _check-deps _aur-repo _stage-installer _stage-ansible _stage-platform _stage-bootconfig _assemble-packages _stage-graphical $(if $(filter 1,$(OFFLINE)),_cache-packages _stage-offline-cache)
+_iso: _check-root _check-deps _aur-repo _stage-installer _stage-modules _stage-ansible _stage-hardware _stage-platform _stage-bootconfig _assemble-packages _stage-graphical $(if $(filter 1,$(OFFLINE)),_cache-packages _stage-offline-cache)
 	@# Ensure pkg-cache is NOT in airootfs for online builds (may be left over
 	@# from a prior OFFLINE=1 build). The host-side .offline-cache/ is untouched.
 	@if [ "$(OFFLINE)" != "1" ]; then \
@@ -274,10 +280,44 @@ exec python -m arches_installer "$$@"\n' > $(ISO_PROFILE)/airootfs/usr/local/bin
 	@# Test logging: the installer writes to /dev/virtio-ports/arches-log
 	@# if it exists (QEMU test harness). No staging needed — handled in run.py.
 
+_stage-modules:
+	@echo "══ Staging modules ══"
+	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/modules
+	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/ansible/roles
+	@for mod in $(MODULES_DIR)/*/module.toml; do \
+		slug=$$(basename $$(dirname "$$mod")); \
+		mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/modules/$$slug; \
+		cp "$$mod" $(ISO_PROFILE)/airootfs/opt/arches/modules/$$slug/; \
+		ansible_dir="$$(dirname $$mod)/ansible"; \
+		if [ -d "$$ansible_dir" ]; then \
+			mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/ansible/roles/$$slug; \
+			cp -r "$$ansible_dir"/* $(ISO_PROFILE)/airootfs/opt/arches/ansible/roles/$$slug/; \
+		fi; \
+	done
+	@echo "  Staged modules: $$(ls -1d $(MODULES_DIR)/*/module.toml | xargs -n1 dirname | xargs -n1 basename | tr '\n' ' ')"
+
 _stage-ansible:
 	@echo "══ Staging Ansible ══"
 	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/ansible
-	@cp -r $(ANSIBLE_DIR)/* $(ISO_PROFILE)/airootfs/opt/arches/ansible/
+	@# Stage playbook and non-module roles (hardware-injected roles like power)
+	@cp $(ANSIBLE_DIR)/playbook.yml $(ISO_PROFILE)/airootfs/opt/arches/ansible/
+	@if [ -d "$(ANSIBLE_DIR)/roles" ]; then \
+		cp -r $(ANSIBLE_DIR)/roles $(ISO_PROFILE)/airootfs/opt/arches/ansible/; \
+	fi
+	@if [ -d "$(ANSIBLE_DIR)/inventory" ]; then \
+		cp -r $(ANSIBLE_DIR)/inventory $(ISO_PROFILE)/airootfs/opt/arches/ansible/; \
+	fi
+
+_stage-hardware:
+	@echo "══ Staging hardware profiles ══"
+	@if [ -d "$(PROJECT_DIR)/hardware" ]; then \
+		mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/hardware; \
+		cp -r $(PROJECT_DIR)/hardware/* $(ISO_PROFILE)/airootfs/opt/arches/hardware/; \
+		echo "  Staged quirks: $$(ls $(PROJECT_DIR)/hardware/quirks/*.toml 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"; \
+		echo "  Staged machines: $$(ls $(PROJECT_DIR)/hardware/machines/*.toml 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"; \
+	else \
+		echo "  No hardware/ directory found, skipping"; \
+	fi
 
 _stage-platform:
 	@echo "══ Staging platform config ($(PLATFORM)) ══"
@@ -333,7 +373,7 @@ _stage-bootconfig:
 _assemble-packages:
 	@echo "══ Assembling package list ($(PLATFORM)) ══"
 	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
-	@# Resolve template to check graphical flag
+	@# Resolve template and check if any selected module has category=desktop
 	@TMPL="$(TEMPLATE)"; \
 	if [ -z "$$TMPL" ]; then \
 		TMPL=$$(python3 -c "import tomllib; \
@@ -344,9 +384,14 @@ _assemble-packages:
 	if [ -n "$$TMPL" ]; then \
 		TMPL_FILE="$(TEMPLATES)/$$TMPL.toml"; \
 		if [ -f "$$TMPL_FILE" ]; then \
-			GRAPHICAL=$$(python3 -c "import tomllib; \
-				d=tomllib.load(open('$$TMPL_FILE','rb')); \
-				print('true' if d.get('meta',{}).get('graphical',False) else 'false')"); \
+			GRAPHICAL=$$(python3 -c "import tomllib, pathlib; \
+				t=tomllib.load(open('$$TMPL_FILE','rb')); \
+				slugs=t.get('modules',{}).get('include',[]); \
+				mdir=pathlib.Path('$(MODULES_DIR)'); \
+				has_desktop=any( \
+					tomllib.load(open(mdir/s/'module.toml','rb')).get('meta',{}).get('category')=='desktop' \
+					for s in slugs if (mdir/s/'module.toml').exists()); \
+				print('true' if has_desktop else 'false')"); \
 		fi; \
 	fi; \
 	ARCH=$$(python3 -c "import tomllib; \
@@ -380,7 +425,8 @@ _assemble-packages:
 		$(PLATFORMS)/$(PLATFORM)/pacman.conf > $(ISO_PROFILE)/pacman.conf
 
 _stage-graphical:
-	@# Conditionally set up graphical live boot based on template's graphical flag.
+	@# Conditionally set up graphical live boot based on whether template
+	@# includes a desktop-category module.
 	@TMPL="$(TEMPLATE)"; \
 	if [ -z "$$TMPL" ]; then \
 		TMPL=$$(python3 -c "import tomllib; \
@@ -388,9 +434,14 @@ _stage-graphical:
 			print(d.get('platform',{}).get('default_template',''))"); \
 	fi; \
 	TMPL_FILE="$(TEMPLATES)/$$TMPL.toml"; \
-	GRAPHICAL=$$(python3 -c "import tomllib; \
-		d=tomllib.load(open('$$TMPL_FILE','rb')); \
-		print('true' if d.get('meta',{}).get('graphical',False) else 'false')"); \
+	GRAPHICAL=$$(python3 -c "import tomllib, pathlib; \
+		t=tomllib.load(open('$$TMPL_FILE','rb')); \
+		slugs=t.get('modules',{}).get('include',[]); \
+		mdir=pathlib.Path('$(MODULES_DIR)'); \
+		has_desktop=any( \
+			tomllib.load(open(mdir/s/'module.toml','rb')).get('meta',{}).get('category')=='desktop' \
+			for s in slugs if (mdir/s/'module.toml').exists()); \
+		print('true' if has_desktop else 'false')"); \
 	echo "  Cleaning previous graphical staging artifacts"; \
 	rm -rf $(ISO_PROFILE)/airootfs/etc/systemd/system/arches-liveuser.service \
 		$(ISO_PROFILE)/airootfs/etc/systemd/system/display-manager.service \

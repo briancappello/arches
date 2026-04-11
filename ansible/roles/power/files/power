@@ -1,0 +1,435 @@
+#!/bin/bash
+#
+# power — Unified power management for ThinkPad P1 Gen 7
+#
+# Usage:
+#   power status              Full system power overview
+#   power gpu on              Start Ollama + Open WebUI, GPU wakes via RTD3
+#   power gpu off             Stop both, GPU returns to D3 sleep
+#   power gpu status          GPU power state and service status
+#   power charge full         Charge to 100%, auto-restore 80% when done
+#   power charge conserve     Restore charge thresholds to 75/80%
+#   power charge status       Show battery and threshold info
+#
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+NVIDIA_PCI="0000:01:00.0"
+GPU_POWER_STATUS="/sys/bus/pci/devices/${NVIDIA_PCI}/power/runtime_status"
+GPU_POWER_CONTROL="/sys/bus/pci/devices/${NVIDIA_PCI}/power/control"
+
+BAT_CAPACITY="/sys/class/power_supply/BAT0/capacity"
+BAT_STATUS="/sys/class/power_supply/BAT0/status"
+BAT_START_THRESH="/sys/class/power_supply/BAT0/charge_start_threshold"
+BAT_STOP_THRESH="/sys/class/power_supply/BAT0/charge_stop_threshold"
+BAT_HEALTH="/sys/class/power_supply/BAT0/health"
+BAT_ENERGY_FULL="/sys/class/power_supply/BAT0/energy_full"
+BAT_ENERGY_FULL_DESIGN="/sys/class/power_supply/BAT0/energy_full_design"
+
+CHARGE_MONITOR_PID="/tmp/power-charge-monitor.pid"
+THRESHOLD_HELPER="/usr/local/lib/power/set-charge-thresholds"
+
+CONSERVE_START=75
+CONSERVE_STOP=80
+FULL_START=95
+FULL_STOP=100
+
+# ---------------------------------------------------------------------------
+# Colors
+# ---------------------------------------------------------------------------
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+read_sysfs() {
+    [[ -r "$1" ]] && cat "$1" 2>/dev/null || echo "N/A"
+}
+
+# ---------------------------------------------------------------------------
+# GPU functions
+# ---------------------------------------------------------------------------
+gpu_runtime_status() {
+    read_sysfs "$GPU_POWER_STATUS"
+}
+
+gpu_power_draw() {
+    nvidia-smi --query-gpu=power.draw --format=csv,noheader,nounits 2>/dev/null || echo "N/A"
+}
+
+gpu_vram_usage() {
+    nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader 2>/dev/null || echo "N/A"
+}
+
+gpu_processes() {
+    nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader 2>/dev/null || true
+}
+
+print_gpu_status() {
+    local gpu_status
+    gpu_status=$(gpu_runtime_status)
+
+    echo -e "${BOLD}GPU${RESET}"
+    echo "──────────────────────────────────"
+
+    case "$gpu_status" in
+        suspended)
+            echo -e "  State:     ${GREEN}suspended (D3 ~0W)${RESET}"
+            ;;
+        active)
+            local power vram
+            power=$(gpu_power_draw)
+            vram=$(gpu_vram_usage)
+            echo -e "  State:     ${YELLOW}active${RESET} — ${power}W, VRAM ${vram}"
+            ;;
+        *)
+            echo -e "  State:     ${RED}${gpu_status}${RESET}"
+            ;;
+    esac
+
+    if [[ -r "$GPU_POWER_CONTROL" ]]; then
+        local ctrl
+        ctrl=$(cat "$GPU_POWER_CONTROL")
+        if [[ "$ctrl" != "auto" ]]; then
+            echo -e "  RTD3:      ${RED}BLOCKED${RESET} — power/control=${ctrl} (should be 'auto')"
+        else
+            echo -e "  RTD3:      ${GREEN}enabled${RESET}"
+        fi
+    fi
+
+    if systemctl is-active --quiet ollama.service 2>/dev/null; then
+        echo -e "  Ollama:    ${GREEN}running${RESET}"
+    else
+        echo -e "  Ollama:    stopped"
+    fi
+
+    if systemctl --user is-active --quiet open-webui.service 2>/dev/null; then
+        echo -e "  Open WebUI: ${GREEN}running${RESET} — http://localhost:8080"
+    else
+        echo -e "  Open WebUI: stopped"
+    fi
+
+    if [[ "$gpu_status" == "active" ]]; then
+        local procs
+        procs=$(gpu_processes)
+        if [[ -n "$procs" ]]; then
+            echo ""
+            echo "  GPU compute processes:"
+            echo "$procs" | while IFS= read -r line; do
+                echo "    $line"
+            done
+        fi
+    fi
+
+    if [[ "$gpu_status" == "active" ]] && \
+       ! systemctl is-active --quiet ollama.service 2>/dev/null && \
+       ! systemctl --user is-active --quiet open-webui.service 2>/dev/null; then
+        local holders
+        holders=$(lsof /dev/nvidia* 2>/dev/null | tail -n +2 | awk '{print $1}' | sort -u || true)
+        if [[ -n "$holders" ]]; then
+            echo ""
+            echo -e "  ${YELLOW}Warning:${RESET} GPU active but services stopped."
+            echo "  Processes holding /dev/nvidia*: $holders"
+        fi
+    fi
+}
+
+gpu_on() {
+    echo -e "${CYAN}Starting Ollama...${RESET}"
+    sudo systemctl start ollama.service
+
+    local i=0
+    while [[ $i -lt 20 ]]; do
+        if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+            echo -e "${GREEN}Ollama is ready.${RESET}"
+            break
+        fi
+        sleep 0.5
+        i=$((i + 1))
+    done
+    [[ $i -eq 20 ]] && echo -e "${YELLOW}Ollama started but API not responding yet.${RESET}"
+
+    echo -e "${CYAN}Starting Open WebUI...${RESET}"
+    systemctl --user start open-webui.service
+
+    i=0
+    while [[ $i -lt 30 ]]; do
+        if curl -sf http://localhost:8080/api/config >/dev/null 2>&1; then
+            echo -e "${GREEN}Open WebUI is ready.${RESET} → http://localhost:8080"
+            break
+        fi
+        sleep 0.5
+        i=$((i + 1))
+    done
+    [[ $i -eq 30 ]] && echo -e "${YELLOW}Open WebUI started but not responding yet.${RESET}"
+
+    echo ""
+    print_gpu_status
+}
+
+gpu_off() {
+    echo -e "${CYAN}Stopping Open WebUI...${RESET}"
+    systemctl --user stop open-webui.service 2>/dev/null || true
+
+    echo -e "${CYAN}Stopping Ollama...${RESET}"
+    sudo systemctl stop ollama.service
+
+    sleep 2
+
+    local gpu_status
+    gpu_status=$(gpu_runtime_status)
+    if [[ "$gpu_status" == "suspended" ]]; then
+        echo -e "${GREEN}GPU has entered D3 suspend.${RESET}"
+    else
+        echo -e "${YELLOW}GPU still active — other processes may be holding it.${RESET}"
+    fi
+
+    echo ""
+    print_gpu_status
+}
+
+# ---------------------------------------------------------------------------
+# Battery / charge functions
+# ---------------------------------------------------------------------------
+battery_health_pct() {
+    local full design
+    full=$(read_sysfs "$BAT_ENERGY_FULL")
+    design=$(read_sysfs "$BAT_ENERGY_FULL_DESIGN")
+    if [[ "$full" != "N/A" && "$design" != "N/A" && "$design" -gt 0 ]]; then
+        echo $(( full * 100 / design ))
+    else
+        echo "N/A"
+    fi
+}
+
+print_charge_status() {
+    local capacity status start stop health
+    capacity=$(read_sysfs "$BAT_CAPACITY")
+    status=$(read_sysfs "$BAT_STATUS")
+    start=$(read_sysfs "$BAT_START_THRESH")
+    stop=$(read_sysfs "$BAT_STOP_THRESH")
+    health=$(battery_health_pct)
+
+    echo -e "${BOLD}Battery${RESET}"
+    echo "──────────────────────────────────"
+    echo -e "  Charge:    ${capacity}% (${status})"
+    echo -e "  Health:    ${health}%"
+
+    if [[ "$stop" -ge 100 ]]; then
+        echo -e "  Thresholds: start=${start}, stop=${stop} ${YELLOW}(charging to full)${RESET}"
+    else
+        echo -e "  Thresholds: start=${start}, stop=${stop} (conserve mode)"
+    fi
+
+    # Check if monitor is running
+    if [[ -f "$CHARGE_MONITOR_PID" ]]; then
+        local pid
+        pid=$(cat "$CHARGE_MONITOR_PID")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo -e "  Monitor:   ${CYAN}running${RESET} (PID ${pid}) — will restore ${CONSERVE_START}/${CONSERVE_STOP} at 100%"
+        else
+            echo -e "  Monitor:   stale PID file (cleaning up)"
+            rm -f "$CHARGE_MONITOR_PID"
+        fi
+    fi
+}
+
+set_thresholds() {
+    local start="$1" stop="$2"
+    echo -e "  ${DIM}sudo ${THRESHOLD_HELPER} ${start} ${stop}${RESET}"
+    echo -e "  ${DIM}  → charge_stop_threshold  = ${stop}${RESET}"
+    echo -e "  ${DIM}  → charge_start_threshold = ${start}${RESET}"
+    sudo "$THRESHOLD_HELPER" "$start" "$stop"
+}
+
+kill_monitor() {
+    if [[ -f "$CHARGE_MONITOR_PID" ]]; then
+        local pid
+        pid=$(cat "$CHARGE_MONITOR_PID")
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            rm -f "$CHARGE_MONITOR_PID"
+        else
+            rm -f "$CHARGE_MONITOR_PID"
+        fi
+    fi
+}
+
+charge_monitor_loop() {
+    # Capture DBUS address for notify-send from background
+    local dbus_addr="${DBUS_SESSION_BUS_ADDRESS:-}"
+
+    while true; do
+        sleep 30
+        local capacity
+        capacity=$(cat "$BAT_CAPACITY" 2>/dev/null || echo "0")
+
+        if [[ "$capacity" -ge 100 ]]; then
+            # Restore conserve thresholds
+            "$THRESHOLD_HELPER" "$CONSERVE_START" "$CONSERVE_STOP"
+
+            # Send desktop notification
+            if [[ -n "$dbus_addr" ]]; then
+                DBUS_SESSION_BUS_ADDRESS="$dbus_addr" \
+                    notify-send -i battery-full \
+                    "Battery Fully Charged" \
+                    "Charge limit restored to ${CONSERVE_STOP}%." 2>/dev/null || true
+            fi
+
+            rm -f "$CHARGE_MONITOR_PID"
+            exit 0
+        fi
+    done
+}
+
+charge_full() {
+    # Kill any existing monitor
+    kill_monitor
+
+    local capacity
+    capacity=$(read_sysfs "$BAT_CAPACITY")
+    local current_stop
+    current_stop=$(read_sysfs "$BAT_STOP_THRESH")
+
+    if [[ "$current_stop" -ge 100 ]]; then
+        echo "Already set to charge to full (stop=${current_stop})."
+        echo ""
+        print_charge_status
+        return 0
+    fi
+
+    echo -e "Setting charge thresholds for full charge:"
+    set_thresholds "$FULL_START" "$FULL_STOP"
+    echo ""
+
+    if [[ "$capacity" -ge 100 ]]; then
+        echo -e "${GREEN}Battery is already at 100%.${RESET} Restoring conserve thresholds."
+        set_thresholds "$CONSERVE_START" "$CONSERVE_STOP"
+        echo ""
+        print_charge_status
+        return 0
+    fi
+
+    echo -e "Battery at ${capacity}%. Charging to 100%."
+    echo -e "Monitoring in background — thresholds will auto-restore to ${CONSERVE_START}/${CONSERVE_STOP} when full."
+
+    # Fork background monitor
+    # The monitor needs to run the helper as root, so it uses sudo with NOPASSWD
+    nohup bash -c "
+        echo \$\$ > '$CHARGE_MONITOR_PID'
+        DBUS_SESSION_BUS_ADDRESS='${DBUS_SESSION_BUS_ADDRESS:-}'
+        THRESHOLD_HELPER='$THRESHOLD_HELPER'
+        BAT_CAPACITY='$BAT_CAPACITY'
+        CONSERVE_START=$CONSERVE_START
+        CONSERVE_STOP=$CONSERVE_STOP
+        CHARGE_MONITOR_PID='$CHARGE_MONITOR_PID'
+
+        while true; do
+            sleep 30
+            capacity=\$(cat \"\$BAT_CAPACITY\" 2>/dev/null || echo 0)
+            if [[ \"\$capacity\" -ge 100 ]]; then
+                sudo \"\$THRESHOLD_HELPER\" \"\$CONSERVE_START\" \"\$CONSERVE_STOP\"
+                if [[ -n \"\$DBUS_SESSION_BUS_ADDRESS\" ]]; then
+                    DBUS_SESSION_BUS_ADDRESS=\"\$DBUS_SESSION_BUS_ADDRESS\" \\
+                        notify-send -i battery-full \\
+                        'Battery Fully Charged' \\
+                        'Charge limit restored to '\"\$CONSERVE_STOP\"'%.' 2>/dev/null || true
+                fi
+                rm -f \"\$CHARGE_MONITOR_PID\"
+                exit 0
+            fi
+        done
+    " >/dev/null 2>&1 &
+
+    echo ""
+    print_charge_status
+}
+
+charge_conserve() {
+    kill_monitor
+
+    echo -e "Restoring charge thresholds to conserve mode:"
+    set_thresholds "$CONSERVE_START" "$CONSERVE_STOP"
+    echo ""
+    print_charge_status
+}
+
+# ---------------------------------------------------------------------------
+# Profile
+# ---------------------------------------------------------------------------
+print_profile_status() {
+    echo -e "${BOLD}Power Profile${RESET}"
+    echo "──────────────────────────────────"
+
+    local profile
+    profile=$(tuned-adm active 2>/dev/null | sed 's/Current active profile: //')
+    echo -e "  Active:    ${profile}"
+
+    local governor epp turbo platform
+    governor=$(read_sysfs /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)
+    epp=$(read_sysfs /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference)
+    turbo=$(read_sysfs /sys/devices/system/cpu/intel_pstate/no_turbo)
+    platform=$(read_sysfs /sys/firmware/acpi/platform_profile)
+
+    if [[ "$turbo" == "0" ]]; then turbo="on"; elif [[ "$turbo" == "1" ]]; then turbo="off"; fi
+
+    echo -e "  Governor:  ${governor}"
+    echo -e "  EPP:       ${epp}"
+    echo -e "  Turbo:     ${turbo}"
+    echo -e "  Platform:  ${platform}"
+}
+
+# ---------------------------------------------------------------------------
+# Full status
+# ---------------------------------------------------------------------------
+print_full_status() {
+    print_profile_status
+    echo ""
+    print_charge_status
+    echo ""
+    print_gpu_status
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+case "${1:-}" in
+    status)
+        print_full_status
+        ;;
+    gpu)
+        case "${2:-}" in
+            on)     gpu_on ;;
+            off)    gpu_off ;;
+            status) print_gpu_status ;;
+            *)      echo "Usage: power gpu {on|off|status}"; exit 1 ;;
+        esac
+        ;;
+    charge)
+        case "${2:-}" in
+            full)     charge_full ;;
+            conserve) charge_conserve ;;
+            status)   print_charge_status ;;
+            *)        echo "Usage: power charge {full|conserve|status}"; exit 1 ;;
+        esac
+        ;;
+    *)
+        echo "Usage: power {status|gpu|charge}"
+        echo ""
+        echo "  power status              Full system power overview"
+        echo "  power gpu on|off|status   Manage NVIDIA GPU + Ollama + Open WebUI"
+        echo "  power charge full         Charge to 100%, auto-restore when done"
+        echo "  power charge conserve     Restore charge thresholds to 75/80%"
+        echo "  power charge status       Show battery and threshold info"
+        exit 1
+        ;;
+esac

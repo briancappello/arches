@@ -1,0 +1,6 @@
+---
+- name: restart rabbitmq
+  systemd:
+    name: rabbitmq
+    state: restarted
+  ignore_errors: yes

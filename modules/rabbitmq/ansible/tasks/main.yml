@@ -1,0 +1,25 @@
+---
+# RabbitMQ — localhost-only, management plugin enabled
+
+- name: "RabbitMQ: create config directory"
+  file:
+    path: /etc/rabbitmq
+    state: directory
+    mode: '0755'
+
+- name: "RabbitMQ: bind to localhost only"
+  copy:
+    dest: /etc/rabbitmq/rabbitmq.conf
+    mode: '0644'
+    content: |
+      # Arches — localhost only
+      listeners.tcp.local = 127.0.0.1:5672
+      management.tcp.ip = 127.0.0.1
+      management.tcp.port = 15672
+  notify: restart rabbitmq
+
+- name: "RabbitMQ: enable management plugin"
+  command: rabbitmq-plugins enable rabbitmq_management
+  args:
+    creates: /etc/rabbitmq/enabled_plugins
+  notify: restart rabbitmq

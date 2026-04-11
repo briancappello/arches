@@ -1,0 +1,82 @@
+---
+# COSMIC desktop environment configuration
+#
+# COSMIC stores config in RON files under ~/.config/cosmic/.
+# This role deploys Arches defaults for a clean out-of-box experience.
+
+# --------------------------------------------------------------------------
+# 1. Greeter configuration
+# --------------------------------------------------------------------------
+
+- name: "COSMIC: create greeter config directory"
+  file:
+    path: /etc/cosmic-greeter
+    state: directory
+    mode: "0755"
+
+# --------------------------------------------------------------------------
+# 2. XDG user directories
+# --------------------------------------------------------------------------
+
+- name: "COSMIC: flatten XDG user directories"
+  become_user: "{{ ansible_user | default('brian') }}"
+  copy:
+    dest: "/home/{{ ansible_user | default('brian') }}/.config/user-dirs.dirs"
+    mode: "0644"
+    content: |
+      # Arches — all XDG dirs point to $HOME
+      XDG_DESKTOP_DIR="$HOME"
+      XDG_DOWNLOAD_DIR="$HOME"
+      XDG_TEMPLATES_DIR="$HOME"
+      XDG_PUBLICSHARE_DIR="$HOME"
+      XDG_DOCUMENTS_DIR="$HOME"
+      XDG_MUSIC_DIR="$HOME"
+      XDG_PICTURES_DIR="$HOME"
+      XDG_VIDEOS_DIR="$HOME"
+  when: cosmic_xdg_flatten | default(true)
+
+# --------------------------------------------------------------------------
+# 3. COSMIC compositor settings
+# --------------------------------------------------------------------------
+
+- name: "COSMIC: create user COSMIC config directory"
+  become_user: "{{ ansible_user | default('brian') }}"
+  file:
+    path: "/home/{{ ansible_user | default('brian') }}/.config/cosmic"
+    state: directory
+    mode: "0755"
+
+# --------------------------------------------------------------------------
+# 4. Dotfiles env integration
+# --------------------------------------------------------------------------
+# Load ~/dotfiles/env.sh on session start if it exists.
+# COSMIC reads environment.d files from ~/.config/environment.d/
+
+- name: "COSMIC: create environment.d directory"
+  become_user: "{{ ansible_user | default('brian') }}"
+  file:
+    path: "/home/{{ ansible_user | default('brian') }}/.config/environment.d"
+    state: directory
+    mode: "0755"
+
+- name: "COSMIC: check if dotfiles env.sh exists"
+  become_user: "{{ ansible_user | default('brian') }}"
+  stat:
+    path: "/home/{{ ansible_user | default('brian') }}/dotfiles/env.sh"
+  register: dotfiles_env
+
+# Note: environment.d uses KEY=VALUE format, not shell source.
+# For complex env.sh files, a systemd user service or profile.d
+# approach would be needed. This is a placeholder for future work.
+
+# --------------------------------------------------------------------------
+# 5. Fix ownership
+# --------------------------------------------------------------------------
+
+- name: "COSMIC: fix config ownership"
+  file:
+    path: "/home/{{ ansible_user | default('brian') }}/.config/cosmic"
+    state: directory
+    recurse: yes
+    owner: "{{ ansible_user | default('brian') }}"
+    group: "{{ ansible_user | default('brian') }}"

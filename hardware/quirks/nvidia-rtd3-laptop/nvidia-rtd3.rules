@@ -1,0 +1,23 @@
+# Enable NVIDIA Runtime D3 (RTD3) power management
+#
+# Sets power/control=auto on the NVIDIA GPU so the kernel can
+# suspend it to D3 when no processes hold /dev/nvidia* open.
+# The GPU wakes automatically when a CUDA/graphics process starts.
+#
+# Also removes NVIDIA USB and audio sub-devices that would
+# otherwise prevent the GPU from entering D3.
+
+# Enable runtime PM for NVIDIA VGA controller
+ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"
+
+# Enable runtime PM for NVIDIA 3D controller
+ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"
+
+# Remove NVIDIA USB xHCI Host Controller (prevents D3)
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x0c0330", ATTR{remove}="1"
+
+# Remove NVIDIA USB Type-C UCSI devices (prevents D3)
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x0c8000", ATTR{remove}="1"
+
+# Remove NVIDIA Audio devices (prevents D3)
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300", ATTR{remove}="1"

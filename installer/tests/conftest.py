@@ -301,7 +301,105 @@ install = [
 
 
 @pytest.fixture
-def templates_dir(tmp_path: Path) -> Path:
+def test_modules_dir(tmp_path: Path) -> Path:
+    """Create a temp modules directory with sample modules for template tests."""
+    d = tmp_path / "modules"
+    d.mkdir()
+
+    # base module (with ansible role)
+    base = d / "base"
+    base.mkdir()
+    (base / "module.toml").write_text("""\
+[meta]
+name = "Base System"
+description = "Core system configuration"
+category = "base"
+
+[install.pacstrap]
+packages = ["base-devel", "neovim", "git"]
+""")
+    (base / "ansible").mkdir()
+    (base / "ansible" / "tasks").mkdir()
+    (base / "ansible" / "tasks" / "main.yml").write_text("---\n")
+
+    # zsh module
+    zsh = d / "zsh"
+    zsh.mkdir()
+    (zsh / "module.toml").write_text("""\
+[meta]
+name = "Zsh"
+description = "Zsh shell"
+category = "base"
+
+[install.pacstrap]
+packages = ["zsh"]
+
+[dependencies]
+requires = ["base"]
+""")
+    (zsh / "ansible").mkdir()
+    (zsh / "ansible" / "tasks").mkdir()
+    (zsh / "ansible" / "tasks" / "main.yml").write_text("---\n")
+
+    # networking module
+    net = d / "networking"
+    net.mkdir()
+    (net / "module.toml").write_text("""\
+[meta]
+name = "Networking"
+description = "NetworkManager and firewalld"
+category = "networking"
+
+[install.pacstrap]
+packages = ["networkmanager"]
+
+[services]
+enable = ["NetworkManager", "sshd"]
+""")
+
+    # kde module
+    kde = d / "kde"
+    kde.mkdir()
+    (kde / "module.toml").write_text("""\
+[meta]
+name = "KDE Plasma"
+description = "KDE Plasma desktop"
+category = "desktop"
+
+[install.pacstrap]
+packages = ["plasma-meta", "sddm"]
+
+[services]
+enable = ["sddm"]
+
+[dependencies]
+conflicts = ["cosmic"]
+""")
+    (kde / "ansible").mkdir()
+    (kde / "ansible" / "tasks").mkdir()
+    (kde / "ansible" / "tasks" / "main.yml").write_text("---\n")
+
+    # postgresql module (service)
+    pg = d / "postgresql"
+    pg.mkdir()
+    (pg / "module.toml").write_text("""\
+[meta]
+name = "PostgreSQL"
+description = "PostgreSQL database"
+category = "service"
+
+[install.pacstrap]
+packages = ["postgresql"]
+
+[services]
+enable = ["postgresql"]
+""")
+
+    return d
+
+
+@pytest.fixture
+def templates_dir(tmp_path: Path, test_modules_dir: Path) -> Path:
     """Create a temp directory with sample template TOML files.
 
     Also patches ``resolve_template`` so that bare filenames (e.g.
@@ -315,20 +413,13 @@ def templates_dir(tmp_path: Path) -> Path:
 [meta]
 name = "Dev Workstation"
 description = "KDE Plasma desktop with full development toolchain"
-graphical = true
 
 [system]
 timezone = "America/New_York"
 locale = "en_US.UTF-8"
 
-[install.pacstrap]
-packages = ["git", "neovim"]
-
-[services]
-enable = ["NetworkManager", "sddm"]
-
-[ansible]
-firstboot_roles = ["base", "zsh", "kde"]
+[modules]
+include = ["base", "zsh", "networking", "kde"]
 """)
 
     (d / "vm-server.toml").write_text("""\
@@ -336,20 +427,26 @@ firstboot_roles = ["base", "zsh", "kde"]
 name = "VM Server"
 description = "Headless server"
 
-[install.pacstrap]
-packages = ["openssh", "nginx"]
+[system]
+timezone = "America/New_York"
+locale = "en_US.UTF-8"
 
-[services]
-enable = ["NetworkManager", "sshd"]
-
-[ansible]
-firstboot_roles = ["base", "zsh", "vm-server"]
+[modules]
+include = ["base", "zsh", "networking", "postgresql"]
 """)
 
     _resolve = lambda name: d / name  # noqa: E731
     with (
         patch("arches_installer.core.template.resolve_template", side_effect=_resolve),
         patch("arches_installer.core.auto.resolve_template", side_effect=_resolve),
+        patch(
+            "arches_installer.core.host_install.resolve_template",
+            side_effect=_resolve,
+        ),
+        patch(
+            "arches_installer.core.module._MODULES_SEARCH",
+            [test_modules_dir],
+        ),
     ):
         yield d
 

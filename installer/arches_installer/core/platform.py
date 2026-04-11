@@ -111,6 +111,43 @@ class PlatformConfig:
     # Asahi's m1n1/U-Boot/macOS recovery partitions must not be touched).
     allow_auto_install: bool = True
 
+    @property
+    def pacman_architectures(self) -> list[str]:
+        """Pacman architecture list for this platform's optimization tier.
+
+        CachyOS's patched pacman resolves ``Architecture = auto`` to include
+        tier-specific sub-architectures, but other tools (e.g. PackageKit)
+        use upstream libalpm which only resolves ``auto`` to the base arch
+        via ``uname``.  This property returns the full list so callers can
+        configure those tools correctly.
+        """
+        tier = self.cachyos_optimization_tier
+        if tier == "x86-64-v4" or tier == "znver4":
+            return ["x86_64", "x86_64_v2", "x86_64_v3", "x86_64_v4"]
+        if tier == "x86-64-v3":
+            return ["x86_64", "x86_64_v2", "x86_64_v3"]
+        if tier == "x86-64-v2":
+            return ["x86_64", "x86_64_v2"]
+        if self.arch:
+            return [self.arch]
+        return ["x86_64"]
+
+    @property
+    def cachyos_mirrorlist_name(self) -> str:
+        """Filename of the tier-specific CachyOS mirrorlist, or empty string.
+
+        Returns the mirrorlist filename (e.g. ``cachyos-v3-mirrorlist``) that
+        corresponds to this platform's CachyOS optimization tier.  Returns
+        an empty string for the baseline ``x86-64`` tier (which uses only
+        the base ``cachyos-mirrorlist``) and for non-CachyOS platforms.
+        """
+        tier = self.cachyos_optimization_tier
+        if tier == "x86-64-v3":
+            return "cachyos-v3-mirrorlist"
+        if tier == "x86-64-v4" or tier == "znver4":
+            return "cachyos-v4-mirrorlist"
+        return ""
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PlatformConfig:
         """Build a PlatformConfig from a parsed TOML dict."""

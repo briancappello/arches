@@ -27,6 +27,7 @@ from arches_installer.core.disk_layout import (
 from arches_installer.core.template import (
     InstallTemplate,
     load_template,
+    resolve_and_merge_modules,
     resolve_template,
 )
 
@@ -75,7 +76,9 @@ class AutoInstallConfig:
         if not template_name:
             raise ValueError("install.template is required")
 
-        template = load_template(resolve_template(template_name))
+        template = resolve_and_merge_modules(
+            load_template(resolve_template(template_name))
+        )
 
         # Disk layout — defaults to "basic.toml" if not specified
         disk_layout_name = install.get("disk_layout", "basic.toml")

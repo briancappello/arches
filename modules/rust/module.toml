@@ -1,0 +1,9 @@
+[meta]
+name = "Rust"
+description = "Rust toolchain via rustup"
+category = "dev-toolchain"
+
+[install.pacstrap]
+packages = [
+    "rustup",
+]

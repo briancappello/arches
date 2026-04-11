@@ -1,0 +1,10 @@
+[meta]
+name = "Node.js"
+description = "Node.js runtime and npm package manager"
+category = "dev-toolchain"
+
+[install.pacstrap]
+packages = [
+    "nodejs",
+    "npm",
+]

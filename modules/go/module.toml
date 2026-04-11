@@ -1,0 +1,9 @@
+[meta]
+name = "Go"
+description = "Go programming language"
+category = "dev-toolchain"
+
+[install.pacstrap]
+packages = [
+    "go",
+]
