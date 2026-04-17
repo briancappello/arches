@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
 from arches_installer.core.disk import BlockDevice, detect_block_devices
 from arches_installer.core.disk_layout import RaidBackend, RaidConfig, RaidLevel
+from arches_installer.tui import ArrowNavScreen
 
 
 # RAID level descriptions shown in the UI
@@ -26,19 +26,8 @@ _BACKEND_INFO = {
 }
 
 
-class RaidConfigScreen(Screen):
+class RaidConfigScreen(ArrowNavScreen):
     """Multi-step RAID configuration screen."""
-
-    BINDINGS = [
-        ("up", "prev_button", "Previous"),
-        ("down", "next_button", "Next"),
-    ]
-
-    def action_next_button(self) -> None:
-        self.focus_next(Button)
-
-    def action_prev_button(self) -> None:
-        self.focus_previous(Button)
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)

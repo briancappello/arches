@@ -14,11 +14,13 @@ SCRIPTS     := $(PROJECT_DIR)/scripts
 WORK_DIR    := /tmp/arches-work
 OUT_DIR     := $(PROJECT_DIR)/out
 OFFLINE     ?= 1
+ISO_MODE    ?= graphical
 
 # ─── Phony targets ────────────────────────────────────
 
 .PHONY: help \
-        iso usb \
+        iso iso-fb usb usb-fb \
+        builder-start builder-stop builder-status builder-iso builder-iso-fb \
         sv-install sv-dry-run sv-uninstall \
         fmt test test-unit test-template dry-run \
         qemu-install qemu-boot qemu-raid qemu-disk qemu-ansible \
@@ -52,11 +54,34 @@ help: ## Show this help
 
 ##@ Build
 
-iso: ## Build ISO (offline-capable by default; OFFLINE=0 to skip package cache)
-	OFFLINE=$(OFFLINE) $(SCRIPTS)/build-iso.sh
+iso: ## Build graphical live ISO (OFFLINE=0 to skip package cache)
+	ISO_MODE=graphical OFFLINE=$(OFFLINE) $(SCRIPTS)/build-iso.sh
+
+iso-fb: ## Build framebuffer-only ISO (no desktop, minimal)
+	ISO_MODE=fb OFFLINE=$(OFFLINE) $(SCRIPTS)/build-iso.sh
 
 usb: ## Build install media and write to USB drive (requires sudo + Podman)
-	OFFLINE=$(OFFLINE) $(SCRIPTS)/build-usb.sh
+	ISO_MODE=graphical OFFLINE=$(OFFLINE) $(SCRIPTS)/build-usb.sh
+
+usb-fb: ## Build framebuffer-only USB install media
+	ISO_MODE=fb OFFLINE=$(OFFLINE) $(SCRIPTS)/build-usb.sh
+
+##@ Persistent Builder
+
+builder-start: ## Start persistent build container (requires sudo)
+	$(SCRIPTS)/builder.sh start
+
+builder-stop: ## Stop persistent build container (requires sudo)
+	$(SCRIPTS)/builder.sh stop
+
+builder-status: ## Check if persistent builder is running
+	@$(SCRIPTS)/builder.sh status
+
+builder-iso: ## Build graphical ISO via persistent builder (no sudo)
+	$(SCRIPTS)/builder.sh build
+
+builder-iso-fb: ## Build framebuffer ISO via persistent builder (no sudo)
+	$(SCRIPTS)/builder.sh build-fb
 
 ##@ Host Install (Apple Silicon)
 
@@ -228,7 +253,7 @@ _iso: _check-root _check-deps _aur-repo _stage-installer _stage-modules _stage-a
 	@if [ "$(OFFLINE)" != "1" ]; then \
 		rm -rf $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache; \
 	fi
-	@echo "══ Building Arches ISO ($(PLATFORM), template: $(TEMPLATE)$(if $(filter 1,$(OFFLINE)), — OFFLINE)) ══"
+	@echo "══ Building Arches ISO ($(PLATFORM), mode: $(ISO_MODE)$(if $(filter 1,$(OFFLINE)), — OFFLINE)) ══"
 	@rm -rf $(WORK_DIR)
 	@mkdir -p $(OUT_DIR)
 	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
@@ -256,10 +281,6 @@ _stage-installer:
 	@cp $(PROJECT_DIR)/disk-layouts/*.toml $(ISO_PROFILE)/airootfs/opt/arches/disk-layouts/
 	@echo "  Staged disk layouts: $$(ls $(PROJECT_DIR)/disk-layouts/*.toml | xargs -n1 basename | tr '\n' ' ')"
 	@# Stage auto-install config into /root/ for auto-detect on boot
-	@if [ -f "$(TEMPLATES)/auto-install.toml" ]; then \
-		cp "$(TEMPLATES)/auto-install.toml" $(ISO_PROFILE)/airootfs/root/auto-install.toml; \
-		echo "  Staged auto-install.toml to /root/"; \
-	fi
 	@mkdir -p $(ISO_PROFILE)/airootfs/usr/local/bin
 	@printf '#!/usr/bin/env bash\n\
 cd /opt/arches/installer\n\
@@ -356,7 +377,30 @@ _stage-bootconfig:
 		> $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook; \
 	\
 	echo "  Generating boot configs from templates"; \
-	sed -e "s/@KERNEL@/$$KERNEL/g" -e "s|@KERNEL_FLAGS@|$$KERNEL_FLAGS|g" $(ISO_PROFILE)/grub/grub.cfg.in \
+	echo "  ISO mode: $(ISO_MODE)"; \
+	HAS_AUTOINSTALL=false; \
+	if [ -f "$(TEMPLATES)/auto-install.toml" ]; then \
+		HAS_AUTOINSTALL=true; \
+	fi; \
+	echo "  Auto-install: $$HAS_AUTOINSTALL"; \
+	\
+	DEFAULT_ENTRY=framebuffer; \
+	if [ "$(ISO_MODE)" = "graphical" ] && [ "$$HAS_AUTOINSTALL" = "true" ]; then \
+		DEFAULT_ENTRY=autoinstall; \
+	elif [ "$(ISO_MODE)" = "graphical" ]; then \
+		DEFAULT_ENTRY=graphical; \
+	elif [ "$$HAS_AUTOINSTALL" = "true" ]; then \
+		DEFAULT_ENTRY=autoinstall; \
+	fi; \
+	echo "  Default boot entry: $$DEFAULT_ENTRY"; \
+	\
+	sed -e "s/@KERNEL@/$$KERNEL/g" \
+		-e "s|@KERNEL_FLAGS@|$$KERNEL_FLAGS|g" \
+		-e "s|@DEFAULT_ENTRY@|$$DEFAULT_ENTRY|g" \
+		$(ISO_PROFILE)/grub/grub.cfg.in \
+		| if [ "$$HAS_AUTOINSTALL" = "true" ]; then sed 's/^@IF_AUTOINSTALL@//'; else grep -v '^@IF_AUTOINSTALL@'; fi \
+		| if [ "$(ISO_MODE)" = "graphical" ] && [ "$$HAS_AUTOINSTALL" = "true" ]; then sed 's/^@IF_GRAPHICAL_AUTOINSTALL@//'; else grep -v '^@IF_GRAPHICAL_AUTOINSTALL@'; fi \
+		| if [ "$(ISO_MODE)" = "graphical" ]; then sed 's/^@IF_GRAPHICAL@//'; else grep -v '^@IF_GRAPHICAL@'; fi \
 		> $(ISO_PROFILE)/grub/grub.cfg; \
 	sed -e "s/@KERNEL@/$$KERNEL/g" -e "s|@KERNEL_FLAGS@|$$KERNEL_FLAGS|g" $(ISO_PROFILE)/grub/loopback.cfg.in \
 		> $(ISO_PROFILE)/grub/loopback.cfg; \
@@ -371,30 +415,9 @@ _stage-bootconfig:
 		$(ISO_PROFILE)/airootfs/etc/mkinitcpio.conf.d/archiso.conf
 
 _assemble-packages:
-	@echo "══ Assembling package list ($(PLATFORM)) ══"
+	@echo "══ Assembling package list ($(PLATFORM), mode: $(ISO_MODE)) ══"
 	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
-	@# Resolve template and check if any selected module has category=desktop
-	@TMPL="$(TEMPLATE)"; \
-	if [ -z "$$TMPL" ]; then \
-		TMPL=$$(python3 -c "import tomllib; \
-			d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
-			print(d.get('platform',{}).get('default_template',''))"); \
-	fi; \
-	GRAPHICAL=false; \
-	if [ -n "$$TMPL" ]; then \
-		TMPL_FILE="$(TEMPLATES)/$$TMPL.toml"; \
-		if [ -f "$$TMPL_FILE" ]; then \
-			GRAPHICAL=$$(python3 -c "import tomllib, pathlib; \
-				t=tomllib.load(open('$$TMPL_FILE','rb')); \
-				slugs=t.get('modules',{}).get('include',[]); \
-				mdir=pathlib.Path('$(MODULES_DIR)'); \
-				has_desktop=any( \
-					tomllib.load(open(mdir/s/'module.toml','rb')).get('meta',{}).get('category')=='desktop' \
-					for s in slugs if (mdir/s/'module.toml').exists()); \
-				print('true' if has_desktop else 'false')"); \
-		fi; \
-	fi; \
-	ARCH=$$(python3 -c "import tomllib; \
+	@ARCH=$$(python3 -c "import tomllib; \
 		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
 		print(d['platform']['arch'])"); \
 	KERNEL_PKGS=$$(python3 -c "import tomllib; \
@@ -405,16 +428,13 @@ _assemble-packages:
 		pkgs.append('linux-firmware'); \
 		print('\n'.join(pkgs))"); \
 	echo "  Platform arch: $$ARCH"; \
-	echo "  Graphical ISO: $$GRAPHICAL"; \
+	echo "  ISO mode: $(ISO_MODE)"; \
 	echo "  Kernel packages: $$(echo $$KERNEL_PKGS | tr '\n' ' ')"; \
-	GRAPHICAL_FILE=""; \
-	if [ "$$GRAPHICAL" = "true" ] && [ -f "$(ISO_PROFILE)/packages.graphical_iso" ]; then \
-		GRAPHICAL_FILE="$(ISO_PROFILE)/packages.graphical_iso"; \
-		echo "  Including graphical ISO packages"; \
-	fi; \
-	{ cat $(ISO_PROFILE)/packages.iso $(PLATFORMS)/$(PLATFORM)/packages; \
+	ISO_PKGS=$$(python3 $(SCRIPTS)/iso-config.py packages $(MODULES_DIR) $(ISO_MODE)); \
+	echo "  ISO packages: $$(echo "$$ISO_PKGS" | wc -l) from iso.toml"; \
+	{ cat $(PLATFORMS)/$(PLATFORM)/packages; \
 	  echo "$$KERNEL_PKGS"; \
-	  if [ -n "$$GRAPHICAL_FILE" ]; then cat "$$GRAPHICAL_FILE"; fi; \
+	  echo "$$ISO_PKGS"; \
 	} | grep -v '^#' | grep -v '^$$' | sort -u \
 		> $(ISO_PROFILE)/packages.$$ARCH; \
 	echo "  Wrote packages.$$ARCH ($$(wc -l < $(ISO_PROFILE)/packages.$$ARCH) packages)"
@@ -425,24 +445,9 @@ _assemble-packages:
 		$(PLATFORMS)/$(PLATFORM)/pacman.conf > $(ISO_PROFILE)/pacman.conf
 
 _stage-graphical:
-	@# Conditionally set up graphical live boot based on whether template
-	@# includes a desktop-category module.
-	@TMPL="$(TEMPLATE)"; \
-	if [ -z "$$TMPL" ]; then \
-		TMPL=$$(python3 -c "import tomllib; \
-			d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
-			print(d.get('platform',{}).get('default_template',''))"); \
-	fi; \
-	TMPL_FILE="$(TEMPLATES)/$$TMPL.toml"; \
-	GRAPHICAL=$$(python3 -c "import tomllib, pathlib; \
-		t=tomllib.load(open('$$TMPL_FILE','rb')); \
-		slugs=t.get('modules',{}).get('include',[]); \
-		mdir=pathlib.Path('$(MODULES_DIR)'); \
-		has_desktop=any( \
-			tomllib.load(open(mdir/s/'module.toml','rb')).get('meta',{}).get('category')=='desktop' \
-			for s in slugs if (mdir/s/'module.toml').exists()); \
-		print('true' if has_desktop else 'false')"); \
-	echo "  Cleaning previous graphical staging artifacts"; \
+	@# Set up graphical live boot if ISO_MODE=graphical.
+	@# Reads the desktop module's [iso] section for DM/session/terminal config.
+	@echo "  Cleaning previous graphical staging artifacts"; \
 	rm -rf $(ISO_PROFILE)/airootfs/etc/systemd/system/arches-liveuser.service \
 		$(ISO_PROFILE)/airootfs/etc/systemd/system/display-manager.service \
 		$(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants/arches-liveuser.service \
@@ -452,8 +457,10 @@ _stage-graphical:
 		$(ISO_PROFILE)/airootfs/usr/share/applications \
 		$(ISO_PROFILE)/airootfs/usr/local/bin/arches-liveuser-setup \
 		$(ISO_PROFILE)/airootfs/home 2>/dev/null || true; \
-	if [ "$$GRAPHICAL" = "true" ]; then \
-		echo "══ Staging graphical live boot (template: $$TMPL) ══"; \
+	if [ "$(ISO_MODE)" = "graphical" ]; then \
+		echo "══ Staging graphical live boot ══"; \
+		eval $$(python3 $(SCRIPTS)/iso-config.py graphical-config $(MODULES_DIR)); \
+		echo "  Desktop: $$SESSION (DM: $$DISPLAY_MANAGER, terminal: $$TERMINAL)"; \
 		echo "  Installing liveuser setup service"; \
 		mkdir -p $(ISO_PROFILE)/airootfs/usr/local/bin; \
 		cp $(ISO_PROFILE)/services/arches-liveuser-setup $(ISO_PROFILE)/airootfs/usr/local/bin/; \
@@ -462,31 +469,26 @@ _stage-graphical:
 		cp $(ISO_PROFILE)/services/arches-liveuser.service $(ISO_PROFILE)/airootfs/etc/systemd/system/; \
 		ln -sf ../arches-liveuser.service \
 			$(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants/arches-liveuser.service; \
-		echo "  Configuring SDDM autologin"; \
+		echo "  Configuring $$DISPLAY_MANAGER autologin (session: $$SESSION)"; \
 		mkdir -p $(ISO_PROFILE)/airootfs/etc/sddm.conf.d; \
-		printf '[Autologin]\nUser=liveuser\nSession=plasma\n' \
+		printf '[Autologin]\nUser=liveuser\nSession=%s\n' "$$SESSION" \
 			> $(ISO_PROFILE)/airootfs/etc/sddm.conf.d/autologin.conf; \
-		echo "  Enabling SDDM service (with liveuser dependency)"; \
-		ln -sf /usr/lib/systemd/system/sddm.service \
+		echo "  Enabling $$DISPLAY_MANAGER service (with liveuser dependency)"; \
+		ln -sf /usr/lib/systemd/system/$${DISPLAY_MANAGER}.service \
 			$(ISO_PROFILE)/airootfs/etc/systemd/system/display-manager.service; \
-		mkdir -p $(ISO_PROFILE)/airootfs/etc/systemd/system/sddm.service.d; \
+		mkdir -p $(ISO_PROFILE)/airootfs/etc/systemd/system/$${DISPLAY_MANAGER}.service.d; \
 		printf '[Unit]\nRequires=arches-liveuser.service\nAfter=arches-liveuser.service\n' \
-			> $(ISO_PROFILE)/airootfs/etc/systemd/system/sddm.service.d/liveuser.conf; \
-		echo "  Creating installer desktop entry"; \
+			> $(ISO_PROFILE)/airootfs/etc/systemd/system/$${DISPLAY_MANAGER}.service.d/liveuser.conf; \
+		echo "  Creating installer desktop entry (terminal: $$TERMINAL)"; \
 		mkdir -p $(ISO_PROFILE)/airootfs/usr/share/applications; \
-		printf '[Desktop Entry]\n\
-Name=Arches Installer\n\
-Comment=Install Arches Linux\n\
-Exec=konsole --noclose -e sudo /usr/local/bin/arches-install\n\
-Icon=system-software-install\n\
-Terminal=false\n\
-Type=Application\n\
-Categories=System;\n' > $(ISO_PROFILE)/airootfs/usr/share/applications/arches-install.desktop; \
+		printf '[Desktop Entry]\nName=Arches Installer\nComment=Install Arches Linux\nExec=%s sudo /usr/local/bin/arches-install\nIcon=system-software-install\nTerminal=false\nType=Application\nCategories=System;\n' \
+			"$$TERMINAL" \
+			> $(ISO_PROFILE)/airootfs/usr/share/applications/arches-install.desktop; \
 		mkdir -p $(ISO_PROFILE)/airootfs/etc/xdg/autostart; \
 		cp $(ISO_PROFILE)/airootfs/usr/share/applications/arches-install.desktop \
 			$(ISO_PROFILE)/airootfs/etc/xdg/autostart/arches-install.desktop; \
 	else \
-		echo "══ Skipping graphical live boot (template $$TMPL is not graphical) ══"; \
+		echo "══ Skipping graphical live boot (ISO_MODE=$(ISO_MODE)) ══"; \
 	fi
 
 _cache-packages:

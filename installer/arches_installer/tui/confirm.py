@@ -4,23 +4,13 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Label, Static
 
+from arches_installer.tui import ArrowNavScreen
 
-class ConfirmScreen(Screen):
+
+class ConfirmScreen(ArrowNavScreen):
     """Review all selections and confirm before installing."""
-
-    BINDINGS = [
-        ("up", "prev_button", "Previous"),
-        ("down", "next_button", "Next"),
-    ]
-
-    def action_next_button(self) -> None:
-        self.focus_next(Button)
-
-    def action_prev_button(self) -> None:
-        self.focus_previous(Button)
 
     def compose(self) -> ComposeResult:
         with Center():

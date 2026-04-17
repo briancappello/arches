@@ -28,8 +28,7 @@ arch="${ARCHES_ARCH:-x86_64}"
 # Boot modes depend on architecture
 if [[ "$arch" == "x86_64" ]]; then
     bootmodes=(
-        'bios.syslinux'
-        'uefi.grub'
+        'uefi-x64.grub.esp'
     )
 elif [[ "$arch" == "aarch64" ]]; then
     bootmodes=(

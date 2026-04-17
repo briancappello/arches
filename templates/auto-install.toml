@@ -1,11 +1,11 @@
 [install]
-template = "dev-workstation.toml"
+template = "kde-workstation.toml"
 disk_layout = "basic.toml"
 hostname = "arches"
 username = "arches"
 password = "password"  # FIXME -- change before building
 reboot = false
-shutdown = false  # takes precedence over reboot if true
+shutdown = true  # takes precedence over reboot if true
 
 # Optional: connect to WiFi before installing.
 # Uncomment to enable. Omit psk for open networks.

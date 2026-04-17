@@ -5,11 +5,19 @@ category = "base"
 
 [install.pacstrap]
 packages = [
+    "pacman-contrib",
     "base-devel",
     "neovim",
     "git",
     "ansible",
     "reflector",
+    # Filesystem & partitioning
+    "parted",
+    "gptfdisk",
+    "dosfstools",
+    "e2fsprogs",
+    "btrfs-progs",
+    "lvm2",
     # CLI utilities
     "htop",
     "btop",
@@ -18,4 +26,8 @@ packages = [
     "wget",
     "jq",
     "unzip",
+    "pv",
+    "less",
+    "man-db",
+    "man-pages",
 ]

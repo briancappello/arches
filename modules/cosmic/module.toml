@@ -38,3 +38,8 @@ enable = [
 
 [dependencies]
 conflicts = ["kde"]
+
+[iso]
+display_manager = "cosmic-greeter"
+session = "cosmic"
+terminal = "cosmic-terminal -e"

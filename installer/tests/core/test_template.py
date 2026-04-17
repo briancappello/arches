@@ -17,7 +17,7 @@ class TestLoadTemplate:
     """Test loading templates from TOML files."""
 
     def test_load_dev_workstation_template(self, templates_dir: Path) -> None:
-        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        tmpl = load_template(templates_dir / "kde-workstation.toml")
         assert tmpl.name == "Dev Workstation"
         assert tmpl.module_slugs == ["base", "zsh", "networking", "kde"]
         # Before resolve, install/services/ansible are empty
@@ -29,7 +29,7 @@ class TestLoadTemplate:
         assert tmpl.module_slugs == ["base", "zsh", "networking", "postgresql"]
 
     def test_resolve_populates_packages(self, templates_dir: Path) -> None:
-        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        tmpl = load_template(templates_dir / "kde-workstation.toml")
         resolved = resolve_and_merge_modules(tmpl)
         assert "git" in resolved.install.pacstrap
         assert "plasma-meta" in resolved.install.pacstrap
@@ -37,20 +37,20 @@ class TestLoadTemplate:
         assert "networkmanager" in resolved.install.pacstrap
 
     def test_resolve_populates_services(self, templates_dir: Path) -> None:
-        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        tmpl = load_template(templates_dir / "kde-workstation.toml")
         resolved = resolve_and_merge_modules(tmpl)
         assert "NetworkManager" in resolved.services
         assert "sddm" in resolved.services
 
     def test_resolve_populates_ansible_roles(self, templates_dir: Path) -> None:
-        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        tmpl = load_template(templates_dir / "kde-workstation.toml")
         resolved = resolve_and_merge_modules(tmpl)
         assert "base" in resolved.ansible.firstboot_roles
         assert "kde" in resolved.ansible.firstboot_roles
         assert "zsh" in resolved.ansible.firstboot_roles
 
     def test_resolve_sets_graphical(self, templates_dir: Path) -> None:
-        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        tmpl = load_template(templates_dir / "kde-workstation.toml")
         resolved = resolve_and_merge_modules(tmpl)
         assert resolved.graphical is True
 
@@ -78,7 +78,7 @@ class TestLoadTemplate:
 
     def test_template_has_no_disk_or_bootloader(self, templates_dir: Path) -> None:
         """Templates should not have disk or bootloader attributes."""
-        tmpl = load_template(templates_dir / "dev-workstation.toml")
+        tmpl = load_template(templates_dir / "kde-workstation.toml")
         assert not hasattr(tmpl, "disk")
         assert not hasattr(tmpl, "bootloader")
 

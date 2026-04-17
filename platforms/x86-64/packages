@@ -17,7 +17,6 @@ chwd
 # ─── Bootloader ───────────────────────────────────────
 limine
 efibootmgr
-syslinux
 
 # ─── Memory testing ──────────────────────────────────
 memtest86+

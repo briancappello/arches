@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Demo the TUI screens with fake data, no root or disk required."""
+"""Demo the TUI screens with fake data, no root or disk required.
+
+Screen choices are derived automatically from ArchesApp.SCREENS so this
+script never goes stale when new screens are added.
+"""
 
 import argparse
 import sys
@@ -9,7 +13,6 @@ sys.path.insert(0, "installer")
 
 from arches_installer.core.platform import (
     BootloaderPlatformConfig,
-    DiskLayoutConfig,
     HardwareDetectionConfig,
     KernelConfig,
     KernelVariant,
@@ -40,13 +43,7 @@ def make_platform():
             supports_bios=True,
             snapshot_boot=True,
         ),
-        disk_layout=DiskLayoutConfig(
-            filesystem="btrfs",
-            mount_options="compress=zstd:1,noatime,ssd,discard=async",
-            subvolumes=["@", "@home", "@var", "@snapshots"],
-            esp_size_mib=2048,
-            swap="zram",
-        ),
+        swap="zram",
         hardware_detection=HardwareDetectionConfig(
             enabled=True,
             tool="chwd",
@@ -125,29 +122,31 @@ def fake_progress_install(screen):
     screen.app.call_from_thread(screen._enable_reboot)
 
 
-SCREENS = {
-    "welcome": "Welcome screen (default start)",
-    "partition": "Disk/partition selection",
-    "template": "Template selection",
-    "user": "User setup (hostname, username, password)",
-    "confirm": "Pre-install confirmation summary",
-    "progress": "Install progress with simulated output",
-}
+def _populate_app_state(app, template):
+    """Pre-populate app state so later screens can render without errors."""
+    app.selected_device = "/dev/vda"
+    app.selected_template = template
+    app.hostname = "arches"
+    app.username = "arches"
+    app.password = "password"
+    app.partition_mode = "auto"
 
 
 def main():
+    # Build screen list from the app's SCREENS registry.
+    screen_names = list(ArchesApp.SCREENS.keys())
+
     parser = argparse.ArgumentParser(
         prog="tui-demo",
         description="Demo the Arches TUI screens without root or disk access.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Available screens:\n"
-        + "\n".join(f"  {name:12s}  {desc}" for name, desc in SCREENS.items()),
+        epilog="Available screens:\n" + "\n".join(f"  {name}" for name in screen_names),
     )
     parser.add_argument(
         "screen",
         nargs="?",
         default="welcome",
-        choices=SCREENS.keys(),
+        choices=screen_names,
         help="Screen to display (default: welcome)",
     )
     args = parser.parse_args()
@@ -156,53 +155,19 @@ def main():
     platform = make_platform()
     template = make_template()
 
+    app = ArchesApp(platform=platform)
+
     if screen == "progress":
-        # Monkey-patch to use fake install
         InstallProgressScreen._run_install = fake_progress_install
-        app = ArchesApp(platform=platform)
+        _populate_app_state(app, template)
         app.auto_install = True
-        app.selected_device = "/dev/vda"
-        app.selected_template = template
-        app.hostname = "arches"
-        app.username = "arches"
-        app.password = "password"
-        app.partition_mode = "auto"
-        app.run()
+    elif screen != "welcome":
+        # All non-welcome screens need some pre-populated state so they
+        # can render without crashing.  Over-populating is harmless.
+        _populate_app_state(app, template)
+        app.push_screen_on_mount = screen
 
-    elif screen == "confirm":
-        app = ArchesApp(platform=platform)
-        app.selected_device = "/dev/vda"
-        app.selected_template = template
-        app.hostname = "arches"
-        app.username = "arches"
-        app.password = "password"
-        app.partition_mode = "auto"
-        app.push_screen_on_mount = "confirm"
-        app.run()
-
-    elif screen == "user":
-        app = ArchesApp(platform=platform)
-        app.selected_device = "/dev/vda"
-        app.selected_template = template
-        app.partition_mode = "auto"
-        app.push_screen_on_mount = "user_setup"
-        app.run()
-
-    elif screen == "template":
-        app = ArchesApp(platform=platform)
-        app.selected_device = "/dev/vda"
-        app.partition_mode = "auto"
-        app.push_screen_on_mount = "template_select"
-        app.run()
-
-    elif screen == "partition":
-        app = ArchesApp(platform=platform)
-        app.push_screen_on_mount = "partition"
-        app.run()
-
-    else:  # welcome
-        app = ArchesApp(platform=platform)
-        app.run()
+    app.run()
 
 
 if __name__ == "__main__":

@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
 from arches_installer.core.disk_layout import DiskLayout, discover_disk_layouts
+from arches_installer.tui import ArrowNavScreen
 
 # Sentinel ID for the manual shell option at the bottom of the list
 _MANUAL_OPTION_ID = "__manual_shell__"
 
 
-class LayoutSelectScreen(Screen):
+class LayoutSelectScreen(ArrowNavScreen):
     """Screen for selecting a disk layout or dropping to manual shell."""
 
     def compose(self) -> ComposeResult:

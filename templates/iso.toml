@@ -1,0 +1,66 @@
+# Arches ISO live environment configuration.
+#
+# Defines the package layers for the live ISO, independent of what
+# templates are available for installation.  The build system reads
+# this file to assemble the ISO package list.
+#
+# Build modes:
+#   make iso       — graphical live ISO (framebuffer + graphical layers)
+#   make iso-fb    — framebuffer-only ISO (framebuffer layer only)
+
+[meta]
+name = "Arches ISO"
+description = "Live ISO environment configuration"
+
+# Templates available for installation from this ISO.
+# The offline cache (OFFLINE=1) pre-caches packages for ALL listed
+# templates so the installed system can be fully provisioned offline.
+[install]
+templates = [
+    "kde-workstation.toml",
+    "cosmic-workstation.toml",
+    "vm-server.toml",
+]
+
+# ── Framebuffer layer ────────────────────────────────
+# Always present on every ISO.  Provides everything needed to run the
+# TUI installer, perform recovery tasks, and diagnose hardware from a
+# TTY/framebuffer console.
+[framebuffer]
+modules = [
+    "base",
+    "networking",
+    "recovery-tools",
+]
+packages = [
+    # Core system (needed for live environment boot)
+    "base",
+    "mkinitcpio",
+    "sudo",
+    "terminus-font",
+    # Archiso runtime
+    "mkinitcpio-archiso",
+    "arch-install-scripts",
+    "pacman-contrib",
+    # Installer TUI dependencies
+    "python-textual",
+    "python-rich",
+    "python-setuptools",
+    # Live WiFi backend (NetworkManager uses iwd on the live ISO)
+    "iwd",
+    # Console mouse support
+    "gpm",
+    # Console file manager / shell
+    "zsh",
+]
+
+# ── Graphical layer ──────────────────────────────────
+# Extends the framebuffer layer with a full desktop environment.
+# Only included when building with `make iso` (not `make iso-fb`).
+# Exactly one module must have category = "desktop".
+[graphical]
+modules = [
+    "kde",
+    "pipewire",
+    "fonts",
+]

@@ -47,25 +47,41 @@ for v in platform.kernel.variants:
     print(v.headers)
 ")
 
-# Collect all template packages via the module system.
-# Templates declare [modules].include; we resolve modules and merge
-# their packages to get the full package list.
+# Collect install-time template packages.
+# Read the template list from iso.toml and resolve each template's modules.
 template_packages=()
-for tmpl in "$TEMPLATES_DIR"/*.toml; do
-    echo "  Reading template: $(basename "$tmpl")"
+echo "  Reading template list from iso.toml..."
+while IFS= read -r tmpl_name; do
+    [[ -n "$tmpl_name" ]] || continue
+    tmpl_file="$TEMPLATES_DIR/$tmpl_name"
+    if [[ ! -f "$tmpl_file" ]]; then
+        echo "  WARNING: Template not found: $tmpl_file"
+        continue
+    fi
+    echo "  Reading template: $tmpl_name"
     while IFS= read -r pkg; do
         [[ -n "$pkg" ]] && template_packages+=("$pkg")
     done < <(PYTHONPATH="$INSTALLER_DIR/.." python3 -c "
 from arches_installer.core.template import load_template, resolve_and_merge_modules
 from pathlib import Path
 
-tmpl = load_template(Path('$tmpl'))
+tmpl = load_template(Path('$tmpl_file'))
 if tmpl.module_slugs:
     resolved = resolve_and_merge_modules(tmpl)
     for p in resolved.install.all_packages:
         print(p)
 ")
-done
+done < <(python3 "$SCRIPT_DIR/iso-config.py" templates)
+
+# Collect ISO environment packages (both framebuffer and graphical layers).
+# Even for an fb-only ISO build, we cache graphical packages because the
+# installed system templates may include desktop modules.
+iso_packages=()
+echo "  Reading ISO environment packages (framebuffer + graphical)..."
+while IFS= read -r pkg; do
+    [[ -n "$pkg" ]] && iso_packages+=("$pkg")
+done < <(python3 "$SCRIPT_DIR/iso-config.py" packages "$PROJECT_ROOT/modules" graphical)
+echo "  ISO environment packages: ${#iso_packages[@]}"
 
 # Common hardware driver packages installed by chwd (hardware detection).
 # These cover AMD, Intel, NVIDIA, and VM (virtio) GPUs.  Without these in
@@ -106,7 +122,7 @@ if [[ ${#machine_packages[@]} -gt 0 ]]; then
 fi
 
 # Deduplicate
-all_packages=($(printf '%s\n' "${base_packages[@]}" "${template_packages[@]}" "${hw_driver_packages[@]}" "${machine_packages[@]}" | sort -u))
+all_packages=($(printf '%s\n' "${base_packages[@]}" "${template_packages[@]}" "${iso_packages[@]}" "${hw_driver_packages[@]}" "${machine_packages[@]}" | sort -u))
 
 echo "  Packages to cache: ${#all_packages[@]}"
 echo "  Package list: ${all_packages[*]}"

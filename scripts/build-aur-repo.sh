@@ -87,7 +87,7 @@ if [[ $EUID -eq 0 ]]; then
     fi
     echo "  (running as root — will drop to $SUDO_USER for makepkg)"
     mkdir -p "$REPO_DIR"
-    chown "$SUDO_USER":"$(id -g "$SUDO_USER")" "$REPO_DIR"
+    chown -R "$SUDO_USER":"$(id -g "$SUDO_USER")" "$REPO_DIR"
     FORCE_FLAG=""
     [[ "$FORCE" == true ]] && FORCE_FLAG="--force"
     sudo -u "$SUDO_USER" --preserve-env=PATH \
@@ -132,7 +132,7 @@ if [[ ${#AUR_PACKAGES[@]} -gt 0 ]]; then
         echo "── Building AUR: $pkg ──"
         remove_stale_packages "$REPO_DIR" "$pkg"
         cd "$aur_dir"
-        makepkg -s --noconfirm --needed --cleanbuild
+        makepkg -sf --noconfirm --needed --cleanbuild
         cp ./*.pkg.tar.* "$REPO_DIR/"
         save_cache_hash "$REPO_DIR" "$pkg" "$hash"
         REBUILD_REPO=true

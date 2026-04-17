@@ -6,7 +6,6 @@ import dataclasses
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical, VerticalScroll
-from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Label, Static
 
 from arches_installer.core.module import (
@@ -17,6 +16,7 @@ from arches_installer.core.module import (
     resolve_modules,
 )
 from arches_installer.core.template import AnsibleConfig
+from arches_installer.tui import ArrowNavScreen
 
 # Human-readable category labels for the TUI.
 _CATEGORY_LABELS: dict[str, str] = {
@@ -29,7 +29,7 @@ _CATEGORY_LABELS: dict[str, str] = {
 }
 
 
-class ModuleSelectScreen(Screen):
+class ModuleSelectScreen(ArrowNavScreen):
     """Screen for customizing which modules are included in the install."""
 
     def compose(self) -> ComposeResult:

@@ -7,16 +7,16 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import HorizontalGroup, Vertical, VerticalScroll
-from textual.screen import Screen
+from textual.containers import HorizontalGroup, Vertical
 from textual.widgets import Button, Label, RichLog
 
 from arches_installer.core.pipeline import InstallParams, run_install_pipeline
+from arches_installer.tui import ArrowNavScreen
 
 INSTALL_LOG = Path("/var/log/arches-install.log")
 
 
-class InstallProgressScreen(Screen):
+class InstallProgressScreen(ArrowNavScreen):
     """Screen that runs the install pipeline and streams log output."""
 
     CSS = """
@@ -30,13 +30,10 @@ class InstallProgressScreen(Screen):
         text-align: right;
         padding-right: 2;
     }
-    InstallProgressScreen #log-container {
+    InstallProgressScreen #install-log {
         height: 1fr;
         border: solid $accent;
         margin: 0 1;
-    }
-    InstallProgressScreen #install-log {
-        height: auto;
         padding: 0 1;
     }
     InstallProgressScreen .button-row {
@@ -54,13 +51,12 @@ class InstallProgressScreen(Screen):
     def compose(self) -> ComposeResult:
         with Vertical(id="outer", classes="panel"):
             yield Label("Installing...", classes="title", id="title")
-            with VerticalScroll(id="log-container"):
-                yield RichLog(
-                    highlight=True,
-                    markup=True,
-                    wrap=True,
-                    id="install-log",
-                )
+            yield RichLog(
+                highlight=True,
+                markup=True,
+                wrap=True,
+                id="install-log",
+            )
             yield Label("")
             with HorizontalGroup(classes="button-row"):
                 yield Button(

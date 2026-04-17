@@ -4,23 +4,13 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Label, Static
 
+from arches_installer.tui import ArrowNavScreen
 
-class HardwareConfirmScreen(Screen):
+
+class HardwareConfirmScreen(ArrowNavScreen):
     """Show auto-detected hardware config and let the user confirm or skip."""
-
-    BINDINGS = [
-        ("up", "prev_button", "Previous"),
-        ("down", "next_button", "Next"),
-    ]
-
-    def action_next_button(self) -> None:
-        self.focus_next(Button)
-
-    def action_prev_button(self) -> None:
-        self.focus_previous(Button)
 
     def compose(self) -> ComposeResult:
         with Center():
@@ -97,9 +87,14 @@ class HardwareConfirmScreen(Screen):
                     seen.add(q.slug)
 
         if hw.all_packages:
-            text += f"\n  Packages:  {len(hw.all_packages)} additional\n"
-        if hw.all_services:
-            text += f"  Services:  {len(hw.all_services)} additional\n"
+            text += f"\n  Packages:  {', '.join(hw.all_packages)}\n"
+        if hw.all_services or hw.all_services_disable:
+            parts = []
+            if hw.all_services:
+                parts.append("enable " + ", ".join(hw.all_services))
+            if hw.all_services_disable:
+                parts.append("disable " + ", ".join(hw.all_services_disable))
+            text += f"  Services:  {';  '.join(parts)}\n"
         if hw.all_firstboot_roles:
             text += f"  Ansible:   {', '.join(hw.all_firstboot_roles)} (first boot)\n"
 

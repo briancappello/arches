@@ -8,7 +8,7 @@ come from the platform config.
 Templates live in ``<project>/templates/`` (development) or
 ``/opt/arches/templates/`` (live ISO).  Install-specific templates
 (auto-install.toml, host-install.toml) and system templates
-(dev-workstation.toml, vm-server.toml) all live in the same directory.
+(kde-workstation.toml, vm-server.toml) all live in the same directory.
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ def _find_templates_dir() -> Path:
 def resolve_template(filename: str) -> Path:
     """Resolve a template filename to its full path in the templates directory.
 
-    Accepts a bare filename like ``"dev-workstation.toml"`` and returns the
+    Accepts a bare filename like ``"kde-workstation.toml"`` and returns the
     absolute path.  Raises ``FileNotFoundError`` if the file does not exist.
     """
     templates_dir = _find_templates_dir()

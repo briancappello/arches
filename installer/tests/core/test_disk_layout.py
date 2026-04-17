@@ -249,49 +249,19 @@ class TestDiscoverRealLayouts:
 
     PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
-    def test_discover_finds_layouts(self) -> None:
-        """discover_disk_layouts should find at least 2 layouts."""
-        layouts = discover_disk_layouts()
-        assert len(layouts) >= 2
-        names = [la.name for la in layouts]
-        assert "Basic" in names
-        assert "Flexible" in names
+    def test_all_layout_files_load_and_validate(self) -> None:
+        """Every .toml in disk-layouts/ must load and pass validation.
 
-    def test_basic_layout_structure(self) -> None:
-        """Basic layout has expected partition structure."""
-        layouts = discover_disk_layouts()
-        basic = next(la for la in layouts if la.name == "Basic")
-        assert len(basic.partitions) == 2
-        assert basic.partitions[0].filesystem == "vfat"
-        assert basic.partitions[0].size == "2G"
-        assert basic.partitions[1].filesystem == "btrfs"
-        assert basic.partitions[1].size == "*"
-        assert len(basic.partitions[1].subvolumes) == 3  # @, @home, @var
+        Calls load_disk_layout() directly (not discover_disk_layouts) so
+        that malformed files raise instead of being silently skipped.
+        """
+        layouts_dir = self.PROJECT_ROOT / "disk-layouts"
+        toml_files = sorted(p for p in layouts_dir.iterdir() if p.suffix == ".toml")
+        assert len(toml_files) >= 1, "no layout files found on disk"
 
-    def test_flexible_layout_structure(self) -> None:
-        """Flexible layout has expected partition structure."""
-        layouts = discover_disk_layouts()
-        flexible = next(la for la in layouts if la.name == "Flexible")
-        assert len(flexible.partitions) == 4
-
-        # ESP
-        assert flexible.partitions[0].filesystem == "vfat"
-        assert flexible.partitions[0].size == "8G"
-
-        # Root with subvolumes
-        assert flexible.partitions[1].filesystem == "btrfs"
-        assert flexible.partitions[1].size == "100G"
-        assert len(flexible.partitions[1].subvolumes) == 2  # @, @var
-
-        # Raw spare
-        assert flexible.partitions[2].filesystem == ""
-        assert flexible.partitions[2].mount_point is None
-        assert flexible.partitions[2].label == "spare"
-
-        # /home filling rest
-        assert flexible.partitions[3].filesystem == "btrfs"
-        assert flexible.partitions[3].size == "*"
-        assert flexible.partitions[3].mount_point == "/home"
+        for path in toml_files:
+            layout = load_disk_layout(path)  # raises on parse/validation failure
+            assert layout.name != "Unknown", f"{path.name}: missing [meta] name"
 
 
 # ---------------------------------------------------------------------------

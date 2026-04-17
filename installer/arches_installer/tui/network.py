@@ -5,7 +5,6 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import (
     Button,
     Input,
@@ -28,6 +27,7 @@ from arches_installer.core.network import (
     get_interfaces,
     scan_wifi,
 )
+from arches_installer.tui import ArrowNavScreen
 
 # ─── Signal strength bars ─────────────────────────────
 
@@ -59,7 +59,7 @@ STEP_WIRED_STATIC = "wired_static"
 STEP_CONNECTING = "connecting"
 
 
-class NetworkScreen(Screen):
+class NetworkScreen(ArrowNavScreen):
     """Network configuration screen for WiFi and wired connections."""
 
     step: reactive[str] = reactive(STEP_INTERFACES, layout=True)

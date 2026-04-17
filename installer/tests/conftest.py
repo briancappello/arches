@@ -403,13 +403,13 @@ def templates_dir(tmp_path: Path, test_modules_dir: Path) -> Path:
     """Create a temp directory with sample template TOML files.
 
     Also patches ``resolve_template`` so that bare filenames (e.g.
-    ``"dev-workstation.toml"``) resolve against this temp directory
+    ``"kde-workstation.toml"``) resolve against this temp directory
     instead of the installed package's templates directory.
     """
     d = tmp_path / "templates"
     d.mkdir()
 
-    (d / "dev-workstation.toml").write_text("""\
+    (d / "kde-workstation.toml").write_text("""\
 [meta]
 name = "Dev Workstation"
 description = "KDE Plasma desktop with full development toolchain"
@@ -510,7 +510,7 @@ def auto_config_file(
     config = tmp_path / "auto.toml"
     config.write_text("""\
 [install]
-template = "dev-workstation.toml"
+template = "kde-workstation.toml"
 disk_layout = "basic.toml"
 hostname = "testbox"
 username = "testuser"

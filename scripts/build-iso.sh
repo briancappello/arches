@@ -126,6 +126,7 @@ TEMPLATE_FLAG=""
 [[ -n "$TEMPLATE" ]] && TEMPLATE_FLAG="TEMPLATE=$TEMPLATE"
 OFFLINE_FLAG=""
 [[ "${OFFLINE:-0}" == "1" ]] && OFFLINE_FLAG="OFFLINE=1"
+ISO_MODE_FLAG="ISO_MODE=${ISO_MODE:-graphical}"
 
 # Bash as PID 1 inside a container ignores SIGINT/SIGTERM by default.
 # We register a trap that forwards the signal to all child processes,
@@ -143,7 +144,7 @@ podman run --rm --privileged \
         groupmod -g '"$BUILD_GID"' builder &&
         chown -R builder:builder /tmp &&
         chown builder:builder /home/builder &&
-        make _iso PLATFORM='"$PLATFORM"' ARCHES_ARCH='"$ARCHES_ARCH"' '"$FORCE_FLAG"' '"$TEMPLATE_FLAG"' '"$OFFLINE_FLAG"' &
+        make _iso PLATFORM='"$PLATFORM"' ARCHES_ARCH='"$ARCHES_ARCH"' '"$FORCE_FLAG"' '"$TEMPLATE_FLAG"' '"$OFFLINE_FLAG"' '"$ISO_MODE_FLAG"' &
         wait $!
     '
 

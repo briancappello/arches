@@ -36,19 +36,42 @@ else
     archiso_platform="${grub_cpu}-${grub_platform}"
 fi
 
-# Set default menu entry
-default=arches
+# Set default menu entry and timeout
+default=@DEFAULT_ENTRY@
 timeout=5
 timeout_style=menu
 
 
-# Menu entries
+# ── Boot entries ──────────────────────────────────────
+# Generated at build time based on ISO_MODE and auto-install.toml presence.
+# Markers @IF_AUTOINSTALL@ and @IF_GRAPHICAL@ are replaced by _stage-bootconfig.
 
-menuentry "Arches Install/Recovery (%ARCH%, ${archiso_platform})" --class arch --class gnu-linux --class gnu --class os --id 'arches' {
+@IF_AUTOINSTALL@menuentry "Arches Linux — Auto Install (%ARCH%, ${archiso_platform})" --class arch --class gnu-linux --class gnu --class os --id 'autoinstall' {
+@IF_AUTOINSTALL@    set gfxpayload=keep
+@IF_AUTOINSTALL@    linux /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-@KERNEL@ archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% @KERNEL_FLAGS@ systemd.unit=multi-user.target arches.autoinstall=1
+@IF_AUTOINSTALL@    initrd /%INSTALL_DIR%/boot/%ARCH%/initramfs-@KERNEL@.img
+@IF_AUTOINSTALL@}
+
+@IF_GRAPHICAL_AUTOINSTALL@menuentry "Arches Linux — Graphical Auto Install (%ARCH%, ${archiso_platform})" --class arch --class gnu-linux --class gnu --class os --id 'graphical-autoinstall' {
+@IF_GRAPHICAL_AUTOINSTALL@    set gfxpayload=keep
+@IF_GRAPHICAL_AUTOINSTALL@    linux /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-@KERNEL@ archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% @KERNEL_FLAGS@ arches.autoinstall=1
+@IF_GRAPHICAL_AUTOINSTALL@    initrd /%INSTALL_DIR%/boot/%ARCH%/initramfs-@KERNEL@.img
+@IF_GRAPHICAL_AUTOINSTALL@}
+
+@IF_GRAPHICAL@menuentry "Arches Linux — Graphical Live (%ARCH%, ${archiso_platform})" --class arch --class gnu-linux --class gnu --class os --id 'graphical' {
+@IF_GRAPHICAL@    set gfxpayload=keep
+@IF_GRAPHICAL@    linux /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-@KERNEL@ archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% @KERNEL_FLAGS@
+@IF_GRAPHICAL@    initrd /%INSTALL_DIR%/boot/%ARCH%/initramfs-@KERNEL@.img
+@IF_GRAPHICAL@}
+
+menuentry "Arches Linux — Framebuffer Installer (%ARCH%, ${archiso_platform})" --class arch --class gnu-linux --class gnu --class os --id 'framebuffer' {
     set gfxpayload=keep
-    linux /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-@KERNEL@ archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% @KERNEL_FLAGS@
+    linux /%INSTALL_DIR%/boot/%ARCH%/vmlinuz-@KERNEL@ archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% @KERNEL_FLAGS@ systemd.unit=multi-user.target
     initrd /%INSTALL_DIR%/boot/%ARCH%/initramfs-@KERNEL@.img
 }
+
+
+# ── Utilities ─────────────────────────────────────────
 
 if [ "${grub_platform}" == 'efi' ]; then
     if [ "${grub_cpu}" == 'x86_64' -a -f '/shellx64.efi' ]; then

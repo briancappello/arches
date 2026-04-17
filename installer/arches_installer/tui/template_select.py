@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
 from arches_installer.core.template import InstallTemplate, discover_templates
+from arches_installer.tui import ArrowNavScreen
 
 
-class TemplateSelectScreen(Screen):
+class TemplateSelectScreen(ArrowNavScreen):
     """Screen for selecting an install template."""
 
     def compose(self) -> ComposeResult:

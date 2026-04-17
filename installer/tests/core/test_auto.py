@@ -132,7 +132,7 @@ shutdown = true
     def test_from_dict_directly(self, templates_dir: Path) -> None:
         data = {
             "install": {
-                "template": "dev-workstation.toml",
+                "template": "kde-workstation.toml",
                 "hostname": "mybox",
                 "username": "admin",
                 "password": "secret",
@@ -149,7 +149,7 @@ shutdown = true
         """Config without [wifi] or [network] tables has None for both."""
         data = {
             "install": {
-                "template": "dev-workstation.toml",
+                "template": "kde-workstation.toml",
                 "username": "user",
                 "password": "pass",
             },
@@ -162,7 +162,7 @@ shutdown = true
         """[wifi] table is parsed into WifiConfig."""
         data = {
             "install": {
-                "template": "dev-workstation.toml",
+                "template": "kde-workstation.toml",
                 "username": "user",
                 "password": "pass",
             },
@@ -186,7 +186,7 @@ shutdown = true
         """[wifi] without psk is valid (open network)."""
         data = {
             "install": {
-                "template": "dev-workstation.toml",
+                "template": "kde-workstation.toml",
                 "username": "user",
                 "password": "pass",
             },
@@ -203,7 +203,7 @@ shutdown = true
         """[wifi] without ssid raises ValueError."""
         data = {
             "install": {
-                "template": "dev-workstation.toml",
+                "template": "kde-workstation.toml",
                 "username": "user",
                 "password": "pass",
             },
@@ -218,7 +218,7 @@ shutdown = true
         """[network] table is parsed into WiredConfig."""
         data = {
             "install": {
-                "template": "dev-workstation.toml",
+                "template": "kde-workstation.toml",
                 "username": "user",
                 "password": "pass",
             },
@@ -239,7 +239,7 @@ shutdown = true
         """[network] without interface raises ValueError."""
         data = {
             "install": {
-                "template": "dev-workstation.toml",
+                "template": "kde-workstation.toml",
                 "username": "user",
                 "password": "pass",
             },
@@ -255,7 +255,7 @@ shutdown = true
         """[network] without gateway raises ValueError."""
         data = {
             "install": {
-                "template": "dev-workstation.toml",
+                "template": "kde-workstation.toml",
                 "username": "user",
                 "password": "pass",
             },

@@ -22,7 +22,7 @@ def test_host_config_from_dict_alongside(templates_dir):
     """Alongside mode config parses correctly with defaults."""
     data = {
         "install": {
-            "template": "dev-workstation.toml",
+            "template": "kde-workstation.toml",
             "hostname": "testhost",
             "username": "testuser",
             "password": "testpass",
@@ -45,7 +45,7 @@ def test_host_config_from_dict_replace(templates_dir):
     """Replace mode config parses correctly with defaults."""
     data = {
         "install": {
-            "template": "dev-workstation.toml",
+            "template": "kde-workstation.toml",
             "hostname": "testhost",
             "username": "testuser",
             "password": "testpass",
@@ -64,7 +64,7 @@ def test_host_config_from_dict_custom_prefix(templates_dir):
     """Custom subvolume prefix is respected."""
     data = {
         "install": {
-            "template": "dev-workstation.toml",
+            "template": "kde-workstation.toml",
             "hostname": "testhost",
             "username": "testuser",
             "password": "testpass",
@@ -82,7 +82,7 @@ def test_host_config_missing_partition(templates_dir):
     """Missing partition raises ValueError."""
     data = {
         "install": {
-            "template": "dev-workstation.toml",
+            "template": "kde-workstation.toml",
             "hostname": "testhost",
             "username": "testuser",
             "password": "testpass",
@@ -97,7 +97,7 @@ def test_host_config_missing_esp(templates_dir):
     """Missing ESP partition raises ValueError."""
     data = {
         "install": {
-            "template": "dev-workstation.toml",
+            "template": "kde-workstation.toml",
             "hostname": "testhost",
             "username": "testuser",
             "password": "testpass",
@@ -112,7 +112,7 @@ def test_host_config_invalid_mode(templates_dir):
     """Invalid mode raises ValueError."""
     data = {
         "install": {
-            "template": "dev-workstation.toml",
+            "template": "kde-workstation.toml",
             "hostname": "testhost",
             "username": "testuser",
             "password": "testpass",
@@ -130,7 +130,7 @@ def test_host_config_from_file(templates_dir, tmp_path):
     config_file = tmp_path / "host.toml"
     config_file.write_text("""\
 [install]
-template = "dev-workstation.toml"
+template = "kde-workstation.toml"
 hostname = "archbox"
 username = "brian"
 password = "secret"

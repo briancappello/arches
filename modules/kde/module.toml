@@ -38,3 +38,8 @@ enable = [
 
 [dependencies]
 conflicts = ["cosmic"]
+
+[iso]
+display_manager = "sddm"
+session = "plasma"
+terminal = "konsole --noclose -e"

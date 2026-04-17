@@ -63,6 +63,20 @@ _MODULES_SEARCH: list[Path] = [
 
 
 @dataclass
+class IsoConfig:
+    """ISO live-session metadata for desktop modules.
+
+    Only desktop-category modules provide this.  It tells the ISO build
+    system how to configure the graphical live session (display manager
+    autologin, session name, terminal emulator command).
+    """
+
+    display_manager: str
+    session: str
+    terminal: str
+
+
+@dataclass
 class Module:
     """A single composable module loaded from ``module.toml``."""
 
@@ -75,6 +89,7 @@ class Module:
     has_ansible_role: bool = False
     requires: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
+    iso: IsoConfig | None = None
 
     @classmethod
     def from_dict(cls, slug: str, data: dict[str, Any], *, has_ansible: bool) -> Module:
@@ -83,12 +98,21 @@ class Module:
         install_raw = data.get("install", {})
         svc_raw = data.get("services", {})
         deps_raw = data.get("dependencies", {})
+        iso_raw = data.get("iso", {})
 
         category = meta.get("category", "base")
         if category not in VALID_CATEGORIES:
             raise ModuleError(
                 f"Module '{slug}' has invalid category '{category}'. "
                 f"Valid categories: {', '.join(CATEGORY_ORDER)}"
+            )
+
+        iso_config = None
+        if iso_raw:
+            iso_config = IsoConfig(
+                display_manager=iso_raw.get("display_manager", ""),
+                session=iso_raw.get("session", ""),
+                terminal=iso_raw.get("terminal", ""),
             )
 
         return cls(
@@ -105,6 +129,7 @@ class Module:
             has_ansible_role=has_ansible,
             requires=deps_raw.get("requires", []),
             conflicts=deps_raw.get("conflicts", []),
+            iso=iso_config,
         )
 
 

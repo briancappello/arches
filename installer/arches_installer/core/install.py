@@ -387,6 +387,87 @@ def generate_fstab(log: LogCallback | None = None) -> None:
     fstab_path.write_text("".join(filtered))
 
 
+def _bind_mount_var_path(
+    var_rel: str,
+    usr_rel: str,
+    label: str,
+    log: LogCallback | None = None,
+) -> bool:
+    """Move a ``/var`` path onto the root subvolume via bind mount.
+
+    Copies *var_rel* (relative to ``/var``) to *usr_rel* (relative to
+    ``/usr``), bind-mounts it back, and appends an fstab entry.
+
+    Returns ``True`` if the bind mount was set up, ``False`` if skipped.
+    """
+    src = MOUNT_ROOT / "var" / var_rel
+    dest = MOUNT_ROOT / "usr" / usr_rel
+    fstab_path = MOUNT_ROOT / "etc" / "fstab"
+
+    if not src.is_dir():
+        _log(f"  /var/{var_rel} does not exist yet — skipping {label}.", log)
+        return False
+
+    _log(f"  Binding /var/{var_rel} → /usr/{usr_rel} ({label})...", log)
+
+    # 1. Copy to the root subvolume
+    dest.mkdir(parents=True, exist_ok=True)
+    run(["cp", "-a", "--", f"{src}/.", str(dest)], log=log)
+
+    # 2. Bind-mount so chroot operations use the new location
+    run(["mount", "--bind", str(dest), str(src)], log=log)
+
+    # 3. Append fstab entry for persistence across reboots
+    fstab_entry = (
+        f"\n# Bind-mount {label} onto root subvolume for snapshot consistency\n"
+        f"/usr/{usr_rel}\t/var/{var_rel}\tnone\tbind\t0 0\n"
+    )
+    with fstab_path.open("a") as f:
+        f.write(fstab_entry)
+
+    return True
+
+
+def configure_var_bind_mounts(log: LogCallback | None = None) -> None:
+    """Bind-mount critical ``/var`` state directories onto the root subvolume.
+
+    When btrfs is used with separate ``@`` and ``@var`` subvolumes,
+    directories under ``/var`` are excluded from snapper snapshots of
+    ``@``.  A snapshot restore then rolls back the root filesystem but
+    leaves these databases out of sync — a dangerous split-brain.
+
+    This function moves the following onto ``/usr`` (part of ``@``) and
+    bind-mounts them back so tools find them at the expected paths:
+
+    * **pacman DB** (``/var/lib/pacman`` → ``/usr/lib/pacman``):
+      Without this, a rollback leaves pacman thinking newer packages are
+      installed while the actual files are from the snapshot.
+
+    * **DKMS state** (``/var/lib/dkms`` → ``/usr/lib/dkms``):
+      Without this, DKMS tracks module builds for kernel versions that
+      no longer match what is on disk, potentially leaving the system
+      without nvidia or other out-of-tree modules after rollback.
+
+    The function is a no-op if ``/var`` is not a separate mount (i.e.
+    there is no subvolume split to worry about).
+    """
+    var_mount = MOUNT_ROOT / "var"
+
+    if not var_mount.is_mount():
+        _log(
+            "/var is not a separate mount — skipping snapshot bind mounts.",
+            log,
+        )
+        return
+
+    _log("Configuring /var bind mounts for snapshot consistency...", log)
+
+    _bind_mount_var_path("lib/pacman", "lib/pacman", "pacman DB", log)
+    _bind_mount_var_path("lib/dkms", "lib/dkms", "DKMS state", log)
+
+    _log("Bind mounts configured.", log)
+
+
 def install_pacman_conf(log: LogCallback | None = None) -> None:
     """Copy the platform-specific pacman.conf and local repo into the target."""
     _log("Installing pacman.conf with platform repos...", log)
@@ -916,6 +997,7 @@ def install_system(
     _pre_pacstrap_setup(log)
     pacstrap(platform, template, log, hardware=hardware)
     generate_fstab(log)
+    configure_var_bind_mounts(log)
     install_pacman_conf(log)
     copy_mirrorlists(platform, log)
     sync_chroot_databases(log)

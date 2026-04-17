@@ -719,6 +719,127 @@ class TestGenerateFstab:
 
 
 # ---------------------------------------------------------------------------
+# Tests: configure_var_bind_mounts
+# ---------------------------------------------------------------------------
+
+
+class TestConfigureVarBindMounts:
+    """Tests for configure_var_bind_mounts and _bind_mount_var_path."""
+
+    def test_binds_pacman_and_dkms(self, mnt: Path):
+        from arches_installer.core.install import configure_var_bind_mounts
+
+        # Set up both /var/lib/pacman and /var/lib/dkms
+        (mnt / "var" / "lib" / "pacman" / "local").mkdir(parents=True)
+        (mnt / "var" / "lib" / "dkms").mkdir(parents=True)
+
+        fstab = mnt / "etc" / "fstab"
+        fstab.write_text("UUID=abc-123  /  btrfs  defaults  0 0\n")
+
+        with (
+            patch(f"{MODULE}.MOUNT_ROOT", mnt),
+            patch.object(Path, "is_mount", lambda self: self == mnt / "var"),
+            patch(f"{MODULE}.run") as mock_run,
+        ):
+            configure_var_bind_mounts()
+
+        calls = [c.args[0] for c in mock_run.call_args_list]
+
+        # Verify both cp + mount --bind were called for pacman
+        assert any(
+            "cp" in cmd and str(mnt / "usr" / "lib" / "pacman") in cmd for cmd in calls
+        ), f"Expected pacman cp call, got: {calls}"
+
+        # Verify both cp + mount --bind were called for dkms
+        assert any(
+            "cp" in cmd and str(mnt / "usr" / "lib" / "dkms") in cmd for cmd in calls
+        ), f"Expected dkms cp call, got: {calls}"
+
+        # Verify mount --bind called twice (once per path)
+        bind_calls = [c for c in calls if "mount" in c and "--bind" in c]
+        assert len(bind_calls) == 2
+
+        # Verify fstab has both entries
+        text = fstab.read_text()
+        assert "/usr/lib/pacman" in text
+        assert "/var/lib/pacman" in text
+        assert "/usr/lib/dkms" in text
+        assert "/var/lib/dkms" in text
+        # Original content preserved
+        assert "UUID=abc-123" in text
+
+    def test_skips_when_var_not_separate_mount(self, mnt: Path):
+        from arches_installer.core.install import configure_var_bind_mounts
+
+        (mnt / "var" / "lib" / "pacman").mkdir(parents=True)
+
+        fstab = mnt / "etc" / "fstab"
+        fstab.write_text("UUID=abc-123  /  btrfs  defaults  0 0\n")
+
+        with (
+            patch(f"{MODULE}.MOUNT_ROOT", mnt),
+            patch.object(Path, "is_mount", return_value=False),
+            patch(f"{MODULE}.run") as mock_run,
+        ):
+            configure_var_bind_mounts()
+
+        mock_run.assert_not_called()
+        assert "bind" not in fstab.read_text()
+
+    def test_skips_missing_dirs_individually(self, mnt: Path):
+        from arches_installer.core.install import configure_var_bind_mounts
+
+        # Only pacman exists, dkms does not
+        (mnt / "var" / "lib" / "pacman").mkdir(parents=True)
+
+        fstab = mnt / "etc" / "fstab"
+        fstab.write_text("")
+
+        with (
+            patch(f"{MODULE}.MOUNT_ROOT", mnt),
+            patch.object(Path, "is_mount", lambda self: self == mnt / "var"),
+            patch(f"{MODULE}.run") as mock_run,
+        ):
+            configure_var_bind_mounts()
+
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        # pacman should have been processed
+        assert any("cp" in cmd and "pacman" in str(cmd) for cmd in calls), (
+            f"Expected pacman cp call, got: {calls}"
+        )
+        # dkms should NOT have been processed
+        assert not any("cp" in cmd and "dkms" in str(cmd) for cmd in calls), (
+            f"Did not expect dkms cp call, got: {calls}"
+        )
+
+        text = fstab.read_text()
+        assert "/usr/lib/pacman" in text
+        assert "dkms" not in text
+
+    def test_creates_dest_directories(self, mnt: Path):
+        from arches_installer.core.install import configure_var_bind_mounts
+
+        (mnt / "var" / "lib" / "pacman").mkdir(parents=True)
+        (mnt / "var" / "lib" / "dkms").mkdir(parents=True)
+
+        fstab = mnt / "etc" / "fstab"
+        fstab.write_text("")
+
+        assert not (mnt / "usr" / "lib" / "pacman").exists()
+        assert not (mnt / "usr" / "lib" / "dkms").exists()
+
+        with (
+            patch(f"{MODULE}.MOUNT_ROOT", mnt),
+            patch.object(Path, "is_mount", lambda self: self == mnt / "var"),
+            patch(f"{MODULE}.run"),
+        ):
+            configure_var_bind_mounts()
+
+        assert (mnt / "usr" / "lib" / "pacman").is_dir()
+        assert (mnt / "usr" / "lib" / "dkms").is_dir()
+
+
+# ---------------------------------------------------------------------------
 # Tests: install_pacman_conf
 # ---------------------------------------------------------------------------
 
@@ -1402,6 +1523,10 @@ class TestInstallSystem:
             patch(f"{MODULE}.pacstrap", side_effect=_track("pacstrap")),
             patch(f"{MODULE}.generate_fstab", side_effect=_track("generate_fstab")),
             patch(
+                f"{MODULE}.configure_var_bind_mounts",
+                side_effect=_track("configure_var_bind_mounts"),
+            ),
+            patch(
                 f"{MODULE}.install_pacman_conf",
                 side_effect=_track("install_pacman_conf"),
             ),
@@ -1457,6 +1582,7 @@ class TestInstallSystem:
             "_pre_pacstrap_setup",
             "pacstrap",
             "generate_fstab",
+            "configure_var_bind_mounts",
             "install_pacman_conf",
             "sync_chroot_databases",
             "install_override_packages",
@@ -1488,6 +1614,7 @@ class TestInstallSystem:
             patch(f"{MODULE}._pre_pacstrap_setup"),
             patch(f"{MODULE}.pacstrap") as mock_pacstrap,
             patch(f"{MODULE}.generate_fstab"),
+            patch(f"{MODULE}.configure_var_bind_mounts"),
             patch(f"{MODULE}.install_pacman_conf"),
             patch(f"{MODULE}.sync_chroot_databases"),
             patch(f"{MODULE}.install_override_packages") as mock_override,

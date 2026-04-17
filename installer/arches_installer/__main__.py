@@ -13,6 +13,15 @@ from arches_installer.core.template import InstallTemplate
 AUTO_INSTALL_PATH = Path("/root/auto-install.toml")
 
 
+def _kernel_cmdline_has(param: str) -> bool:
+    """Check if a parameter is present in the kernel command line."""
+    try:
+        cmdline = Path("/proc/cmdline").read_text()
+        return param in cmdline.split()
+    except OSError:
+        return False
+
+
 def _print_dry_run_summary(
     *,
     title: str,
@@ -84,9 +93,15 @@ def main() -> int:
         return _run_auto(args.auto, platform_path=args.platform, dry_run=args.dry_run)
 
     # Auto-detect config baked into the ISO at /root/auto-install.toml.
-    # Runs inside the TUI progress screen (same code path as interactive).
-    # On failure, falls through to the interactive TUI.
-    if AUTO_INSTALL_PATH.exists() and not args.dry_run:
+    # Only auto-installs when the kernel cmdline includes arches.autoinstall=1
+    # (set by the "Auto Install" and "Graphical Auto Install" boot entries).
+    # The "Graphical Live" and "Framebuffer Installer" entries omit this flag
+    # so the user gets the interactive TUI instead.
+    if (
+        AUTO_INSTALL_PATH.exists()
+        and not args.dry_run
+        and _kernel_cmdline_has("arches.autoinstall=1")
+    ):
         rc = _run_auto(
             AUTO_INSTALL_PATH,
             platform_path=args.platform,

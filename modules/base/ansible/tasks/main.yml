@@ -12,14 +12,27 @@
     state: present
   ignore_errors: true
 
+- name: Deploy reflector config
+  copy:
+    src: reflector.conf
+    dest: /etc/xdg/reflector/reflector.conf
+    mode: '0644'
+
 - name: Generate fresh Arch mirrorlist with reflector
   command: >
     reflector
     --protocol https
+    --country US
     --sort rate
     --latest 10
     --save /etc/pacman.d/mirrorlist
   ignore_errors: true
+
+- name: Enable reflector weekly timer
+  systemd:
+    name: reflector.timer
+    enabled: yes
+    state: started
 
 - name: Refresh CachyOS mirrorlist (if rate-mirrors is available)
   command: rate-mirrors --save /etc/pacman.d/cachyos-mirrorlist cachyos

@@ -42,7 +42,8 @@ sudo dnf install qemu-system-aarch64 edk2-aarch64
 
 All templates live in `templates/`. System templates define the installable workloads:
 
-- `dev-workstation.toml` — KDE Plasma desktop with full development toolchain
+- `kde-workstation.toml` — KDE Plasma desktop with development toolchains
+- `cosmic-workstation.toml`  — Cosmic desktop with development toolchains
 - `vm-server.toml` — Headless server (Nginx, PostgresSQL, Redis, RabbitMQ)
 
 Config templates are used for install automation:
@@ -99,6 +100,45 @@ sudo make host-install CONFIG=templates/host-install.toml
 This installs Arches into btrfs subvolumes alongside the existing Asahi Linux (e.g. Fedora) without touching the partition table. Runs inside a Podman container on the host. See `templates/host-install.toml` for configuration.
 
 The built ISO is written to `out/arches-<date>.iso`. The platform config is baked into the ISO at `/opt/arches/platform/platform.toml` so the installer knows which kernel, repos, and bootloader settings to use.
+
+### Persistent Builder (recommended for development)
+
+For iterative development, a persistent privileged Podman container avoids needing `sudo` for every ISO build. You start it once, then build as many times as you want without password prompts.
+
+**One-time host setup — passwordless sudo for podman:**
+
+```bash
+# Allow passwordless podman commands for your user.
+# The file MUST sort after any other sudoers rules (e.g., 'wheel'),
+# hence the 'zz-' prefix — sudoers uses last-match-wins.
+echo "$(whoami) ALL=(root) NOPASSWD: /usr/bin/podman" \
+  | sudo tee /etc/sudoers.d/zz-arches-builder
+sudo chmod 440 /etc/sudoers.d/zz-arches-builder
+```
+
+**Start the builder** (one-time per session, prompts for sudo on first run):
+
+```bash
+./scripts/builder.sh start
+```
+
+**Build ISOs** (no sudo needed):
+
+```bash
+./scripts/builder.sh build       # Graphical live ISO
+./scripts/builder.sh build-fb    # Framebuffer-only ISO (no desktop)
+```
+
+**Other commands:**
+
+```bash
+./scripts/builder.sh status      # Check if builder is running
+./scripts/builder.sh log         # Show last build log
+./scripts/builder.sh exec <cmd>  # Run arbitrary command in the builder
+./scripts/builder.sh stop        # Stop the builder
+```
+
+Build output (ISOs) appears in `out/` as usual. Full build logs are saved to `builder.log` at the project root.
 
 ### Development
 

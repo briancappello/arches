@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Input, Label
 
+from arches_installer.tui import ArrowNavScreen
 
-class UserSetupScreen(Screen):
+
+class UserSetupScreen(ArrowNavScreen):
     """Screen for configuring hostname, username, and password."""
 
     def compose(self) -> ComposeResult:

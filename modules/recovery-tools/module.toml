@@ -1,0 +1,30 @@
+[meta]
+name = "Recovery Tools"
+description = "Filesystem rescue, data recovery, and diagnostic utilities"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    # Storage diagnostics
+    "testdisk",
+    "ddrescue",
+    "nvme-cli",
+    "smartmontools",
+    "hdparm",
+    # Hardware info
+    "dmidecode",
+    "lshw",
+    "pciutils",
+    "usbutils",
+    # Stress testing
+    "memtester",
+    "stress",
+    "iotop",
+    # Network diagnostics
+    "nmap",
+    "tcpdump",
+    "wireguard-tools",
+    "nfs-utils",
+    # File management
+    "mc",
+]

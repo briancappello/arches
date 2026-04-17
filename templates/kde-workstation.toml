@@ -1,0 +1,33 @@
+[meta]
+name = "KDE Workstation"
+description = "KDE Plasma desktop with full development toolchain"
+
+[system]
+timezone = "America/Denver"
+locale = "en_US.UTF-8"
+
+[modules]
+include = [
+    # Base
+    "base",
+    "zsh",
+    "dev-tools",
+    "fonts",
+    "pipewire",
+    "snapshots",
+    "containers",
+    # Networking
+    "networking",
+    # Desktop
+    "kde",
+    # Dev toolchains
+    "rust",
+    "go",
+    "python",
+    "nodejs",
+    # Services
+    "postgresql",
+    "redis",
+    "rabbitmq",
+    "nginx",
+]

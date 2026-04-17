@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Label, Static
 
 from arches_installer.core.network import check_connectivity
+from arches_installer.tui import ArrowNavScreen
 
 
-class WelcomeScreen(Screen):
+class WelcomeScreen(ArrowNavScreen):
     """Welcome screen with network status and navigation."""
 
     def compose(self) -> ComposeResult:

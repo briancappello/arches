@@ -93,7 +93,7 @@ class TestRunHost:
         config.write_text(
             """\
 [install]
-template = "dev-workstation.toml"
+template = "kde-workstation.toml"
 hostname = "hostbox"
 username = "hostuser"
 password = "hostpass"

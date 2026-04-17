@@ -4,7 +4,7 @@
 # btrfs root filling the rest with @, @home, @var subvolumes.
 
 [meta]
-name = "Basic"
+name = "Basic (entire single disk)"
 description = "2 GiB ESP, btrfs root filling the rest. Standard single-disk install."
 bootloaders = ["limine", "grub"]
 

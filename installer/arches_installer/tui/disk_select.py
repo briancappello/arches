@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
-from textual.screen import Screen
 from textual.widgets import Button, Label, OptionList, Static
 from textual.widgets.option_list import Option
 
 from arches_installer.core.disk import BlockDevice, detect_block_devices
+from arches_installer.tui import ArrowNavScreen
 
 
-class DiskSelectScreen(Screen):
+class DiskSelectScreen(ArrowNavScreen):
     """Screen for selecting a target block device or configuring RAID."""
 
     def compose(self) -> ComposeResult:
