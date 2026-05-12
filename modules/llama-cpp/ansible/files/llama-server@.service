@@ -1,0 +1,60 @@
+[Unit]
+Description=llama.cpp inference server (%i)
+Documentation=https://github.com/ggml-org/llama.cpp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=llama
+Group=llama
+
+# Global defaults loaded first, then per-model overrides. The trailing
+# `-` makes the global file optional; the per-model file is required
+# (instance won't start without it).
+EnvironmentFile=-/etc/llama-cpp/config
+EnvironmentFile=/etc/llama-cpp/models.d/%i.conf
+
+WorkingDirectory=/var/lib/llama-cpp
+
+# llama-server reads --model, --host, --port, --n-gpu-layers, --ctx-size
+# from CLI flags. We pass them explicitly + splat $LLAMA_OPTS for
+# everything else.
+ExecStart=/usr/bin/llama-server \
+    --model ${LLAMA_MODEL} \
+    --host ${LLAMA_HOST} \
+    --port ${LLAMA_PORT} \
+    --n-gpu-layers ${LLAMA_NGL} \
+    --ctx-size ${LLAMA_CTX} \
+    $LLAMA_OPTS
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# GPU access — required for both Vulkan (/dev/dri/render*) and ROCm
+# (/dev/kfd). The `render` group owns /dev/kfd; `video` owns /dev/dri/*.
+SupplementaryGroups=video render
+
+# Allow large memory-mapped models. With huge MoE files (>100 GB) we
+# need to lift the default mlock/locked-memory limits.
+LimitMEMLOCK=infinity
+LimitNOFILE=1048576
+
+# Security hardening — strict but allows model file reads from /var/lib
+# and /opt, plus /etc/llama-cpp for config.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/llama-cpp
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,66 @@
+---
+# hardware-rescan — runtime hardware reconciliation
+#
+# Installs the arches-hardware-rescan CLI wrapper, the supporting
+# systemd unit, and (optionally) a path unit for PCI hotplug events.
+# The actual Python implementation lives at
+# /opt/arches/installer/arches_installer/core/hardware_rescan.py
+# (staged by the Makefile alongside the installer itself).
+#
+# This module is install-once-and-forget: enabling the service makes
+# every boot run the rescan, which is a ~50 ms no-op when nothing has
+# changed.
+
+# ── 1. State directory ───────────────────────────────
+
+- name: Create /var/lib/arches state directory
+  file:
+    path: /var/lib/arches
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── 2. CLI wrapper ───────────────────────────────────
+
+- name: Deploy arches-hardware-rescan CLI wrapper
+  copy:
+    src: arches-hardware-rescan
+    dest: /usr/local/bin/arches-hardware-rescan
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── 3. systemd unit (runs on every boot) ─────────────
+
+- name: Deploy arches-hardware-rescan.service unit
+  copy:
+    src: arches-hardware-rescan.service
+    dest: /etc/systemd/system/arches-hardware-rescan.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes
+
+- name: Enable arches-hardware-rescan.service for all subsequent boots
+  systemd:
+    name: arches-hardware-rescan.service
+    enabled: yes
+
+# Run the rescan once at firstboot so the installed system's fingerprint
+# and managed-file manifest reflect the current hardware. The installer
+# records an initial fingerprint at install time (install.py), but
+# running it here ensures the on-disk state is up-to-date even if
+# hardware changed between install completion and the first real boot
+# (e.g. user installed in a dev rack, then physically moved the box).
+#
+# Skip chwd here — chwd already ran during install. Re-running it
+# inside firstboot would attempt to install/remove packages while the
+# package manager may still be cleaning up post-install state.
+- name: Run arches-hardware-rescan once now (baseline)
+  command: /usr/local/bin/arches-hardware-rescan --force --skip-chwd
+  changed_when: false  # idempotent; --force just refreshes manifest
+  failed_when: false   # never block firstboot on rescan issues

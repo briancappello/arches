@@ -1,0 +1,17 @@
+[meta]
+name = "Ollama ROCm"
+description = "ROCm/HIP-accelerated Ollama backend (AMD GPUs)"
+category = "service"
+
+# Adds the ROCm-linked ollama binary alongside the base `ollama`
+# package. Ollama auto-selects this variant at runtime when an AMD
+# GPU + ROCm runtime is detected. Selected automatically by templates
+# that include "amd-rocm" in their [gpu].stacks list.
+
+[install.pacstrap]
+packages = [
+    "ollama-rocm",
+]
+
+[dependencies]
+requires = ["ollama", "rocm"]

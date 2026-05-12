@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from textual.app import App
 from textual.binding import Binding
 from textual.screen import Screen
@@ -73,6 +75,10 @@ class ArchesApp(App):
     partition_mode: str = ""  # "auto" or "manual"
     partition_map: PartitionMap | None = None  # set by manual flow or progress
     hardware_config: HardwareConfig | None = None  # set by hardware confirm screen
+    # Set by __main__._run_auto for multi-disk role-based installs.
+    # When None, the progress screen falls back to the legacy
+    # single-device + raid_config flow.
+    resolved_disk_roles: Any = None  # ResolvedDiskRoles — opaque to avoid import cycle
     hostname: str = ""
     username: str = ""
     password: str = ""
@@ -83,6 +89,16 @@ class ArchesApp(App):
     auto_shutdown: bool = False
     auto_reboot: bool = False
     install_success: bool = False
+    # What to do when an auto-install FAILS. On a headless rack box no
+    # one is at the keyboard to press a button, so leaving the system
+    # at an idle TUI screen is unhelpful. Options:
+    #   "poweroff" — power off (default; safe, preserves install media)
+    #   "reboot"   — reboot (may loop into the installer again)
+    #   "wait"     — leave the TUI up with reboot/shutdown buttons
+    auto_install_failed_action: str = "poweroff"
+
+    # Extra Ansible vars from auto-install config [ansible_vars].
+    ansible_vars: dict[str, str] | None = None
 
     # Debug/demo: push this screen name on mount (e.g., "confirm", "user_setup")
     push_screen_on_mount: str = ""

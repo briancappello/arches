@@ -10,7 +10,7 @@
 #   ARCHES_BUILD_CACHE_LIB — path to the build cache helper library
 #
 # This script builds:
-#   1. Custom cmake plasmoids (task manager, AI usage monitor)
+#   1. Custom cmake plasmoids (task manager)
 #   2. Patched distro packages (kwin with gesture patches)
 #
 set -euo pipefail
@@ -34,19 +34,16 @@ fi
 # Each entry: local_dir:package_name
 CUSTOM_CMAKE_PACKAGES=(
     "$PROJECT_ROOT/../kde-task-manager:arches-taskmanager-patched"
-    "$PROJECT_ROOT/../plasma-ai-usage-monitor:plasma-ai-usage-monitor"
 )
 
 # Per-package extra makedepends (space-separated).
 declare -A CUSTOM_EXTRA_MAKEDEPS=(
     ["arches-taskmanager-patched"]="git kconfig ki18n kio knotifications kservice kwindowsystem plasma-activities plasma-activities-stats libplasma libksysguard kitemmodels plasma-workspace"
-    ["plasma-ai-usage-monitor"]="kwallet ki18n knotifications qt6-base"
 )
 
 # Per-package extra runtime depends (space-separated).
 declare -A CUSTOM_EXTRA_DEPS=(
     ["arches-taskmanager-patched"]=""
-    ["plasma-ai-usage-monitor"]="kwallet"
 )
 
 # ── Patched distro packages ──────────────────────────
@@ -65,6 +62,12 @@ build_cmake_package() {
     local pkg_name="$2"
 
     if [[ ! -d "$src_dir" ]]; then
+        # Check cache before failing — the source directory may only be
+        # available on the developer's machine, not in CI or other builders.
+        if [[ "$FORCE" == false ]] && compgen -G "$REPO_DIR/${pkg_name}-*.pkg.tar.*" &>/dev/null; then
+            echo "── Custom: $pkg_name (source missing, using cached package) ──"
+            return 0
+        fi
         echo "ERROR: Source directory not found: $src_dir" >&2
         return 1
     fi
@@ -191,6 +194,12 @@ build_patched_distro_package() {
     local upstream_tag="$4"
 
     if [[ ! -d "$patch_dir" ]]; then
+        # Check cache before failing — the patch directory may only be
+        # needed on the developer's machine, not in CI or other builders.
+        if [[ "$FORCE" == false ]] && compgen -G "$REPO_DIR/${pkg_name}-*.pkg.tar.*" &>/dev/null; then
+            echo "── Patched: $pkg_name (source missing, using cached package) ──"
+            return 0
+        fi
         echo "ERROR: Patch directory not found: $patch_dir" >&2
         return 1
     fi

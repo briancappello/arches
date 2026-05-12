@@ -1,0 +1,86 @@
+# GPU compute stack definitions for Arches.
+#
+# Each top-level table is a STACK NAME that a template (or the
+# ARCHES_GPU build-time env var) can reference. A stack is the
+# combination of:
+#   - a hardware vendor (AMD / Intel / NVIDIA)
+#   - a compute API (Vulkan / ROCm / CUDA / oneAPI)
+#
+# When a template declares
+#     [gpu]
+#     stacks = ["amd-vulkan", "amd-rocm"]
+# the build pipeline merges every module listed under those stacks
+# into the template's [modules].include list before resolving and
+# pacstrapping. Each module is only included once even if multiple
+# stacks reference it.
+#
+# Arbitration rules baked into this file (see iso-config.py for the
+# resolution logic):
+#
+#   1. Mutually exclusive llama.cpp variants: a single install can
+#      have only one llama.cpp package (they all provides=llama.cpp).
+#      When multiple stacks would pull different variants, "Vulkan
+#      wins" — see the `llama_cpp_variant` field on each stack.
+#
+#   2. Stack order in `stacks = [...]` is preserved as priority for
+#      conflicting requirements (later stacks override earlier when
+#      they specify conflicting variants of the same package).
+#
+# To add a new stack, append a [<stack-name>] block below.
+
+# ── AMD GPUs ───────────────────────────────────────────
+
+[amd-vulkan]
+description = "AMD GPU with Vulkan compute (works on all RDNA generations)"
+modules = [
+    "llama-cpp",       # Vulkan-backend variant
+]
+# Packages outside any module — pulled into pacstrap directly.
+# Use sparingly; prefer to put things in modules so they participate
+# in normal validation and snapshot conventions.
+packages = [
+    "mesa",
+    "vulkan-radeon",
+    "vulkan-icd-loader",
+]
+llama_cpp_variant = "vulkan"
+
+[amd-rocm]
+description = "AMD GPU with ROCm/HIP compute (gfx1201/RDNA4 supported as of ROCm 6.4+)"
+modules = [
+    "rocm",            # rocm-hip-runtime, rocm-opencl-runtime, rocm-smi-lib
+    "ollama-rocm",     # ROCm-backed ollama variant
+    "llama-cpp-hip",   # HIP-backend llama.cpp
+]
+packages = [
+    "mesa",
+    "vulkan-radeon",   # Vulkan ICD still useful for display + as fallback
+]
+llama_cpp_variant = "hip"
+
+# ── Intel GPUs ─────────────────────────────────────────
+
+[intel-vulkan]
+description = "Intel Arc / iGPU with Vulkan compute"
+modules = [
+    "llama-cpp",       # Vulkan backend works on Intel Arc just like AMD
+]
+packages = [
+    "mesa",
+    "vulkan-intel",
+    "vulkan-icd-loader",
+    "intel-media-driver",
+]
+llama_cpp_variant = "vulkan"
+
+# ── NVIDIA GPUs ────────────────────────────────────────
+
+[nvidia-cuda]
+description = "NVIDIA GPU with CUDA compute"
+modules = [
+    "cuda",            # cuda toolkit + nvidia-utils userspace
+    "ollama-cuda",     # CUDA-backed ollama variant
+    "llama-cpp-cuda",  # CUDA-backed llama.cpp (built by modules/llama-cpp/build.sh)
+]
+packages = []
+llama_cpp_variant = "cuda"

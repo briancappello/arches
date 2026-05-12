@@ -9,12 +9,20 @@ At install time the resolved hardware config is deployed as modprobe
 configs, udev rules, and sysctl tunables into the target filesystem.
 Machine-specific packages, services, and Ansible roles are merged into
 the install pipeline alongside the template's own lists.
+
+The same deployment code is reused at runtime by
+``arches-hardware-rescan``, which re-evaluates the hardware after a
+GPU/peripheral swap and reconciles the deployed files (removing
+orphans, adding newcomers). To make that safe, every file we write
+carries a management header so we can distinguish files we own from
+files a user or another package wrote.
 """
 
 from __future__ import annotations
 
 import fnmatch
-import shutil
+import hashlib
+import json
 import subprocess
 import tomllib
 from dataclasses import dataclass, field
@@ -29,6 +37,18 @@ _HARDWARE_SEARCH = [
     Path("/opt/arches/hardware"),
     Path(__file__).resolve().parents[3] / "hardware",
 ]
+
+# State directory on the installed system. Holds the hardware
+# fingerprint and the manifest of files we currently manage.
+STATE_DIR_REL = Path("var/lib/arches")
+FINGERPRINT_FILE = "hardware-fingerprint"
+MANIFEST_FILE = "hardware-manifest.json"
+
+# Sentinel comment placed at the top of every file we write so the
+# rescan tool can safely identify and remove orphans. Format chosen to
+# be valid as a comment in modprobe.d (#), udev rules (#), and
+# sysctl.d (#) — all three accept '#' line comments.
+MANAGED_HEADER_PREFIX = "# arches-hardware-rescan: managed quirk="
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +126,11 @@ class MachineProfile:
     sysctl: dict[str, str] = field(default_factory=dict)
     ansible_firstboot_roles: list[str] = field(default_factory=list)
     ansible_vars: dict[str, Any] = field(default_factory=dict)
+    # Per-host disk-role overrides. Same shape as DiskRole in
+    # disk_layout.py — kept as untyped dicts here to avoid a circular
+    # import; the resolver converts them at use time. Stored as the
+    # raw [[disks]] table list from TOML.
+    disks: list[dict[str, Any]] = field(default_factory=list)
     # Path to companion files (if exists)
     files_dir: Path | None = None
 
@@ -203,6 +228,23 @@ class HardwareConfig:
         if self.machine:
             return list(self.machine.ansible_firstboot_roles)
         return []
+
+    def disk_role_overrides(self) -> list[Any]:
+        """Return the machine profile's disk-role overrides as DiskRole objects.
+
+        Defers the import to avoid a circular dependency between
+        ``hardware.py`` and ``disk_layout.py`` at module-load time.
+        """
+        if not self.machine or not self.machine.disks:
+            return []
+        from arches_installer.core.disk_layout import DiskRole
+
+        out: list[Any] = []
+        for d in self.machine.disks:
+            if "name" not in d:
+                continue  # malformed; skip silently (loader warned)
+            out.append(DiskRole(name=str(d["name"]), descriptor=d.get("device", "")))
+        return out
 
     @property
     def all_modprobe(self) -> dict[str, str]:
@@ -312,6 +354,9 @@ def load_machine(path: Path) -> MachineProfile:
         sysctl=data.get("sysctl", {}),
         ansible_firstboot_roles=ans.get("firstboot_roles", []),
         ansible_vars=ans.get("vars", {}),
+        # Disk-role overrides — stored as raw dicts so loading this
+        # module doesn't pull in the disk_layout dependency cycle.
+        disks=data.get("disks", []),
         files_dir=files_dir,
     )
 
@@ -503,60 +548,332 @@ def _resolve_file_content(
     return value
 
 
+def _tag_content(quirk_slug: str, content: str) -> str:
+    """Prepend the management header so we can identify our files later.
+
+    Idempotent: if the content already starts with the header (e.g. we
+    are rewriting a file we previously wrote), it is replaced rather
+    than stacked.
+    """
+    header = f"{MANAGED_HEADER_PREFIX}{quirk_slug}\n"
+    body = content
+    if body.startswith(MANAGED_HEADER_PREFIX):
+        # Strip the existing header (everything up to and including the
+        # first newline) before adding the new one.
+        _, _, body = body.partition("\n")
+    return header + body.lstrip("\n").rstrip("\n") + "\n"
+
+
+def is_managed_file(path: Path) -> str | None:
+    """Return the quirk slug owning this file, or None if not managed.
+
+    Reads only the first 256 bytes — enough to find the header without
+    slurping large files.
+    """
+    try:
+        with open(path, "rb") as f:
+            first = f.read(256).decode("utf-8", errors="replace")
+    except (FileNotFoundError, PermissionError, OSError):
+        return None
+    if not first.startswith(MANAGED_HEADER_PREFIX):
+        return None
+    line = first.split("\n", 1)[0]
+    return line[len(MANAGED_HEADER_PREFIX) :].strip() or None
+
+
+def _resolved_files(hw: HardwareConfig) -> dict[str, dict[str, tuple[str, str]]]:
+    """Build the {category: {filename: (quirk_slug, content)}} map.
+
+    Each leaf is a (owning quirk slug, raw content without management
+    header) tuple. Categories are 'modprobe', 'udev', 'sysctl' with
+    target directories ``/etc/modprobe.d``, ``/etc/udev/rules.d``, and
+    ``/etc/sysctl.d``.
+    """
+    out: dict[str, dict[str, tuple[str, str]]] = {
+        "modprobe": {},
+        "udev": {},
+        "sysctl": {},
+    }
+
+    sources: list[Quirk | MachineProfile] = list(hw.quirks)
+    if hw.machine:
+        sources.append(hw.machine)
+
+    for source in sources:
+        slug = getattr(source, "slug", "machine")
+        for category in ("modprobe", "udev", "sysctl"):
+            mapping = getattr(source, category, {}) or {}
+            for filename, value in mapping.items():
+                content = _resolve_file_content(filename, value, source.files_dir)
+                # Later sources override earlier ones for the same filename
+                # (machine wins over quirk, matching the merge order in
+                # HardwareConfig.all_modprobe et al).
+                out[category][filename] = (slug, content.rstrip("\n") + "\n")
+
+    return out
+
+
+# Relative paths (under target_root) for each category. Kept here so
+# the rescan tool and the installer agree on layout.
+_CATEGORY_DIRS: dict[str, Path] = {
+    "modprobe": Path("etc/modprobe.d"),
+    "udev": Path("etc/udev/rules.d"),
+    "sysctl": Path("etc/sysctl.d"),
+}
+
+
 def deploy_hardware_files(
     hw: HardwareConfig,
     log: LogCallback | None = None,
-) -> None:
-    """Write hardware config files into the target filesystem.
+    *,
+    target_root: Path | None = None,
+) -> dict[str, list[str]]:
+    """Write hardware config files into a target filesystem.
 
-    Deploys modprobe configs, udev rules, and sysctl tunables from
-    all resolved quirks and the machine profile.
+    Deploys modprobe configs, udev rules, and sysctl tunables from all
+    resolved quirks and the machine profile. Every file gets the
+    arches-hardware-rescan management header so the runtime rescan
+    tool can identify and reconcile them later.
+
+    Parameters
+    ----------
+    hw:
+        Resolved hardware config (quirks + optional machine profile).
+    log:
+        Optional log callback.
+    target_root:
+        Filesystem root to write into. Defaults to ``MOUNT_ROOT``
+        (install-time chroot target). Pass ``Path("/")`` for runtime
+        rescan on the live system.
+
+    Returns
+    -------
+    Manifest dict ``{category: [filename, ...]}`` listing every file
+    we wrote, so callers can persist it for later reconciliation.
     """
+    root = target_root if target_root is not None else MOUNT_ROOT
+    manifest: dict[str, list[str]] = {"modprobe": [], "udev": [], "sysctl": []}
+
     if not hw.quirks and not hw.machine:
         _log("No hardware config to deploy.", log)
-        return
+        return manifest
 
-    _log("Deploying hardware configuration files...", log)
+    _log(f"Deploying hardware configuration files to {root}...", log)
 
-    # modprobe configs -> /etc/modprobe.d/
-    modprobe_dir = MOUNT_ROOT / "etc" / "modprobe.d"
-    modprobe_dir.mkdir(parents=True, exist_ok=True)
-    for filename, value in hw.all_modprobe.items():
-        # Resolve content from quirk/machine files_dir
-        content = value
-        for source in hw.quirks + ([hw.machine] if hw.machine else []):
-            if filename in getattr(source, "modprobe", {}):
-                content = _resolve_file_content(filename, value, source.files_dir)
-                break
-        target = modprobe_dir / filename
-        target.write_text(content.rstrip("\n") + "\n")
-        _log(f"  modprobe: {filename}", log)
+    resolved = _resolved_files(hw)
 
-    # udev rules -> /etc/udev/rules.d/
-    udev_dir = MOUNT_ROOT / "etc" / "udev" / "rules.d"
-    udev_dir.mkdir(parents=True, exist_ok=True)
-    for filename, value in hw.all_udev.items():
-        content = value
-        for source in hw.quirks + ([hw.machine] if hw.machine else []):
-            if filename in getattr(source, "udev", {}):
-                content = _resolve_file_content(filename, value, source.files_dir)
-                break
-        target = udev_dir / filename
-        target.write_text(content.rstrip("\n") + "\n")
-        _log(f"  udev:    {filename}", log)
-
-    # sysctl configs -> /etc/sysctl.d/
-    if hw.all_sysctl:
-        sysctl_dir = MOUNT_ROOT / "etc" / "sysctl.d"
-        sysctl_dir.mkdir(parents=True, exist_ok=True)
-        for filename, value in hw.all_sysctl.items():
-            content = value
-            for source in hw.quirks + ([hw.machine] if hw.machine else []):
-                if filename in getattr(source, "sysctl", {}):
-                    content = _resolve_file_content(filename, value, source.files_dir)
-                    break
-            target = sysctl_dir / filename
-            target.write_text(content.rstrip("\n") + "\n")
-            _log(f"  sysctl:  {filename}", log)
+    for category, entries in resolved.items():
+        if not entries:
+            continue
+        target_dir = root / _CATEGORY_DIRS[category]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for filename, (slug, content) in entries.items():
+            target = target_dir / filename
+            target.write_text(_tag_content(slug, content))
+            manifest[category].append(filename)
+            _log(f"  {category}: {filename}  (quirk: {slug})", log)
 
     _log("Hardware configuration deployed.", log)
+    return manifest
+
+
+def reconcile_hardware_files(
+    hw: HardwareConfig,
+    log: LogCallback | None = None,
+    *,
+    target_root: Path,
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Reconcile deployed files on a live system against ``hw``.
+
+    For each managed file currently on disk (identified by the
+    ``arches-hardware-rescan: managed`` header), one of three
+    transitions happens:
+
+    1. Still applies, content unchanged — leave alone.
+    2. Still applies, content changed (quirk file updated upstream) —
+       rewrite.
+    3. No longer applies (orphan) — delete.
+
+    Newly-applicable quirks that have no on-disk file are written.
+
+    This function is safe to run on the live system. It does NOT
+    touch files lacking the management header — those are assumed to
+    belong to the user or another package.
+
+    Returns
+    -------
+    Two manifests: ``(added_or_updated, removed)``, each
+    ``{category: [filename, ...]}``.
+    """
+    desired = _resolved_files(hw)
+
+    added: dict[str, list[str]] = {"modprobe": [], "udev": [], "sysctl": []}
+    removed: dict[str, list[str]] = {"modprobe": [], "udev": [], "sysctl": []}
+
+    for category in ("modprobe", "udev", "sysctl"):
+        cat_dir = target_root / _CATEGORY_DIRS[category]
+        desired_entries = desired[category]
+
+        # --- 1. Remove orphans: managed files not in desired set ---
+        if cat_dir.is_dir():
+            for existing in sorted(cat_dir.iterdir()):
+                if not existing.is_file():
+                    continue
+                owner = is_managed_file(existing)
+                if owner is None:
+                    continue  # not ours
+                if existing.name not in desired_entries:
+                    existing.unlink()
+                    removed[category].append(existing.name)
+                    _log(
+                        f"  {category}: removed {existing.name} "
+                        f"(was: {owner}, no longer applies)",
+                        log,
+                    )
+
+        # --- 2. Write desired entries (skip if already up-to-date) ---
+        if desired_entries:
+            cat_dir.mkdir(parents=True, exist_ok=True)
+        for filename, (slug, content) in desired_entries.items():
+            target = cat_dir / filename
+            new_content = _tag_content(slug, content)
+            existing_owner = is_managed_file(target)
+            try:
+                current = target.read_text() if existing_owner is not None else None
+            except OSError:
+                current = None
+            if existing_owner is not None and current == new_content:
+                continue  # already correct
+            if existing_owner is None and target.exists():
+                # File exists but isn't ours — refuse to overwrite.
+                _log(
+                    f"  {category}: SKIP {filename} — exists and is not "
+                    f"managed by arches-hardware-rescan (would clobber "
+                    f"user/package file)",
+                    log,
+                )
+                continue
+            target.write_text(new_content)
+            added[category].append(filename)
+            verb = "updated" if existing_owner else "added"
+            _log(f"  {category}: {verb} {filename}  (quirk: {slug})", log)
+
+    return added, removed
+
+
+# ---------------------------------------------------------------------------
+# Hardware fingerprint — used by the runtime rescan to skip work on
+# boots where nothing has changed.
+# ---------------------------------------------------------------------------
+
+
+def compute_fingerprint(
+    pci_ids: set[str],
+    dmi: DMIInfo,
+    chwd_profile: str = "",
+) -> str:
+    """Stable, order-independent hash of the salient hardware identity.
+
+    Includes:
+      - sorted PCI vendor:device pairs
+      - DMI sys_vendor, product_name, chassis_type
+      - the currently-applied chwd profile name (so a manual driver
+        switch via ``chwd -i`` triggers a reconcile next boot too).
+    """
+    payload = {
+        "pci": sorted(pci_ids),
+        "dmi": {
+            "sys_vendor": dmi.sys_vendor,
+            "product_name": dmi.product_name,
+            "chassis_type": dmi.chassis_type,
+        },
+        "chwd_profile": chwd_profile,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def detect_chwd_profile() -> str:
+    """Return the name of the currently-installed chwd profile, or "".
+
+    ``chwd --list-installed`` prints one profile per line on success.
+    The output format varies by chwd version: some print bare slugs
+    one per line, others tabulate them with headers, and on a system
+    with no profile installed it prints ``Warning: No installed
+    profiles!``.
+
+    Returns the first plausible profile name, or empty string if chwd
+    is not available, errors out, or has no installed profile.
+    """
+    try:
+        result = subprocess.run(
+            ["chwd", "--list-installed"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    import re
+
+    # A real chwd profile slug looks like "nvidia-open-dkms", "amd",
+    # "intel", "macbook-t2", "virtualmachine" — lowercase letters,
+    # digits, hyphens, and dots only. Anything else (warning lines,
+    # banners, headers) is rejected.
+    _PROFILE_RE = re.compile(r"^[a-z0-9][a-z0-9.\-]*$")
+    for line in result.stdout.splitlines():
+        token = line.strip().split()[0] if line.strip() else ""
+        if token and _PROFILE_RE.match(token):
+            return token
+    return ""
+
+
+def read_fingerprint(target_root: Path) -> str:
+    """Read the persisted fingerprint, or return "" if absent."""
+    fp = target_root / STATE_DIR_REL / FINGERPRINT_FILE
+    try:
+        return fp.read_text().strip()
+    except (FileNotFoundError, PermissionError, OSError):
+        return ""
+
+
+def write_fingerprint(
+    fingerprint: str,
+    target_root: Path,
+    log: LogCallback | None = None,
+) -> None:
+    """Write the fingerprint atomically to ``<state>/hardware-fingerprint``."""
+    state_dir = target_root / STATE_DIR_REL
+    state_dir.mkdir(parents=True, exist_ok=True)
+    fp = state_dir / FINGERPRINT_FILE
+    tmp = fp.with_suffix(".tmp")
+    tmp.write_text(fingerprint + "\n")
+    tmp.replace(fp)
+    _log(f"  wrote fingerprint -> {fp}", log)
+
+
+def read_manifest(target_root: Path) -> dict[str, list[str]]:
+    """Read the persisted file manifest, or return an empty one."""
+    fp = target_root / STATE_DIR_REL / MANIFEST_FILE
+    try:
+        return json.loads(fp.read_text())
+    except (FileNotFoundError, PermissionError, OSError, json.JSONDecodeError):
+        return {"modprobe": [], "udev": [], "sysctl": []}
+
+
+def write_manifest(
+    manifest: dict[str, list[str]],
+    target_root: Path,
+    log: LogCallback | None = None,
+) -> None:
+    """Write the manifest atomically to ``<state>/hardware-manifest.json``."""
+    state_dir = target_root / STATE_DIR_REL
+    state_dir.mkdir(parents=True, exist_ok=True)
+    fp = state_dir / MANIFEST_FILE
+    tmp = fp.with_suffix(".tmp")
+    tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    tmp.replace(fp)
+    _log(f"  wrote manifest    -> {fp}", log)

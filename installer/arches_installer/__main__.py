@@ -241,18 +241,9 @@ def _run_auto(
                 return 1
             print("  Network configured.")
 
-    # Detect target disk
-    try:
-        disk = detect_single_disk()
-    except Exception as e:
-        _auto_install_error(f"Disk detection failed: {e}", fallback_to_tui)
-        return 1
-
-    # Launch TUI with auto-install state pre-populated.
-    # The app skips straight to the progress screen.
-    from arches_installer.tui.app import ArchesApp
-
-    # Auto-detect hardware for unattended installs
+    # Auto-detect hardware for unattended installs. We do this BEFORE
+    # disk resolution so the machine profile's [[disks]] overrides (if
+    # any) participate in the layer stack: layout < machine < auto-install.
     from arches_installer.core.hardware import (
         detect_pci_ids,
         discover_machines,
@@ -278,8 +269,81 @@ def _run_auto(
     except Exception:
         hw_config = None
 
+    # Resolve disk roles. The layered descriptor stack is:
+    #   layout's [[disks]] (default) < machine profile (per-host) < auto-install (per-install).
+    # For backward compat: if the layout has no [[disks]] block AND
+    # neither machine nor auto-install supplied overrides, we fall
+    # through to the legacy single-disk detection path so basic.toml
+    # still works on simple single-disk hosts.
+    from arches_installer.core.disk import detect_block_devices
+    from arches_installer.core.disk_layout import (
+        DiskRoleResolutionError,
+        resolve_disk_roles,
+    )
+
+    resolved_roles = None
+    primary_disk_path = ""
+
+    machine_disks = (
+        hw_config.disk_role_overrides() if hw_config is not None else []
+    )
+    auto_disks = list(config.disks) if config.disks else []
+    layout_has_disks = config.disk_layout.has_explicit_disks()
+
+    use_role_resolver = layout_has_disks or bool(machine_disks) or bool(auto_disks)
+
+    if use_role_resolver:
+        try:
+            candidates = detect_block_devices()
+            resolved_roles = resolve_disk_roles(
+                config.disk_layout,
+                candidates,
+                machine_disks=machine_disks,
+                auto_install_disks=auto_disks,
+            )
+            for role_name, devs in resolved_roles.assignments.items():
+                print(
+                    f"  Disk role:   {role_name} -> "
+                    f"{', '.join(d.path for d in devs)}"
+                )
+            # The bootloader still wants a single "primary" device for
+            # legacy code paths. Pick the device backing the root role
+            # (or DEFAULT_DISK_ROLE for the implicit single-disk case).
+            from arches_installer.core.disk_layout import DEFAULT_DISK_ROLE
+
+            for role_name, parts in resolved_roles.assignments.items():
+                # Prefer the role that hosts the / mount
+                for p in config.disk_layout.partitions:
+                    if p.mount_point == "/" and p.target_role == role_name:
+                        primary_disk_path = parts[0].path
+                        break
+                if primary_disk_path:
+                    break
+            if not primary_disk_path:
+                # Fall back to whichever role was assigned first.
+                first_role = next(iter(resolved_roles.assignments))
+                primary_disk_path = resolved_roles.assignments[first_role][0].path
+        except DiskRoleResolutionError as e:
+            _auto_install_error(f"Disk role resolution failed:\n{e}", fallback_to_tui)
+            return 1
+        except Exception as e:
+            _auto_install_error(f"Disk detection failed: {e}", fallback_to_tui)
+            return 1
+    else:
+        # Legacy single-disk path
+        try:
+            disk = detect_single_disk()
+            primary_disk_path = disk.path
+        except Exception as e:
+            _auto_install_error(f"Disk detection failed: {e}", fallback_to_tui)
+            return 1
+
+    # Launch TUI with auto-install state pre-populated.
+    # The app skips straight to the progress screen.
+    from arches_installer.tui.app import ArchesApp
+
     app = ArchesApp(platform=platform)
-    app.selected_device = disk.path
+    app.selected_device = primary_disk_path
     app.selected_template = config.template
     app.selected_layout = config.disk_layout
     app.partition_mode = "auto"
@@ -287,9 +351,12 @@ def _run_auto(
     app.username = config.username
     app.password = config.password
     app.hardware_config = hw_config
+    app.resolved_disk_roles = resolved_roles
     app.auto_install = True
     app.auto_shutdown = config.shutdown
     app.auto_reboot = config.reboot
+    app.auto_install_failed_action = config.failed_action
+    app.ansible_vars = config.ansible_vars or None
 
     # When running under the test harness (virtio log port exists),
     # force shutdown on completion so the test script can detect success.

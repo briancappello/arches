@@ -33,7 +33,22 @@ IMAGE_NAME="arches-installer"
 
 # ── Logging ───────────────────────────────────────────
 # All output goes to both the terminal and a log file (overwritten each run).
+# When running under sudo, fix up ownership of any stale root-owned log
+# from a previous run so the invoking user can `tail`/`rm` it later,
+# AND set an EXIT trap so the final log ends up user-owned even on
+# failure. Without this the host-install.log accumulates as root-owned
+# and silently breaks subsequent non-sudo `tail`/`rm` operations.
 LOG_FILE="$PROJECT_DIR/host-install.log"
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    if [[ -e "$LOG_FILE" ]]; then
+        chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$LOG_FILE" 2>/dev/null || true
+    fi
+    trap '
+        if [[ -f "'"$LOG_FILE"'" ]]; then
+            chown "'"$SUDO_USER"':$(id -gn "'"$SUDO_USER"'")" "'"$LOG_FILE"'" 2>/dev/null || true
+        fi
+    ' EXIT
+fi
 exec > >(tee "$LOG_FILE") 2>&1
 echo "Log: $LOG_FILE"
 

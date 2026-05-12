@@ -1,0 +1,209 @@
+---
+# Exo — distributed LLM inference cluster node
+#
+# Why this role is more involved than the other "venv + uv pip install"
+# roles in this tree:
+#
+#   1. Exo is NOT published to PyPI. The earlier
+#      `uv pip install exo-explore` against PyPI was a misreading —
+#      `exo-explore` is the GitHub org name; the upstream Python
+#      package is plain `exo` and only ships as a uv workspace
+#      (`pyproject.toml` with `[tool.uv.workspace]`). The
+#      documented install on Linux is `git clone + uv sync + uv run
+#      exo`.
+#
+#   2. Exo pins `requires-python = "==3.13.*"`. On Arches the system
+#      Python is 3.14, so we have `uv` materialise a 3.13 interpreter
+#      under the `exo` user's data dir and point `uv sync` at it.
+#
+#   3. Exo's workspace includes a Rust pyo3 crate
+#      (`exo_pyo3_bindings`) that upstream documents as requiring
+#      the nightly toolchain. We install rustup as the `exo` user
+#      and run `rustup toolchain install nightly` so cargo + uv can
+#      build that crate during `uv sync`.
+#
+#   4. The Svelte dashboard build (`cd dashboard && npm install &&
+#      npm run build`) is OPTIONAL for headless coordinator nodes —
+#      the API still works without it. We skip it by default so
+#      first-boot stays under the 1 GB / few-minutes budget. The
+#      `nodejs/npm` packages are still in pacstrap so an operator
+#      can build it later with `make` inside /opt/exo/src/dashboard.
+#
+# All heavy work happens as the `exo` system user under `/opt/exo`,
+# matching the pattern from the aphrodite role.
+
+# ── 1. System user ────────────────────────────────────
+
+- name: Create exo system group
+  group:
+    name: exo
+    system: yes
+    state: present
+
+- name: Create exo system user
+  user:
+    name: exo
+    group: exo
+    system: yes
+    shell: /bin/bash
+    # `create_home: yes` is intentional — exo's install pulls rustup
+    # and uv state into the user's $HOME (~/.rustup, ~/.cargo,
+    # ~/.local/share/uv). Without a real home dir those tools fall
+    # back to /tmp and the install breaks across reboots.
+    home: /opt/exo
+    create_home: yes
+    comment: "Exo inference cluster node"
+
+# ── 2. Directories ───────────────────────────────────
+
+- name: Create /opt/exo directory
+  file:
+    path: /opt/exo
+    state: directory
+    owner: exo
+    group: exo
+    mode: "0755"
+
+- name: Create /etc/exo directory
+  file:
+    path: /etc/exo
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── 3. Rust nightly via rustup ───────────────────────
+# Exo's Rust workspace member uses unstable features and requires
+# nightly. Installed under the exo user's home so the firstboot
+# rebuild path (and on-host upgrades) don't touch system rust.
+
+- name: Initialise rustup with nightly toolchain
+  command: rustup default nightly
+  args:
+    creates: /opt/exo/.rustup/toolchains
+  become_user: exo
+  environment:
+    RUSTUP_HOME: /opt/exo/.rustup
+    CARGO_HOME: /opt/exo/.cargo
+
+# ── 4. Source tree ───────────────────────────────────
+
+- name: Clone exo source
+  git:
+    repo: https://github.com/exo-explore/exo
+    dest: /opt/exo/src
+    # Pin a version so a future upstream API or pyproject change can't
+    # silently break the firstboot install. Bump this tag when bringing
+    # in new upstream features; the choice below matches the latest
+    # tagged release at the time the role was written.
+    version: v1.0.71
+    depth: 1
+    force: no
+  become_user: exo
+
+# ── 5. Python interpreter + uv sync ──────────────────
+# `uv python install 3.13` downloads a managed CPython 3.13 into the
+# user's data dir; it's idempotent and only fetches on first run.
+# `uv sync` then materialises exo's locked dependencies into
+# /opt/exo/src/.venv using that interpreter. The `cpu` extra picks the
+# Linux MLX-CPU build (no CUDA / no MLX-Metal); upgrade later to
+# `--extra cuda12` or `--extra cuda13` on NVIDIA hosts.
+
+- name: Install managed Python 3.13 for exo
+  command: uv python install 3.13
+  args:
+    creates: /opt/exo/.local/share/uv/python
+  become_user: exo
+  environment:
+    UV_PYTHON_INSTALL_DIR: /opt/exo/.local/share/uv/python
+
+- name: uv sync exo workspace (CPU build for Linux)
+  command: uv sync --extra cpu --python 3.13
+  args:
+    chdir: /opt/exo/src
+    creates: /opt/exo/src/.venv/bin/python
+  become_user: exo
+  environment:
+    # Keep all build state under the exo user's home so reboots and
+    # role reruns are deterministic.
+    UV_PYTHON_INSTALL_DIR: /opt/exo/.local/share/uv/python
+    RUSTUP_HOME: /opt/exo/.rustup
+    CARGO_HOME: /opt/exo/.cargo
+    PATH: "/opt/exo/.cargo/bin:{{ ansible_env.PATH }}"
+  register: exo_sync
+  # exo's uv sync pulls torch + transformers + ~30 other packages and
+  # then compiles the pyo3 crate. Easily 5-10 minutes on a fresh
+  # install; default ansible 30s command timeout will trip.
+  async: 1800
+  poll: 30
+  # Same rationale as aphrodite below: a transient failure here
+  # shouldn't block the rest of the firstboot. Surface via a
+  # marker file instead.
+  failed_when: false
+
+- name: Record exo install failure for operator visibility
+  copy:
+    dest: /opt/exo/install-failed
+    content: |
+      exo `uv sync` failed at first-boot.
+      To retry manually:
+        sudo -u exo bash -c '
+          export UV_PYTHON_INSTALL_DIR=/opt/exo/.local/share/uv/python
+          export RUSTUP_HOME=/opt/exo/.rustup
+          export CARGO_HOME=/opt/exo/.cargo
+          export PATH=/opt/exo/.cargo/bin:$PATH
+          cd /opt/exo/src && uv sync --extra cpu --python 3.13
+        '
+      Error (from ansible):
+      {{ exo_sync.stderr | default('(no stderr captured)') }}
+    owner: exo
+    group: exo
+    mode: "0644"
+  when: exo_sync.rc | default(0) != 0
+
+- name: Remove stale exo install-failed marker
+  file:
+    path: /opt/exo/install-failed
+    state: absent
+  when: exo_sync.rc | default(0) == 0
+
+# ── 6. Configuration ────────────────────────────────
+
+- name: Deploy exo environment config
+  copy:
+    src: exo-config
+    dest: /etc/exo/config
+    owner: root
+    group: exo
+    mode: "0644"
+    force: no  # Don't overwrite if already customized
+
+- name: Configure discovery mode
+  lineinfile:
+    path: /etc/exo/config
+    regexp: "^EXO_DISCOVERY_MODULE="
+    line: "EXO_DISCOVERY_MODULE={{ exo_discovery | default('udp') }}"
+  when: exo_discovery is defined
+
+- name: Configure seed nodes
+  lineinfile:
+    path: /etc/exo/config
+    regexp: "^EXO_SEED_NODES="
+    line: "EXO_SEED_NODES={{ exo_seed_nodes }}"
+  when: exo_seed_nodes is defined
+
+# ── 7. Systemd service ──────────────────────────────
+
+- name: Deploy exo-node systemd service
+  copy:
+    src: exo-node.service
+    dest: /etc/systemd/system/exo-node.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable exo-node service
+  systemd:
+    name: exo-node
+    enabled: yes
+    daemon_reload: yes

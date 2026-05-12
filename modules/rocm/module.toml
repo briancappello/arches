@@ -1,0 +1,11 @@
+[meta]
+name = "ROCm"
+description = "AMD ROCm GPU compute runtime"
+category = "service"
+
+[install.pacstrap]
+packages = [
+    "rocm-hip-runtime",
+    "rocm-opencl-runtime",
+    "rocm-smi-lib",
+]

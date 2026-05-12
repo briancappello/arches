@@ -1,13 +1,32 @@
 [meta]
 name = "Networking"
-description = "NetworkManager, firewalld, and OpenSSH"
+description = "NetworkManager, firewalld, OpenSSH, and Avahi/mDNS for .local resolution"
 category = "networking"
+
+# This module is the canonical home for "anything that touches the
+# network and should be present on every install". It's structurally
+# guaranteed to be installed because:
+#   - The module system requires every `service`/`desktop` category
+#     module to be accompanied by a `networking` category module
+#     (see CATEGORY_DEPS in installer/.../module.py).
+#   - This is currently the ONLY module in the `networking` category.
+#
+# If you split this module (e.g. carve out a "minimal-networking"
+# variant), keep avahi+nss-mdns+the nsswitch patch together in the
+# default networking module so that mDNS .local resolution is
+# universally available on Arches installs. Headless installs depend
+# on it for discovering the box via `ssh user@hostname.local` when
+# DHCP hasn't assigned a predictable IP.
 
 [install.pacstrap]
 packages = [
     "networkmanager",
     "firewalld",
     "openssh",
+    # mDNS / zeroconf — lets users `ssh user@<hostname>.local` without
+    # knowing the DHCP-assigned IP. Critical for headless installs.
+    "avahi",
+    "nss-mdns",
 ]
 
 [services]
@@ -17,4 +36,5 @@ enable = [
     "sshd",
     "firewalld",
     "fstrim.timer",
+    "avahi-daemon",
 ]

@@ -1,0 +1,10 @@
+[meta]
+name = "CUDA"
+description = "NVIDIA CUDA compute toolkit and GPU utilities"
+category = "service"
+
+[install.pacstrap]
+packages = [
+    "cuda",
+    "nvidia-utils",
+]

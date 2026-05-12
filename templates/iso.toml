@@ -20,6 +20,7 @@ templates = [
     "kde-workstation.toml",
     "cosmic-workstation.toml",
     "vm-server.toml",
+    "llm-inference.toml",
 ]
 
 # ── Framebuffer layer ────────────────────────────────
@@ -52,6 +53,12 @@ packages = [
     "gpm",
     # Console file manager / shell
     "zsh",
+    # SSH server in the LIVE environment — lets a headless operator
+    # SSH in to a running ISO to debug a stuck install, inspect logs,
+    # or kick off the installer manually. Authorized keys are seeded
+    # from the build-host's public key at boot (see
+    # iso/services/arches-live-sshd-setup).
+    "openssh",
 ]
 
 # ── Graphical layer ──────────────────────────────────

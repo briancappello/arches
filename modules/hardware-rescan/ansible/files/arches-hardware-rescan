@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+# arches-hardware-rescan — thin wrapper around the installer's
+# hardware_rescan module so we can ship a single executable in /usr/bin.
+#
+# The actual implementation is at
+#   /opt/arches/installer/arches_installer/core/hardware_rescan.py
+# which is staged by the Makefile (modules/_stage-installer step)
+# alongside the rest of the installer.
+import sys
+from pathlib import Path
+
+# Put the staged installer on sys.path. This mirrors what the live ISO
+# installer does at runtime.
+_INSTALLER = Path("/opt/arches/installer")
+if _INSTALLER.is_dir():
+    sys.path.insert(0, str(_INSTALLER))
+
+from arches_installer.core.hardware_rescan import main
+
+if __name__ == "__main__":
+    sys.exit(main())

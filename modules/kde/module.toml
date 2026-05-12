@@ -20,8 +20,6 @@ packages = [
     "powertop",
     "wl-clipboard",
     "bluez-utils",
-    # Custom plasmoids (from arches-local repo)
-    "plasma-ai-usage-monitor",
 ]
 
 [install.override]

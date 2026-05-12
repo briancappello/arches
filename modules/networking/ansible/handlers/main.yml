@@ -1,0 +1,10 @@
+---
+# Networking handlers — invoked via `notify:` from tasks/main.yml.
+
+- name: reload NetworkManager
+  # `systemctl reload NetworkManager` re-reads conf.d/*.conf without
+  # tearing down existing connections, which is what we want for a
+  # configuration-only change like default WoL.
+  ansible.builtin.systemd:
+    name: NetworkManager
+    state: reloaded

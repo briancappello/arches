@@ -1,0 +1,46 @@
+[Unit]
+Description=Exo LLM inference cluster node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=exo
+Group=exo
+EnvironmentFile=-/etc/exo/config
+WorkingDirectory=/opt/exo/src
+
+# `uv run` re-resolves the locked deps (cheap when nothing changed)
+# and invokes exo's project script entrypoint from pyproject.toml
+# (`exo = "exo.main:main"`). This is the upstream-documented Linux
+# launch path and avoids us baking knowledge of the .venv layout
+# into the unit file.
+Environment=UV_PYTHON_INSTALL_DIR=/opt/exo/.local/share/uv/python
+Environment=RUSTUP_HOME=/opt/exo/.rustup
+Environment=CARGO_HOME=/opt/exo/.cargo
+Environment=PATH=/opt/exo/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/usr/bin/uv run exo
+
+# Restart on failure with backoff
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+# ProtectHome=yes would hide /opt/exo (the user's HOME). Override
+# with `ProtectHome=tmpfs` then expose only the bits we need —
+# safer than leaving the whole thing readable to other services.
+ProtectHome=no
+ReadWritePaths=/opt/exo
+PrivateTmp=yes
+
+# GPU access (placeholder — exo runs CPU-only on Linux today, but
+# the supplementary groups don't hurt and let upstream Linux GPU
+# support light up automatically when it ships).
+SupplementaryGroups=video render
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+[meta]
+name = "Ollama"
+description = "Ollama local LLM inference server (base — CPU + Vulkan)"
+category = "service"
+
+# The base ollama package works on CPU and (via mesa) Vulkan. GPU-
+# specific variants are split out as separate modules so a template
+# only pulls in what its [gpu].stacks list selects:
+#
+#   - `ollama-cuda`  — adds the CUDA-linked binary (nvidia-cuda stack)
+#   - `ollama-rocm`  — adds the ROCm-linked binary (amd-rocm stack)
+#
+# These are NOT mutually exclusive at the pacman level — the binaries
+# install side-by-side under different names. Ollama auto-detects which
+# backend to use at runtime.
+
+[install.pacstrap]
+packages = [
+    "ollama",
+]
+
+[services]
+enable = [
+    "ollama",
+]

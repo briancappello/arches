@@ -1,0 +1,36 @@
+[Unit]
+Description=Aphrodite Engine LLM inference server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aphrodite
+Group=aphrodite
+EnvironmentFile=-/etc/aphrodite/config
+WorkingDirectory=/opt/aphrodite
+
+ExecStart=/opt/aphrodite/venv/bin/aphrodite run %i --host 0.0.0.0
+
+# Restart on failure with backoff
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+# ProtectHome=yes would hide /opt/aphrodite (the user's HOME, where
+# the venv and uv-managed Python 3.13 interpreter live). Disable it
+# rather than fight the systemd protection model — the aphrodite
+# user already has nologin and no other home content to protect.
+ProtectHome=no
+ReadWritePaths=/opt/aphrodite
+PrivateTmp=yes
+
+# GPU access
+SupplementaryGroups=video render
+
+[Install]
+WantedBy=multi-user.target

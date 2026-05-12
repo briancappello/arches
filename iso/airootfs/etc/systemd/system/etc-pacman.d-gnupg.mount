@@ -1,8 +1,16 @@
 [Unit]
 Description=Temporary /etc/pacman.d/gnupg directory
+DefaultDependencies=no
+ConditionPathExists=/etc/pacman.d
+Before=pacman-init.service
+After=systemd-tmpfiles-setup.service
 
 [Mount]
 What=tmpfs
 Where=/etc/pacman.d/gnupg
 Type=tmpfs
-Options=mode=0755,noswap
+# mode=0700 — gnupg refuses to use a homedir that isn't owner-only on some
+# versions, and the symptom propagates as "keyring is not writable".
+# nodev,nosuid — defensive (we never execute anything from here).
+# strictatime — matches upstream archiso releng.
+Options=mode=0700,nodev,nosuid,strictatime

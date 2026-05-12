@@ -217,6 +217,7 @@ def dev_workstation_template() -> InstallTemplate:
         ansible=AnsibleConfig(
             firstboot_roles=["base", "zsh", "kde"],
         ),
+        graphical=True,
     )
 
 

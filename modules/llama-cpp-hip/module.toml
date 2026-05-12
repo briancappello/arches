@@ -1,0 +1,25 @@
+[meta]
+name = "llama.cpp (ROCm/HIP)"
+description = "llama.cpp inference server built from mainline git with AMD ROCm/HIP backend (gfx1201 / RDNA4)"
+category = "service"
+
+[install.pacstrap]
+packages = [
+    # Custom-built package from modules/llama-cpp/build.sh (shared build script)
+    "llama.cpp-hip-arches",
+    # Tooling required by the /usr/local/bin/llama-cpp-update helper for
+    # rebuilding from upstream master in place. Keep this set in sync
+    # with the makedepends in modules/llama-cpp/build.sh.
+    "git",
+    "cmake",
+    "ninja",
+    "openssl",
+    "openblas",
+    "rocm-hip-sdk",
+    "rocm-cmake",
+    "rocwmma",
+]
+
+[dependencies]
+requires = ["rocm"]
+conflicts = ["llama-cpp", "llama-cpp-cuda"]

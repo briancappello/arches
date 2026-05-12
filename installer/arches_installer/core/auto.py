@@ -21,6 +21,7 @@ from typing import Any
 
 from arches_installer.core.disk_layout import (
     DiskLayout,
+    DiskRole,
     load_disk_layout,
     resolve_disk_layout,
 )
@@ -64,8 +65,21 @@ class AutoInstallConfig:
     password: str
     reboot: bool
     shutdown: bool
+    # What to do when the install FAILS during auto mode. Headless
+    # operators never see the TUI buttons, so leaving the box at an
+    # idle progress screen is unhelpful. Defaults to "poweroff" so
+    # the box stops drawing power and the operator can investigate
+    # later via the persisted install log on the install media.
+    # Options: "poweroff", "reboot", "wait".
+    failed_action: str = "poweroff"
     wifi: WifiConfig | None = None
     wired: WiredConfig | None = None
+    ansible_vars: dict[str, str] = field(default_factory=dict)
+    # Per-install disk-role overrides. Each entry takes the same shape
+    # as a [[disks]] entry in a disk-layout file: name + device (string
+    # or table). When present, these win over layout/machine specs for
+    # matching role names (CSS-like specificity: layout < machine < auto).
+    disks: list[DiskRole] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AutoInstallConfig:
@@ -97,6 +111,12 @@ class AutoInstallConfig:
 
         reboot = install.get("reboot", False)
         shutdown = install.get("shutdown", False)
+        failed_action = install.get("failed_action", "poweroff")
+        if failed_action not in ("poweroff", "reboot", "wait"):
+            raise ValueError(
+                f"install.failed_action must be one of "
+                f"'poweroff', 'reboot', 'wait' (got {failed_action!r})"
+            )
 
         # Optional WiFi configuration
         wifi = None
@@ -133,6 +153,23 @@ class AutoInstallConfig:
                 dns=wired_data.get("dns", []),
             )
 
+        # Optional Ansible extra vars — forwarded as -e key=value to
+        # ansible-playbook in the firstboot script.
+        ansible_vars: dict[str, str] = {}
+        raw_vars = data.get("ansible_vars")
+        if raw_vars:
+            ansible_vars = {k: str(v) for k, v in raw_vars.items()}
+
+        # Optional [[disks]] overrides — same shape as in disk-layout
+        # files. The descriptor can be a string or a structured dict.
+        disks: list[DiskRole] = []
+        for d in data.get("disks", []) or []:
+            if "name" not in d:
+                raise ValueError("[[disks]] entry missing required 'name'")
+            disks.append(
+                DiskRole(name=str(d["name"]), descriptor=d.get("device", ""))
+            )
+
         return cls(
             template=template,
             disk_layout=disk_layout,
@@ -141,8 +178,11 @@ class AutoInstallConfig:
             password=password,
             reboot=reboot,
             shutdown=shutdown,
+            failed_action=failed_action,
             wifi=wifi,
             wired=wired,
+            ansible_vars=ansible_vars,
+            disks=disks,
         )
 
     @classmethod

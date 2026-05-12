@@ -1,0 +1,129 @@
+---
+# llama.cpp — mainline-git inference server (Vulkan backend)
+#
+# Installs:
+#   - llama.cpp-vulkan-arches (built from git in modules/llama-cpp/build.sh)
+#   - llama-server@.service systemd template (NOT enabled by default —
+#     requires a model alias, e.g. `systemctl enable llama-server@qwen3`)
+#   - /etc/llama-cpp/config        — global env defaults
+#   - /etc/llama-cpp/models.d/     — per-model env files (sourced by
+#                                    the @<alias> instance)
+#   - /usr/local/bin/llama-cpp-update — dev helper to rebuild from
+#                                    upstream master in place
+#
+# The systemd service runs as the dedicated `llama` system user with
+# SupplementaryGroups=video,render for GPU device access.
+
+# ── 1. System user ────────────────────────────────────
+
+- name: Create llama system group
+  group:
+    name: llama
+    system: yes
+    state: present
+
+- name: Create llama system user
+  user:
+    name: llama
+    group: llama
+    system: yes
+    shell: /usr/sbin/nologin
+    home: /var/lib/llama-cpp
+    create_home: no
+    comment: "llama.cpp inference server"
+
+# ── 2. Directories ───────────────────────────────────
+
+- name: Create state directory
+  file:
+    path: /var/lib/llama-cpp
+    state: directory
+    owner: llama
+    group: llama
+    mode: "0755"
+
+# Canonical model-storage path on Arches. When the system is installed
+# with the llm-workstation disk layout, /opt/models is a separate
+# btrfs partition on the bulk disk; on other layouts it falls back to
+# a plain directory on the root disk. Either way, everything that
+# stores model weights uses this single path.
+- name: Create canonical models directory
+  file:
+    path: /opt/models
+    state: directory
+    owner: root
+    group: llama
+    mode: "0775"
+
+# User-facing symlink — lets the operator address bulk storage as
+# ~/models without knowing the mount point. Created here (rather than
+# in the disk layout) because the username comes from the auto-install
+# config, which the disk layout doesn't see.
+- name: Symlink ~/models -> /opt/models for the install user
+  file:
+    src: /opt/models
+    dest: "/home/{{ install_user }}/models"
+    state: link
+    owner: "{{ install_user }}"
+    group: "{{ install_user }}"
+    force: no  # don't clobber an existing real directory or different symlink
+
+- name: Create config directory
+  file:
+    path: /etc/llama-cpp
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create per-model config directory
+  file:
+    path: /etc/llama-cpp/models.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── 3. Configuration files ──────────────────────────
+
+- name: Deploy global llama-cpp config
+  copy:
+    src: llama-cpp-config
+    dest: /etc/llama-cpp/config
+    owner: root
+    group: llama
+    mode: "0640"
+    force: no  # Don't overwrite if user-customized
+
+- name: Deploy example per-model config
+  copy:
+    src: model-example.conf
+    dest: /etc/llama-cpp/models.d/example.conf
+    owner: root
+    group: llama
+    mode: "0640"
+    force: no
+
+# ── 4. Systemd service template ─────────────────────
+
+- name: Deploy llama-server systemd service template
+  copy:
+    src: llama-server@.service
+    dest: /etc/systemd/system/llama-server@.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes
+
+# ── 5. Developer helper: in-place rebuild from upstream ──
+
+- name: Deploy llama-cpp-update helper script
+  copy:
+    src: llama-cpp-update
+    dest: /usr/local/bin/llama-cpp-update
+    owner: root
+    group: root
+    mode: "0755"

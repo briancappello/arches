@@ -48,15 +48,18 @@ TEMPLATE="${TEMPLATE:-}"
 
 echo "Platform: $PLATFORM (arch: $ARCHES_ARCH, container: $CONTAINER_ARCH, template: ${TEMPLATE:-<default>})"
 
-# ── Logging ───────────────────────────────────────────
-LOG_FILE="$PROJECT_DIR/container-build.log"
-exec > >(tee "$LOG_FILE") 2>&1
-echo "Log: $LOG_FILE"
-
 # ── Require root ──────────────────────────────────────
+# Check this FIRST, before opening the log file. Otherwise a non-root
+# invocation that already had a root-owned log file from a previous run
+# would fail at `tee` with a misleading "Permission denied" before
+# reaching the actual "must run as root" error message.
 if [[ $EUID -ne 0 ]]; then
     echo "ERROR: ISO build requires root (for mkarchiso chroot/mount operations)."
     echo "       Run: sudo $0"
+    echo ""
+    echo "       Alternative: use the persistent builder which does NOT require sudo:"
+    echo "         make builder-start    # one-time setup"
+    echo "         make builder-iso      # build (no sudo)"
     exit 1
 fi
 
@@ -64,6 +67,32 @@ fi
 BUILD_USER="${SUDO_USER:-$(logname 2>/dev/null || echo nobody)}"
 BUILD_UID=$(id -u "$BUILD_USER")
 BUILD_GID=$(id -g "$BUILD_USER")
+
+# ── Logging ───────────────────────────────────────────
+# We must write to the log as root (we ARE root here), but we want the
+# invoking user to be able to `tail`/`rm` the file afterwards without
+# sudo. Two-step trick:
+#   1. If a stale file exists, fix its ownership BEFORE redirecting
+#      stdout to it — otherwise a previous root-owned file could fail
+#      to open even for append-via-tee under some umasks.
+#   2. After the build (success or failure), chown the final log
+#      file back to the invoking user via an EXIT trap.
+LOG_FILE="$PROJECT_DIR/container-build.log"
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    if [[ -e "$LOG_FILE" ]]; then
+        chown "$SUDO_USER:$(id -gn "$SUDO_USER")" "$LOG_FILE" 2>/dev/null || true
+    fi
+    # Ensure the log ends up user-owned regardless of how we exit
+    # (success, error, signal). The trap is set BEFORE the redirect
+    # so even a failure inside `tee` itself triggers cleanup.
+    trap '
+        if [[ -f "'"$LOG_FILE"'" ]]; then
+            chown "'"$SUDO_USER"':$(id -gn "'"$SUDO_USER"'")" "'"$LOG_FILE"'" 2>/dev/null || true
+        fi
+    ' EXIT
+fi
+exec > >(tee "$LOG_FILE") 2>&1
+echo "Log: $LOG_FILE"
 
 # ── Persistent pacman cache ───────────────────────────
 # Partitioned by platform so different optimization tiers don't pollute
@@ -123,9 +152,13 @@ echo "══ Starting container build (platform: $PLATFORM, template: ${TEMPLATE
 FORCE_FLAG=""
 [[ "${FORCE:-}" == "1" ]] && FORCE_FLAG="FORCE=1"
 TEMPLATE_FLAG=""
+# TEMPLATE filters iso.toml's [install].templates list down to a single
+# template across the whole build (see iso-config.py and the Makefile's
+# ARCHES_TEMPLATE variable). Pass it as a make argument AND export it
+# into the container env so subprocesses (build-aur-repo.sh,
+# cache-template-packages.sh) inherit it transparently.
 [[ -n "$TEMPLATE" ]] && TEMPLATE_FLAG="TEMPLATE=$TEMPLATE"
-OFFLINE_FLAG=""
-[[ "${OFFLINE:-0}" == "1" ]] && OFFLINE_FLAG="OFFLINE=1"
+OFFLINE_FLAG="OFFLINE=${OFFLINE:-0}"
 ISO_MODE_FLAG="ISO_MODE=${ISO_MODE:-graphical}"
 
 # Bash as PID 1 inside a container ignores SIGINT/SIGTERM by default.
@@ -136,10 +169,35 @@ podman run --rm --privileged \
     --security-opt label=disable \
     "${VOLUMES[@]}" \
     -e SUDO_USER=builder \
+    -e ARCHES_TEMPLATE="${TEMPLATE:-}" \
+    -e ARCHES_GPU="${ARCHES_GPU:-}" \
+    -e ARCHES_ALLOW_DEFAULT_PASSWORD="${ARCHES_ALLOW_DEFAULT_PASSWORD:-}" \
     "$IMAGE_NAME" \
     /bin/bash -c '
-        trap "kill 0; exit 130" INT
-        trap "kill 0; exit 143" TERM
+        # On ANY exit (success, failure, SIGINT, SIGTERM, OOM), chown
+        # all build artifacts back to the host user so they can be
+        # managed without sudo on the host afterwards. The Makefile
+        # staging targets run as root (mkarchiso needs it) and write
+        # into the bind-mounted /build, which would otherwise leak
+        # root-owned files into the host workspace and break next
+        # `git checkout` / `make clean` runs.
+        _chown_back() {
+            chown -R builder:builder \
+                /build/iso/airootfs \
+                /build/iso/grub \
+                /build/iso/syslinux \
+                /build/iso/pacman.conf \
+                /build/iso/packages.x86_64 \
+                /build/iso/packages.aarch64 \
+                /build/out \
+                /build/.pkg-cache \
+                /build/.offline-cache \
+                /build/.aur-repo \
+                2>/dev/null || true
+        }
+        trap "_chown_back; kill 0; exit 130" INT
+        trap "_chown_back; kill 0; exit 143" TERM
+        trap "_chown_back" EXIT
         usermod -u '"$BUILD_UID"' builder &&
         groupmod -g '"$BUILD_GID"' builder &&
         chown -R builder:builder /tmp &&
@@ -147,8 +205,3 @@ podman run --rm --privileged \
         make _iso PLATFORM='"$PLATFORM"' ARCHES_ARCH='"$ARCHES_ARCH"' '"$FORCE_FLAG"' '"$TEMPLATE_FLAG"' '"$OFFLINE_FLAG"' '"$ISO_MODE_FLAG"' &
         wait $!
     '
-
-# Fix ownership of build output so non-root user can access it
-if [[ -n "${SUDO_USER:-}" && -d "$PROJECT_DIR/out" ]]; then
-    chown -R "$SUDO_USER:$SUDO_USER" "$PROJECT_DIR/out"
-fi

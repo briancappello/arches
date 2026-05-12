@@ -16,6 +16,7 @@ include = [
     "pipewire",
     "snapshots",
     "containers",
+    "hardware-rescan",
     # Networking
     "networking",
     # Desktop

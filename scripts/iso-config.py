@@ -5,6 +5,14 @@ Called by the Makefile to extract package lists, graphical session config,
 and template lists for the ISO build.  Outputs are printed to stdout in
 a format suitable for shell consumption.
 
+Environment:
+    ARCHES_TEMPLATE   If set, restrict iso.toml [install].templates to
+                      this single template (with or without the .toml
+                      suffix). All downstream commands — package
+                      caching, AUR/module builds, installer staging —
+                      operate on the filtered list. Errors out if the
+                      template is not in iso.toml's list.
+
 Usage:
     python3 scripts/iso-config.py <command> [options]
 
@@ -19,6 +27,11 @@ Commands:
 
     templates
         Print the template filenames listed in iso.toml (one per line).
+        Filtered by ARCHES_TEMPLATE if set.
+
+    build-modules <modules_dir>
+        Print module slugs that have a build.sh and are used by the
+        installable templates. Filtered by ARCHES_TEMPLATE if set.
 
     is-graphical <modules_dir>
         Print 'true' if [graphical].modules contains a desktop module,
@@ -27,17 +40,160 @@ Commands:
 
 from __future__ import annotations
 
+import os
 import sys
 import tomllib
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ISO_TOML = PROJECT_ROOT / "templates" / "iso.toml"
+TEMPLATES_DIR = PROJECT_ROOT / "templates"
+GPU_STACKS_TOML = PROJECT_ROOT / "scripts" / "gpu-stacks.toml"
+
+
+def _load_gpu_stacks() -> dict:
+    """Load scripts/gpu-stacks.toml.
+
+    Returns a dict keyed by stack name, value is the raw TOML table.
+    Returns an empty dict if the file is missing (older trees that
+    predate GPU-stack support).
+    """
+    if not GPU_STACKS_TOML.is_file():
+        return {}
+    with open(GPU_STACKS_TOML, "rb") as f:
+        data = tomllib.load(f)
+    return {k: v for k, v in data.items() if isinstance(v, dict)}
+
+
+def _apply_arches_gpu_override(template_stacks: list[str]) -> list[str]:
+    """Apply the ARCHES_GPU env var to a template's [gpu].stacks list.
+
+    ARCHES_GPU is a comma- or whitespace-separated list of stack names.
+    When set, it replaces the template default — same semantics as
+    arches_installer.core.gpu_stacks._env_override at install time, so
+    the build pipeline and the installer agree on which stacks are in
+    play.
+    """
+    raw = os.environ.get("ARCHES_GPU", "").strip()
+    if not raw:
+        return list(template_stacks)
+    parts: list[str] = []
+    for chunk in raw.replace(",", " ").split():
+        chunk = chunk.strip()
+        if chunk and chunk not in parts:
+            parts.append(chunk)
+    return parts
+
+
+def _arbitrate_llama_cpp_modules(
+    stacks: list[str], stack_defs: dict
+) -> list[str]:
+    """Return the set of llama-cpp-* module slugs to EXCLUDE due to
+    mutually-exclusive arbitration.
+
+    Mirrors the Vulkan-wins rule in
+    arches_installer.core.gpu_stacks._arbitrate_llama_cpp. We do this
+    at build time so the per-variant build.sh inputs match what the
+    installer will actually pacstrap — otherwise we'd build (and ship)
+    package variants that nothing installs, or worse, fail to build
+    the variant the installer DOES want.
+    """
+    variants: list[tuple[str, str]] = []  # (stack_name, variant)
+    for name in stacks:
+        spec = stack_defs.get(name, {})
+        v = spec.get("llama_cpp_variant", "")
+        if v:
+            variants.append((name, v))
+
+    if not variants:
+        return []
+
+    only_variants = [v for _, v in variants]
+    if "vulkan" in only_variants:
+        winner = "vulkan"
+    else:
+        winner = only_variants[0]
+
+    variant_to_module = {
+        "vulkan": "llama-cpp",
+        "hip": "llama-cpp-hip",
+        "cuda": "llama-cpp-cuda",
+    }
+    exclude: list[str] = []
+    for _name, v in variants:
+        if v == winner:
+            continue
+        m = variant_to_module.get(v, "")
+        if m and m not in exclude:
+            exclude.append(m)
+    return exclude
+
+
+def _normalize_template_name(name: str) -> str:
+    """Accept ``llm-inference``, ``llm-inference.toml``, or a path."""
+    name = os.path.basename(name).strip()
+    if not name.endswith(".toml"):
+        name = f"{name}.toml"
+    return name
+
+
+def _filter_templates(templates: list[str]) -> list[str]:
+    """Apply the ARCHES_TEMPLATE filter to an iso.toml templates list.
+
+    When ``ARCHES_TEMPLATE`` is set in the environment, restrict the list
+    to that single template so downstream consumers (package caching,
+    AUR/module builds, installer staging) only operate on the chosen
+    workload. The filter is applied centrally here so every caller of
+    iso-config.py picks it up transparently.
+
+    Validation: if the filter doesn't match any template in iso.toml's
+    [install].templates list, exit with an error — silently producing an
+    empty list would produce a broken ISO.
+    """
+    selected = os.environ.get("ARCHES_TEMPLATE", "").strip()
+    if not selected:
+        return templates
+
+    selected_norm = _normalize_template_name(selected)
+    matched = [t for t in templates if _normalize_template_name(t) == selected_norm]
+
+    if not matched:
+        available = ", ".join(sorted(_normalize_template_name(t) for t in templates))
+        print(
+            f"ERROR: ARCHES_TEMPLATE='{selected}' (resolved as '{selected_norm}') "
+            f"is not listed in {ISO_TOML.relative_to(PROJECT_ROOT)} "
+            f"[install].templates. Available: {available}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Sanity-check the file exists
+    tmpl_path = TEMPLATES_DIR / matched[0]
+    if not tmpl_path.is_file():
+        print(
+            f"ERROR: Template '{matched[0]}' is listed in iso.toml but the "
+            f"file does not exist at {tmpl_path}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return matched
 
 
 def _load_iso_config() -> dict:
+    """Load templates/iso.toml, applying ARCHES_TEMPLATE filter to the
+    [install].templates list.
+
+    All downstream commands (templates, build-modules, packages, etc.)
+    operate on the filtered list, so a single env var transparently
+    narrows the entire build to one workload.
+    """
     with open(ISO_TOML, "rb") as f:
-        return tomllib.load(f)
+        config = tomllib.load(f)
+
+    install = config.setdefault("install", {})
+    install["templates"] = _filter_templates(install.get("templates", []))
+    return config
 
 
 def _load_module(modules_dir: Path, slug: str) -> dict:
@@ -148,6 +304,84 @@ def cmd_templates() -> None:
         print(t)
 
 
+def cmd_build_modules(modules_dir: Path) -> None:
+    """Print module slugs that have a build.sh and are used by installable templates.
+
+    Collects the union of all module slugs across every template listed
+    in ``iso.toml``'s ``[install].templates``. This includes:
+
+    1. Modules listed directly in each template's ``[modules].include``.
+    2. Modules contributed by each template's ``[gpu].stacks`` —
+       looked up in ``scripts/gpu-stacks.toml``. The ``ARCHES_GPU`` env
+       var overrides the template's default stack list, matching the
+       behaviour of arches_installer.core.gpu_stacks at install time.
+
+    Mutually-exclusive llama.cpp variants are then arbitrated
+    (Vulkan-wins) and the losing variants are excluded, so we don't
+    waste time building a package variant the installer won't pacstrap.
+
+    Finally we filter to slugs whose module directory contains a
+    ``build.sh``.
+    """
+    config = _load_iso_config()
+    templates_dir = PROJECT_ROOT / "templates"
+    stack_defs = _load_gpu_stacks()
+
+    all_slugs: set[str] = set()
+    excluded_slugs: set[str] = set()
+
+    for tmpl_name in config.get("install", {}).get("templates", []):
+        tmpl_path = templates_dir / tmpl_name
+        if not tmpl_path.is_file():
+            continue
+        with open(tmpl_path, "rb") as f:
+            tmpl_data = tomllib.load(f)
+
+        # 1. Direct module includes
+        all_slugs.update(tmpl_data.get("modules", {}).get("include", []))
+
+        # 2. Modules pulled in via [gpu].stacks (with ARCHES_GPU override)
+        template_stacks = tmpl_data.get("gpu", {}).get("stacks", [])
+        effective_stacks = _apply_arches_gpu_override(template_stacks)
+        for stack_name in effective_stacks:
+            spec = stack_defs.get(stack_name)
+            if spec is None:
+                # Unknown stack — surface a warning but don't fail the
+                # build here; the installer will reject it later with a
+                # clearer error and the list of known stacks.
+                print(
+                    f"WARNING: iso-config.py build-modules: unknown GPU "
+                    f"stack {stack_name!r} referenced by {tmpl_name} "
+                    f"(or ARCHES_GPU). Known: "
+                    f"{', '.join(sorted(stack_defs)) or '(none)'}",
+                    file=sys.stderr,
+                )
+                continue
+            all_slugs.update(spec.get("modules", []))
+
+        # Apply llama.cpp Vulkan-wins arbitration so we don't build a
+        # variant the installer is going to ignore.
+        excluded_slugs.update(
+            _arbitrate_llama_cpp_modules(effective_stacks, stack_defs)
+        )
+
+    all_slugs -= excluded_slugs
+
+    # The llama.cpp build.sh lives in modules/llama-cpp/ but produces
+    # all three variant packages (vulkan / hip / cuda) under
+    # ARCHES_GPU control. The HIP and CUDA install-side modules
+    # (llama-cpp-hip, llama-cpp-cuda) don't ship their own build.sh.
+    # Ensure the master build script runs whenever ANY variant is
+    # wanted, so the corresponding .pkg.tar.* lands in arches-local.
+    if all_slugs & {"llama-cpp", "llama-cpp-hip", "llama-cpp-cuda"}:
+        all_slugs.add("llama-cpp")
+
+    # Print only those that have a build.sh
+    for slug in sorted(all_slugs):
+        if (modules_dir / slug / "build.sh").is_file():
+            print(slug)
+
+
 def cmd_is_graphical(modules_dir: Path) -> None:
     """Print 'true' if [graphical] includes a desktop module."""
     config = _load_iso_config()
@@ -193,6 +427,14 @@ def main() -> None:
 
     elif command == "templates":
         cmd_templates()
+
+    elif command == "build-modules":
+        if len(sys.argv) != 3:
+            print(
+                "Usage: iso-config.py build-modules <modules_dir>", file=sys.stderr
+            )
+            sys.exit(1)
+        cmd_build_modules(Path(sys.argv[2]))
 
     elif command == "is-graphical":
         if len(sys.argv) != 3:

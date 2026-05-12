@@ -1,0 +1,48 @@
+[meta]
+name = "LLM Inference Server"
+description = "Headless LLM inference node — configurable GPU vendor support"
+
+[system]
+timezone = "America/Denver"
+locale = "en_US.UTF-8"
+
+# ── GPU compute stacks ────────────────────────────────
+# Which GPU compute stacks the build should support. Each stack is a
+# named hardware-vendor + compute-API combination defined in
+# scripts/gpu-stacks.toml. The build merges each stack's modules and
+# packages into the install.
+#
+# Override at build time with ARCHES_GPU:
+#   make iso TEMPLATE=llm-inference ARCHES_GPU=amd-rocm
+#   make iso TEMPLATE=llm-inference ARCHES_GPU=nvidia-cuda
+#   make iso TEMPLATE=llm-inference ARCHES_GPU=amd-vulkan,intel-vulkan
+#
+# Mutually-exclusive llama.cpp variants are arbitrated automatically
+# ("Vulkan wins" if both Vulkan and HIP stacks are requested).
+#
+# Default below is amd-vulkan, matching the Radeon R9700 (RDNA4)
+# workstation case: Vulkan works on every RDNA generation today, so
+# this is the lowest-risk default. Swap in amd-rocm for raw-perf
+# native HIP once your ROCm version supports your GPU.
+[gpu]
+stacks = ["amd-vulkan"]
+
+[modules]
+include = [
+    # Base
+    "base",
+    "zsh",
+    "hardware-rescan",
+    # Networking
+    "networking",
+    # Containers
+    "containers",
+    # Tools that don't depend on a specific GPU vendor
+    "python",
+    "gpu-power-tools",
+    # Inference engines (vendor-agnostic; GPU stacks add per-vendor
+    # variants like ollama-cuda / ollama-rocm automatically)
+    "ollama",
+    "aphrodite",
+    "exo",
+]

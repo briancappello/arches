@@ -1,0 +1,27 @@
+[meta]
+name = "llama.cpp (Vulkan)"
+description = "llama.cpp inference server built from mainline git with Vulkan GPU backend"
+category = "service"
+
+[install.pacstrap]
+packages = [
+    # Custom-built package from modules/llama-cpp/build.sh
+    "llama.cpp-vulkan-arches",
+    # Vulkan loader + AMD ICD (also pulled by chwd, listed for clarity)
+    "vulkan-icd-loader",
+    "vulkan-radeon",
+    # Tooling required by the /usr/local/bin/llama-cpp-update helper
+    # for rebuilding from upstream master in place. Keep this set in
+    # sync with the makedepends in modules/llama-cpp/build.sh.
+    "git",
+    "cmake",
+    "ninja",
+    "openssl",
+    "openblas",
+    "vulkan-headers",
+    "shaderc",
+    "spirv-headers",
+]
+
+[dependencies]
+conflicts = ["llama-cpp-hip", "llama-cpp-cuda"]

@@ -30,4 +30,6 @@ packages = [
     "less",
     "man-db",
     "man-pages",
+    "tree",
+    "fzf",
 ]

@@ -1,0 +1,22 @@
+[meta]
+name = "Hardware Rescan"
+description = "Re-evaluate GPU drivers and hardware quirks on every boot (handles GPU swaps automatically)"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    # The rescan tool itself is a Python script that re-uses
+    # arches_installer.core.hardware — no external Python deps beyond
+    # what's already in the base install (python, ansible pull python).
+    "python",
+    # chwd is already in platforms/x86-64/platform.toml [base_packages]
+    # but we list it here so the dependency is explicit if this module
+    # is used on a future platform without it.
+    "chwd",
+]
+
+# NOTE: arches-hardware-rescan.service is NOT enabled here.
+# The Ansible role at ansible/tasks/main.yml deploys the unit file
+# AND enables it at firstboot. Enabling here would fail because the
+# unit file does not exist yet at the moment the installer's
+# enable_services() runs inside the chroot.

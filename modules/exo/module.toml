@@ -1,0 +1,35 @@
+[meta]
+name = "Exo"
+description = "Exo distributed LLM inference cluster node"
+category = "service"
+
+[install.pacstrap]
+# Exo is not published to PyPI and is built from source against a
+# strict ==3.13.* Python pin (system Python is 3.14). The build also
+# pulls a Rust pyo3 workspace member (`exo_pyo3_bindings`) that
+# upstream documents as requiring the nightly toolchain. Everything
+# below is needed at first-boot for the firstboot ansible role to
+# run `git clone + uv sync + cargo build`:
+#
+#   python:    runtime for ansible itself (system 3.14)
+#   uv:        manages the per-app 3.13 interpreter + lockfile sync
+#   git:       fetches the upstream repo
+#   rustup:    installs a nightly toolchain into the `exo` user's
+#              home (the pacman `rust` package is stable-only).
+#   gcc:       required by some Python wheels that fall through to
+#              sdist (e.g. zstandard) when no manylinux wheel matches.
+#   nodejs/npm: optional — needed only if you later opt-in to the
+#              Svelte dashboard build. The headless coordinator / API
+#              works without the dashboard.
+packages = [
+    "python",
+    "uv",
+    "git",
+    "rustup",
+    "gcc",
+    "nodejs",
+    "npm",
+]
+
+[dependencies]
+requires = ["python"]

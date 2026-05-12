@@ -1,0 +1,10 @@
+[meta]
+name = "GPU Power Tools"
+description = "GPU power management and monitoring utilities"
+category = "base"
+
+[install.pacstrap]
+packages = [
+    "nvtop",
+    "lm_sensors",
+]

@@ -9,9 +9,6 @@ import pytest
 
 from arches_installer.core.hardware import (
     DMIInfo,
-    HardwareConfig,
-    MachineProfile,
-    Quirk,
     detect_pci_ids,
     discover_machines,
     discover_quirks,

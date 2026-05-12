@@ -1,0 +1,35 @@
+[meta]
+name = "llama.cpp (NVIDIA CUDA)"
+description = "llama.cpp inference server built from mainline git with NVIDIA CUDA backend"
+category = "service"
+
+# Mutually exclusive with llama-cpp (Vulkan) and llama-cpp-hip (ROCm).
+# All three pacman packages provide `llama.cpp` so only one can be
+# installed at a time; we additionally declare module-level conflicts
+# so the installer rejects an obviously-broken selection before any
+# destructive operation.
+
+[install.pacstrap]
+packages = [
+    # Custom-built package from modules/llama-cpp/build.sh (shared build
+    # script — when ARCHES_GPU includes nvidia-cuda, the script also
+    # produces this CUDA-backed variant).
+    "llama.cpp-cuda-arches",
+    # Tooling required by the /usr/local/bin/llama-cpp-update helper for
+    # rebuilding from upstream master in place. Keep this set in sync
+    # with the makedepends in modules/llama-cpp/build.sh.
+    "git",
+    "cmake",
+    "ninja",
+    "openssl",
+    "openblas",
+    # CUDA toolkit (nvcc, cuBLAS, cuDNN headers, etc.). The `cuda`
+    # package installs to /opt/cuda; the llama-cpp-update helper
+    # references /opt/cuda/bin/nvcc when rebuilding.
+    "cuda",
+    "cuda-tools",
+]
+
+[dependencies]
+requires = ["cuda"]
+conflicts = ["llama-cpp", "llama-cpp-hip"]

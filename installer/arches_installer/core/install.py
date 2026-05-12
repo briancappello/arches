@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from arches_installer.core.disk import MOUNT_ROOT
@@ -82,21 +83,42 @@ def _setup_local_repo_mirror(log: LogCallback | None = None) -> Path | None:
 
 
 def _make_pacman_conf_with_cache() -> Path:
-    """Create a pacman.conf with local cache and local mirror for offline use.
+    """Create a pacman.conf with cache dirs and local mirror for offline/online use.
 
-    Returns the path to a temporary config file. If no ISO cache exists,
-    returns the original platform pacman.conf unchanged.
+    Always returns a custom config with CacheDir pointing at writable
+    storage.  The live ISO's root overlay (cowspace) is typically only
+    256 MB — far too small for the ~1-4 GB of packages pacstrap
+    downloads.  By directing the cache to the target filesystem (which
+    is already mounted at MOUNT_ROOT) we avoid filling the overlay.
+
+    When an offline ISO package cache exists, it is listed first so
+    pacman finds pre-cached packages without downloading.
     """
-    if not ISO_PKG_CACHE.exists() or not any(ISO_PKG_CACHE.glob("*.pkg.tar.*")):
-        return ISO_PACMAN_CONF
+    has_offline_cache = ISO_PKG_CACHE.exists() and any(
+        ISO_PKG_CACHE.glob("*.pkg.tar.*")
+    )
 
     conf_text = ISO_PACMAN_CONF.read_text()
 
-    # Add the ISO package cache as a CacheDir
-    cache_line = f"CacheDir = {ISO_PKG_CACHE}/\nCacheDir = /var/cache/pacman/pkg/\n"
+    # Build CacheDir lines.  Order matters — pacman searches in order
+    # and writes downloads to the FIRST writable CacheDir.
+    #
+    # 1. Offline ISO cache (read-only source, if present)
+    # 2. Target filesystem cache (writable, plenty of space)
+    # 3. Host live cache (fallback; on cowspace — small but needed
+    #    so pacman doesn't error if the target isn't mounted yet)
+    target_cache = MOUNT_ROOT / "var" / "cache" / "pacman" / "pkg"
+    target_cache.mkdir(parents=True, exist_ok=True)
+
+    cache_lines = ""
+    if has_offline_cache:
+        cache_lines += f"CacheDir = {ISO_PKG_CACHE}/\n"
+    cache_lines += f"CacheDir = {target_cache}/\n"
+    cache_lines += "CacheDir = /var/cache/pacman/pkg/\n"
+
     conf_text = conf_text.replace(
         "[options]\n",
-        f"[options]\n{cache_line}",
+        f"[options]\n{cache_lines}",
         1,
     )
 
@@ -208,6 +230,9 @@ def _query_available_packages(
     Returns a set of package names, or None if the query fails.
     Used to filter out packages that aren't in any configured repo.
     """
+    # Any pacman invocation against signed repos needs a ready keyring,
+    # otherwise we get "key is unknown" / "keyring is not writable".
+    _wait_for_keyring(log)
     try:
         result = subprocess.run(
             ["pacman", "--config", str(pacman_conf), "-Ssq"],
@@ -238,6 +263,66 @@ def _preseed_pacman_databases(log: LogCallback | None = None) -> None:
         _log("Pre-seeded pacman databases from live system.", log)
 
 
+def _preseed_pacman_keyring(log: LogCallback | None = None) -> None:
+    """Copy the live system's pacman keyring into the target.
+
+    pacstrap initialises a fresh keyring in the target via
+    ``pacman-key --init && --populate``.  ``--populate`` only installs
+    keys from keyring packages already present in the target — at that
+    point only ``archlinux-keyring`` exists.  Third-party keyrings
+    (e.g. ``cachyos-keyring``) haven't been installed yet, so their
+    signing keys are missing and ``pacman -Sy`` rejects the database
+    signatures with "unknown trust".
+
+    By copying the live ISO's fully-populated keyring into the target
+    *before* pacstrap runs, all keys (Arch + CachyOS + any other
+    platform-specific keyrings baked into the ISO) are trusted from
+    the start.  pacstrap's own ``pacman-key --init`` is a no-op when
+    it finds an existing keyring, so there is no conflict.
+    """
+    host_gnupg = Path("/etc/pacman.d/gnupg")
+    target_gnupg = MOUNT_ROOT / "etc" / "pacman.d" / "gnupg"
+
+    if not host_gnupg.exists() or not (host_gnupg / "trustdb.gpg").exists():
+        _log("WARNING: Host keyring not found, skipping keyring pre-seed.", log)
+        return
+
+    target_gnupg.mkdir(parents=True, exist_ok=True)
+
+    def _ignore_sockets(directory: str, entries: list[str]) -> list[str]:
+        """Skip Unix domain sockets (gpg-agent, keyboxd, dirmngr)."""
+        ignored = []
+        for entry in entries:
+            full = Path(directory) / entry
+            try:
+                if full.is_socket():
+                    ignored.append(entry)
+            except OSError:
+                ignored.append(entry)
+        return ignored
+
+    shutil.copytree(
+        host_gnupg, target_gnupg, dirs_exist_ok=True, ignore=_ignore_sockets
+    )
+
+    # The live ISO's pacman-init.service chmods /etc/pacman.d/gnupg to
+    # 0700 (gpg2 refuses to write to a homedir that's group/other
+    # accessible). copytree preserves that mode on the target — but
+    # 0700 prevents an unprivileged user on the INSTALLED system from
+    # running e.g. `pacman -Q` (pacman wants to read pubring.gpg /
+    # trustdb.gpg to validate db signatures, and can't even traverse
+    # the directory). Vanilla Arch ships /etc/pacman.d/gnupg at 0755;
+    # match that here. gpg2 is happy with 0755 + 0600 files inside,
+    # which is exactly what we get after pacstrap re-populates the
+    # keyring.
+    try:
+        target_gnupg.chmod(0o755)
+    except OSError as e:
+        _log(f"WARNING: failed to chmod {target_gnupg} to 0755: {e}", log)
+
+    _log("Pre-seeded pacman keyring from live system.", log)
+
+
 def pacstrap(
     platform: PlatformConfig,
     template: InstallTemplate,
@@ -246,6 +331,11 @@ def pacstrap(
 ) -> None:
     """Install base packages into MOUNT_ROOT via pacstrap."""
     _log("Running pacstrap...", log)
+
+    # Defensive: make sure the live keyring is ready before we touch pacman.
+    # _pre_pacstrap_setup also calls this, but pacstrap() may be invoked from
+    # other code paths (host-install, tests, manual recovery) where it hasn't run.
+    _wait_for_keyring(log)
 
     # All base packages come from the platform config (single source of truth).
     # This includes core system packages, keyrings, bootloader, etc.
@@ -268,21 +358,23 @@ def pacstrap(
     _log(f"Total packages: {len(all_packages)}", log)
 
     pacman_conf = _make_pacman_conf_with_cache()
-    if pacman_conf != ISO_PACMAN_CONF:
+    has_offline_cache = ISO_PKG_CACHE.exists() and any(
+        ISO_PKG_CACHE.glob("*.pkg.tar.*")
+    )
+    if has_offline_cache:
         _log(f"Using cached packages from {ISO_PKG_CACHE}", log)
-        # Log local mirror status
         cache_sync = ISO_PKG_CACHE / "sync"
         if cache_sync.exists():
             dbs = list(cache_sync.glob("*.db"))
             _log(f"  Cached databases: {len(dbs)} in {cache_sync}", log)
         else:
             _log(f"  WARNING: No cached databases at {cache_sync}", log)
-        # Log file:// servers in generated config
-        for line in pacman_conf.read_text().splitlines():
-            if "Server = file://" in line:
-                _log(f"  {line.strip()}", log)
     else:
-        _log("No package cache found — packages will be downloaded", log)
+        _log("No offline package cache — packages will be downloaded", log)
+    # Log CacheDir and file:// servers in generated config
+    for line in pacman_conf.read_text().splitlines():
+        if "CacheDir" in line or "Server = file://" in line:
+            _log(f"  {line.strip()}", log)
 
     # Check if the arches-local repo is empty. If so, filter out packages
     # that aren't available in upstream repos to avoid pacstrap failing on
@@ -385,6 +477,46 @@ def generate_fstab(log: LogCallback | None = None) -> None:
 
     fstab_path = MOUNT_ROOT / "etc" / "fstab"
     fstab_path.write_text("".join(filtered))
+
+
+def append_swap_fstab_entries(
+    swap_partitions: list[str],
+    log: LogCallback | None = None,
+) -> None:
+    """Append fstab entries for swap partitions.
+
+    ``genfstab`` only emits swap entries for *active* swap (read from
+    /proc/swaps). Swap partitions created by ``mkswap`` during disk
+    layout application aren't active yet — so they never appear in
+    fstab unless we add them ourselves.
+
+    Each partition path is resolved to a UUID via ``blkid`` so the
+    fstab entry survives reboots even if kernel device names change.
+    """
+    if not swap_partitions:
+        return
+
+    fstab_path = MOUNT_ROOT / "etc" / "fstab"
+    lines = ["", "# Swap partitions (added by Arches installer)"]
+    for part in swap_partitions:
+        try:
+            uuid = run(
+                ["blkid", "-s", "UUID", "-o", "value", part],
+                log=log,
+                capture_output=True,
+            ).stdout.strip()
+        except subprocess.CalledProcessError:
+            _log(f"  WARNING: could not read UUID for swap {part}", log)
+            continue
+        if not uuid:
+            _log(f"  WARNING: empty UUID for swap {part}", log)
+            continue
+        lines.append(f"UUID={uuid}\tnone\tswap\tdefaults\t0 0")
+        _log(f"  swap fstab: UUID={uuid} ({part})", log)
+
+    if len(lines) > 2:  # we actually added at least one entry
+        with open(fstab_path, "a") as f:
+            f.write("\n".join(lines) + "\n")
 
 
 def _bind_mount_var_path(
@@ -788,13 +920,155 @@ def run_hardware_detection(
             raise
 
 
+# Module-level cache: once the keyring is verified ready in this process,
+# subsequent callers (e.g. _query_available_packages, pacstrap) can short-circuit.
+_KEYRING_READY = False
+
+
+def _keyring_is_populated() -> bool:
+    """Return True if /etc/pacman.d/gnupg looks fully initialized.
+
+    Checks the marker file written by pacman-init.service's ExecStartPost,
+    plus the canonical trustdb.gpg file as a fallback.
+    """
+    marker = Path("/run/arches-keyring-ready")
+    if marker.exists():
+        return True
+    trustdb = Path("/etc/pacman.d/gnupg/trustdb.gpg")
+    pubring = Path("/etc/pacman.d/gnupg/pubring.gpg")
+    # trustdb alone isn't sufficient — --init creates it before --populate
+    # imports keys. We need both, and a non-empty pubring.
+    return (
+        trustdb.exists()
+        and trustdb.stat().st_size > 0
+        and pubring.exists()
+        and pubring.stat().st_size > 0
+    )
+
+
+def _wait_for_keyring(log: LogCallback | None = None, timeout: int = 120) -> None:
+    """Wait for pacman-init.service to finish populating the keyring.
+
+    On the live ISO, /etc/pacman.d/gnupg is a tmpfs that starts empty.
+    pacman-init.service runs ``pacman-key --init && --populate`` but it
+    races with getty autologin — if the installer starts pacstrap before
+    the keyring is ready, pacman fails with "keyring is not writable"
+    (gpg locks) or "key is unknown" (populate not yet finished).
+
+    Idempotent and cheap once the keyring is ready (sets a process-local
+    flag so repeated calls are instant). Safe to call before any pacman
+    invocation in the installer.
+    """
+    global _KEYRING_READY
+    if _KEYRING_READY:
+        return
+
+    if _keyring_is_populated():
+        _log("Pacman keyring already initialized.", log)
+        _KEYRING_READY = True
+        return
+
+    _log("Waiting for pacman-init.service to finish...", log)
+
+    # Best-effort: kick the unit in case it hasn't started yet (e.g. when
+    # installer is launched manually before multi-user.target).
+    try:
+        subprocess.run(
+            ["systemctl", "start", "--no-block", "pacman-init.service"],
+            check=False,
+            capture_output=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    deadline = time.monotonic() + timeout
+    service_failed = False
+    while time.monotonic() < deadline:
+        if _keyring_is_populated():
+            _log("Pacman keyring populated.", log)
+            _KEYRING_READY = True
+            return
+
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "pacman-init.service"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            state = result.stdout.strip()
+            if state == "failed":
+                _log(
+                    "WARNING: pacman-init.service failed. "
+                    "Falling back to manual keyring init.",
+                    log,
+                )
+                service_failed = True
+                break
+            # "active" + RemainAfterExit oneshot = done, but double-check
+            # files actually exist (defensive against partial runs).
+            if state == "active" and _keyring_is_populated():
+                _log("pacman-init.service completed.", log)
+                _KEYRING_READY = True
+                return
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        time.sleep(2)
+
+    # Timeout or explicit failure: do it ourselves. Ensure homedir perms
+    # are gpg-correct before invoking pacman-key.
+    if not service_failed:
+        _log(
+            "Timed out waiting for pacman-init.service; "
+            "initializing keyring manually.",
+            log,
+        )
+    gnupg_dir = Path("/etc/pacman.d/gnupg")
+    try:
+        gnupg_dir.mkdir(parents=True, exist_ok=True)
+        gnupg_dir.chmod(0o700)
+    except OSError as e:
+        _log(f"WARNING: could not prepare {gnupg_dir}: {e}", log)
+
+    try:
+        subprocess.run(
+            ["pacman-key", "--init"],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        subprocess.run(
+            ["pacman-key", "--populate"],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        _log("Pacman keyring initialized manually.", log)
+        _KEYRING_READY = True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        stderr = getattr(e, "stderr", b"")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        _log(f"WARNING: Manual keyring init failed: {e}\n{stderr}", log)
+
+
 def _pre_pacstrap_setup(log: LogCallback | None = None) -> None:
     """Create config files that pacstrap's post-install hooks need."""
     etc = MOUNT_ROOT / "etc"
     etc.mkdir(parents=True, exist_ok=True)
 
+    # Ensure the live ISO's pacman keyring is ready before pacstrap.
+    # pacman-init.service races with getty autologin on the live ISO.
+    _wait_for_keyring(log)
+
     # Pre-seed pacman databases so pacstrap works offline
     _preseed_pacman_databases(log)
+
+    # Pre-seed the keyring so pacstrap trusts third-party repo signatures
+    # (e.g. CachyOS) from the start, before their keyring packages are installed.
+    _preseed_pacman_keyring(log)
 
     # mkinitcpio's keymap/sd-vconsole hooks need vconsole.conf
     (etc / "vconsole.conf").write_text("KEYMAP=us\nFONT=ter-116n\n")
@@ -1011,12 +1285,73 @@ def install_system(
     configure_apple_input(platform, log)
     # Deploy hardware quirk/machine config files (modprobe, udev, sysctl)
     if hardware:
-        from arches_installer.core.hardware import deploy_hardware_files
+        from arches_installer.core.hardware import (
+            compute_fingerprint,
+            deploy_hardware_files,
+            detect_pci_ids,
+            get_dmi_info,
+            write_fingerprint,
+            write_manifest,
+        )
 
-        deploy_hardware_files(hardware, log)
+        manifest = deploy_hardware_files(hardware, log)
+        write_manifest(manifest, MOUNT_ROOT, log)
     copy_network_profiles(log)
     preseed_network_deps(username, log)
     run_hardware_detection(platform, log)
+    # Snapshot the hardware identity (PCI + DMI + chwd profile) so the
+    # runtime arches-hardware-rescan service has a baseline to compare
+    # against on every subsequent boot. We compute this AFTER chwd runs
+    # so the recorded chwd_profile reflects the installer's decision.
+    # Note: detect_chwd_profile() needs to run inside the chroot because
+    # chwd's state lives in the target system, not the live ISO.
+    if hardware or platform.hardware_detection.enabled:
+        from arches_installer.core.hardware import (
+            compute_fingerprint,
+            detect_pci_ids,
+            get_dmi_info,
+            write_fingerprint,
+        )
+
+        try:
+            # PCI + DMI are read from the build host (which sees the
+            # same physical hardware as the target during install).
+            pci_ids = detect_pci_ids()
+            dmi = get_dmi_info()
+            # chwd profile must be read from the chroot. Best-effort:
+            # if it fails, we record an empty profile name — the first
+            # runtime rescan will then trigger and re-record.
+            chwd_profile = ""
+            try:
+                result = subprocess.run(
+                    [
+                        "arch-chroot",
+                        str(MOUNT_ROOT),
+                        "chwd",
+                        "--list-installed",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.splitlines():
+                        line = line.strip()
+                        if line and not line.startswith(
+                            ("=", "-", "NAME", "Profile")
+                        ):
+                            chwd_profile = line.split()[0]
+                            break
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            fp = compute_fingerprint(pci_ids, dmi, chwd_profile)
+            write_fingerprint(fp, MOUNT_ROOT, log)
+        except Exception as e:
+            # Never fail the install over fingerprint recording — the
+            # runtime rescan will just see an empty fingerprint and
+            # do its first reconciliation on the next boot.
+            _log(f"  warning: failed to record hardware fingerprint: {e}", log)
     _unmount_iso_cache_from_target(log)
     # NOTE: mkinitcpio is NOT run here — it's handled by
     # limine-mkinitcpio in the bootloader phase (Phase 3),

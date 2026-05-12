@@ -1,0 +1,13 @@
+[meta]
+name = "Aphrodite Engine"
+description = "High-performance LLM inference engine (OpenAI-compatible API)"
+category = "service"
+
+[install.pacstrap]
+packages = [
+    "python",
+    "uv",
+]
+
+[dependencies]
+requires = ["python"]

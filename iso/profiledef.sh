@@ -54,6 +54,7 @@ file_permissions=(
     ["/root/.bash_profile"]="0:0:644"
     ["/usr/local/bin/arches-install"]="0:0:755"
     ["/usr/local/bin/arches-liveuser-setup"]="0:0:755"
+    ["/usr/local/bin/arches-live-sshd-setup"]="0:0:755"
     ["/etc/sudoers.d/wheel"]="0:0:440"
 )
 

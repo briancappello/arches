@@ -1,0 +1,118 @@
+[install]
+template = "llm-inference.toml"
+# The llm-workstation layout declares two disk roles:
+#   - "root":  fast NVMe SSD for the OS and active workloads
+#   - "bulk":  larger SATA disk mounted at /var/lib/models
+# On a single-disk host, override [[disks]] below to pin both roles
+# to the same physical disk, or switch disk_layout to "basic.toml".
+disk_layout = "llm-workstation.toml"
+
+# GPU compute stack — declared in the template's [gpu].stacks list
+# (see templates/llm-inference.toml). Override at build time:
+#
+#   ARCHES_GPU=amd-rocm make iso TEMPLATE=llm-inference
+#   ARCHES_GPU=nvidia-cuda make iso TEMPLATE=llm-inference
+#   ARCHES_GPU=amd-vulkan,intel-vulkan make iso TEMPLATE=llm-inference
+#
+# Available stacks: amd-vulkan, amd-rocm, intel-vulkan, nvidia-cuda
+# (defined in scripts/gpu-stacks.toml). Mutually-exclusive llama.cpp
+# variants are arbitrated automatically — Vulkan wins over HIP.
+hostname = "aorus"
+username = "brian"
+# IMPORTANT: change this before building. The build will REFUSE to
+# produce an ISO with placeholder passwords like "changeme", "password",
+# "admin", "root", "arches", or empty. Override at your own risk with
+# ARCHES_ALLOW_DEFAULT_PASSWORD=1 (NOT recommended for any host that
+# will reach a real network).
+password = "changeme"
+
+# Headless servers should boot into the installed system after install
+# completes so they come up on SSH automatically. Set shutdown=true
+# instead if you want a manual power-on handoff (e.g. for a
+# clean-room imaging workflow).
+#
+# Currently set to STAY ON after install (success or failure) for
+# debugging. Switch to reboot=true once the install reliably succeeds.
+reboot = false
+shutdown = false
+
+# What to do when the install FAILS in auto mode. Headless rack hosts
+# can't show a TUI button to a present operator, so the default is to
+# power off and let you investigate later via the install media.
+# Options:
+#   "poweroff" (default) — clean shutdown, preserves install log
+#   "reboot"             — may loop into installer; useful with auto-recovery
+#   "wait"               — leave the TUI up (only useful with a serial console)
+#
+# Currently set to "wait" so we can see error messages on the screen
+# during debugging. Switch back to "poweroff" for production headless.
+failed_action = "wait"
+
+# === Networking ===
+# By default (no [network] / [wifi] section): the live ISO and the
+# installed system both use DHCP via NetworkManager. With mDNS enabled
+# (see modules/networking), the box is reachable as
+# `ssh admin@aorus.local` from the same L2 segment.
+#
+# For a known IP on a managed network, uncomment ONE of these:
+
+# --- Wired static IP ---
+# [network]
+# interface = "eth0"            # check `ip link` on a test boot
+# static_ip = "192.168.1.50/24"
+# gateway   = "192.168.1.1"
+# dns       = ["1.1.1.1", "8.8.8.8"]
+
+# --- WiFi (with optional static IP) ---
+# [wifi]
+# ssid = "MyNetwork"
+# psk  = "hunter2"
+# static_ip = "192.168.1.50/24"  # omit for DHCP
+# gateway   = "192.168.1.1"
+# dns       = ["1.1.1.1", "8.8.8.8"]
+
+# === Per-install disk role overrides ===
+# Pin disk roles to specific physical hardware. The layout declares
+# roles ("root", "bulk") with generic descriptors ("NVMe SSD", "SATA");
+# uncomment + edit below to pin them to a specific drive by size,
+# vendor, model fragment, serial number, or /dev path.
+#
+# Descriptor syntax (whitespace-separated, any order, case-insensitive):
+#   2TB | 512G | 1.5T   — size (±10% tolerance)
+#   NVMe | SATA | USB   — transport
+#   SSD | HDD            — rotational vs solid-state
+#   Samsung | WD | Crucial | Seagate | ...  — vendor (aliases supported)
+#   SN850x | 990_PRO | <serial>             — model/serial substring
+#   /dev/nvme0n1        — explicit path (escape hatch)
+#
+# Every recognised token must match somewhere in the candidate disk.
+# A single-disk role must resolve to EXACTLY one disk — ambiguity is
+# a build error.
+
+[[disks]]
+name = "root"
+device = "2TB NVMe"
+
+[[disks]]
+name = "bulk"
+device = "8TB SATA"
+
+# Example: single-disk host (no bulk drive). Pin both roles to the
+# same NVMe to make the install succeed even though /var/lib/models
+# ends up on the same physical disk as /.
+# [[disks]]
+# name = "root"
+# device = "1TB NVMe"
+#
+# [[disks]]
+# name = "bulk"
+# device = "1TB NVMe"   # same descriptor; resolver detects the conflict
+# # ^^^ This will FAIL with a clear error because both roles would
+# # claim the same disk. The right fix on a single-disk host is to
+# # switch disk_layout to "basic.toml" (single-disk btrfs).
+
+# Optional: pass variables to Ansible roles at first boot.
+# These are forwarded as -e key=value to ansible-playbook.
+# [ansible_vars]
+# exo_discovery = "udp"
+# exo_seed_nodes = "192.168.1.10:52415,192.168.1.11:52415"

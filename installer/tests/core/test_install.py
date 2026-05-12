@@ -213,30 +213,47 @@ class TestSetupLocalRepoMirror:
 class TestMakePacmanConfWithCache:
     """Tests for _make_pacman_conf_with_cache."""
 
-    def test_returns_original_when_no_cache(
+    def test_online_build_still_redirects_cache(
         self, tmp_path: Path, iso_pacman_conf: Path
     ):
+        """Even without an offline cache, CacheDir should point at the target."""
         from arches_installer.core.install import _make_pacman_conf_with_cache
 
         empty_cache = tmp_path / "no-cache"
         empty_cache.mkdir()
+        fake_mnt = tmp_path / "mnt"
+        fake_mnt.mkdir()
 
         with (
             patch(f"{MODULE}.ISO_PKG_CACHE", empty_cache),
             patch(f"{MODULE}.ISO_PACMAN_CONF", iso_pacman_conf),
+            patch(f"{MODULE}.MOUNT_ROOT", fake_mnt),
+            patch(f"{MODULE}._setup_local_repo_mirror", return_value=None),
         ):
             result = _make_pacman_conf_with_cache()
 
-        assert result == iso_pacman_conf
+        # Should always return a custom config (never the original)
+        assert result != iso_pacman_conf
+        text = result.read_text()
+        # No offline cache line
+        assert str(empty_cache) not in text
+        # Target cache IS present
+        target_cache = fake_mnt / "var" / "cache" / "pacman" / "pkg"
+        assert f"CacheDir = {target_cache}/" in text
+        assert "CacheDir = /var/cache/pacman/pkg/" in text
 
     def test_creates_temp_conf_with_cachedir(
         self, tmp_path: Path, iso_pkg_cache: Path, iso_pacman_conf: Path
     ):
         from arches_installer.core.install import _make_pacman_conf_with_cache
 
+        fake_mnt = tmp_path / "mnt"
+        fake_mnt.mkdir()
+
         with (
             patch(f"{MODULE}.ISO_PKG_CACHE", iso_pkg_cache),
             patch(f"{MODULE}.ISO_PACMAN_CONF", iso_pacman_conf),
+            patch(f"{MODULE}.MOUNT_ROOT", fake_mnt),
             patch(f"{MODULE}._setup_local_repo_mirror", return_value=None),
         ):
             result = _make_pacman_conf_with_cache()
@@ -244,6 +261,8 @@ class TestMakePacmanConfWithCache:
         assert result != iso_pacman_conf
         text = result.read_text()
         assert f"CacheDir = {iso_pkg_cache}/" in text
+        target_cache = fake_mnt / "var" / "cache" / "pacman" / "pkg"
+        assert f"CacheDir = {target_cache}/" in text
         assert "CacheDir = /var/cache/pacman/pkg/" in text
 
     def test_inserts_local_mirror_server_lines(
@@ -251,6 +270,8 @@ class TestMakePacmanConfWithCache:
     ):
         from arches_installer.core.install import _make_pacman_conf_with_cache
 
+        fake_mnt = tmp_path / "mnt"
+        fake_mnt.mkdir()
         mirror_dir = tmp_path / "mirror"
         (mirror_dir / "core").mkdir(parents=True)
         (mirror_dir / "extra").mkdir(parents=True)
@@ -258,6 +279,7 @@ class TestMakePacmanConfWithCache:
         with (
             patch(f"{MODULE}.ISO_PKG_CACHE", iso_pkg_cache),
             patch(f"{MODULE}.ISO_PACMAN_CONF", iso_pacman_conf),
+            patch(f"{MODULE}.MOUNT_ROOT", fake_mnt),
             patch(f"{MODULE}._setup_local_repo_mirror", return_value=mirror_dir),
         ):
             result = _make_pacman_conf_with_cache()
@@ -437,7 +459,10 @@ class TestQueryAvailablePackages:
         fake_result = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="base\nlinux\ngit\n"
         )
-        with patch("subprocess.run", return_value=fake_result) as mock_run:
+        with (
+            patch(f"{MODULE}._wait_for_keyring"),
+            patch("subprocess.run", return_value=fake_result) as mock_run,
+        ):
             result = _query_available_packages(conf)
 
         assert result == {"base", "linux", "git"}
@@ -449,9 +474,12 @@ class TestQueryAvailablePackages:
         conf = tmp_path / "pacman.conf"
         conf.write_text("[options]\n")
 
-        with patch(
-            "subprocess.run",
-            side_effect=subprocess.CalledProcessError(1, "pacman"),
+        with (
+            patch(f"{MODULE}._wait_for_keyring"),
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, "pacman"),
+            ),
         ):
             result = _query_available_packages(conf)
 
@@ -463,7 +491,10 @@ class TestQueryAvailablePackages:
         conf = tmp_path / "pacman.conf"
         conf.write_text("[options]\n")
 
-        with patch("subprocess.run", side_effect=FileNotFoundError):
+        with (
+            patch(f"{MODULE}._wait_for_keyring"),
+            patch("subprocess.run", side_effect=FileNotFoundError),
+        ):
             result = _query_available_packages(conf)
 
         assert result is None
@@ -510,6 +541,80 @@ class TestPreseedPacmanDatabases:
 
 
 # ---------------------------------------------------------------------------
+# Tests: _preseed_pacman_keyring
+# ---------------------------------------------------------------------------
+
+
+class TestPreseedPacmanKeyring:
+    """Tests for _preseed_pacman_keyring."""
+
+    def _make_host_keyring(self, root: Path, *, dir_mode: int = 0o700) -> Path:
+        """Create a synthetic /etc/pacman.d/gnupg layout under ``root``."""
+        host_gnupg = root / "host-gnupg"
+        host_gnupg.mkdir()
+        # Required: trustdb.gpg presence is how the preseed detects
+        # "host keyring exists".
+        (host_gnupg / "trustdb.gpg").write_bytes(b"trust")
+        (host_gnupg / "pubring.gpg").write_bytes(b"pub")
+        (host_gnupg / "gpg.conf").write_text("# placeholder\n")
+        host_gnupg.chmod(dir_mode)
+        return host_gnupg
+
+    def test_target_gnupg_is_0755_after_preseed(
+        self, tmp_path: Path, mnt: Path
+    ) -> None:
+        """The copied target /etc/pacman.d/gnupg must end up 0755.
+
+        Regression test: pacstrap on the LIVE ISO chmods the host
+        gnupg dir to 0700 (gpg2's homedir paranoia). copytree preserves
+        that mode, but on the installed system 0700 prevents
+        unprivileged users from running even `pacman -Q` (it needs to
+        traverse the dir + read pubring.gpg to validate db signatures).
+        """
+        from arches_installer.core.install import _preseed_pacman_keyring
+
+        host_gnupg = self._make_host_keyring(tmp_path, dir_mode=0o700)
+
+        with patch(f"{MODULE}.MOUNT_ROOT", mnt), patch(
+            f"{MODULE}.Path",
+            side_effect=lambda p: (
+                host_gnupg if p == "/etc/pacman.d/gnupg" else Path(p)
+            ),
+        ):
+            _preseed_pacman_keyring()
+
+        target_gnupg = mnt / "etc" / "pacman.d" / "gnupg"
+        assert target_gnupg.is_dir()
+        mode = target_gnupg.stat().st_mode & 0o777
+        assert mode == 0o755, (
+            f"Expected target /etc/pacman.d/gnupg at 0755 (so non-root "
+            f"pacman can traverse it), got 0o{mode:03o}"
+        )
+
+        # The file contents from the host should still be present.
+        assert (target_gnupg / "trustdb.gpg").read_bytes() == b"trust"
+        assert (target_gnupg / "pubring.gpg").read_bytes() == b"pub"
+
+    def test_noop_when_host_keyring_missing(self, mnt: Path) -> None:
+        """If no host keyring exists, the function must not raise."""
+        from arches_installer.core.install import _preseed_pacman_keyring
+
+        nonexistent = Path("/does/not/exist/gnupg")
+        with patch(f"{MODULE}.MOUNT_ROOT", mnt), patch(
+            f"{MODULE}.Path",
+            side_effect=lambda p: (
+                nonexistent if p == "/etc/pacman.d/gnupg" else Path(p)
+            ),
+        ):
+            # Should not raise.
+            _preseed_pacman_keyring()
+
+        target_gnupg = mnt / "etc" / "pacman.d" / "gnupg"
+        # No keyring on host = nothing copied to target.
+        assert not target_gnupg.exists()
+
+
+# ---------------------------------------------------------------------------
 # Tests: pacstrap
 # ---------------------------------------------------------------------------
 
@@ -528,6 +633,7 @@ class TestPacstrap:
 
         with (
             patch(f"{MODULE}.MOUNT_ROOT", mnt),
+            patch(f"{MODULE}._wait_for_keyring"),
             patch(
                 f"{MODULE}._make_pacman_conf_with_cache", return_value=iso_pacman_conf
             ),
@@ -574,6 +680,7 @@ class TestPacstrap:
 
         with (
             patch(f"{MODULE}.MOUNT_ROOT", mnt),
+            patch(f"{MODULE}._wait_for_keyring"),
             patch(
                 f"{MODULE}._make_pacman_conf_with_cache", return_value=iso_pacman_conf
             ),
@@ -596,6 +703,7 @@ class TestPacstrap:
 
         with (
             patch(f"{MODULE}.MOUNT_ROOT", mnt),
+            patch(f"{MODULE}._wait_for_keyring"),
             patch(
                 f"{MODULE}._make_pacman_conf_with_cache", return_value=iso_pacman_conf
             ),
@@ -634,6 +742,7 @@ class TestPacstrap:
 
         with (
             patch(f"{MODULE}.MOUNT_ROOT", mnt),
+            patch(f"{MODULE}._wait_for_keyring"),
             patch(
                 f"{MODULE}._make_pacman_conf_with_cache", return_value=iso_pacman_conf
             ),

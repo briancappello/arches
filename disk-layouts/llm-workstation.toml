@@ -1,0 +1,125 @@
+# LLM Workstation disk layout — asymmetric two-disk:
+#
+#   - "root":  fast NVMe SSD for OS, home dirs, and active workspaces
+#   - "bulk":  larger SATA disk for archived models / datasets,
+#              exposed inside home via a symlink (created at firstboot)
+#
+# The root disk uses a single btrfs partition with snapshot-friendly
+# subvolumes:
+#   @          — root filesystem
+#   @home      — user home dirs
+#   @var       — /var (high churn — separate so / can snapshot cleanly)
+#   @var/log   — system logs (excluded from / snapshots; replaced via
+#                snapper exclude rules — most distros' convention)
+#   @var/cache — pacman/journal caches (large + ephemeral)
+#
+# The bulk disk is mounted at /opt/models. The llm-inference template's
+# firstboot Ansible (modules/llama-cpp/ansible) creates a symlink at
+# /home/<username>/models -> /opt/models so users can address bulk
+# storage as ~/models without the layout needing to know the username.
+#
+# To customise per-host:
+#   - Pin disks by serial/model in templates/auto-install-inference.toml
+#     [[disks]] overrides (same role names: "root", "bulk").
+#   - Or create a hardware/machines/<host>.toml with per-DMI [[disks]]
+#     pins (matched automatically when the box boots the ISO).
+#
+# Both descriptors below are deliberately generic so the layout works
+# on any NVMe+SATA combination; on a real install you'll typically
+# override them with specific serials or model strings.
+
+[meta]
+name = "LLM Workstation"
+description = "Root on NVMe (btrfs, snapshot-friendly subvolumes) + bulk on SATA, symlinked into home."
+bootloaders = ["limine", "grub"]
+
+# ── Disk roles ─────────────────────────────────────────
+
+[[disks]]
+name = "root"
+device = "NVMe SSD"
+# Override examples (in auto-install or machine profile):
+#   device = "2TB NVMe SSD"            # require 2TB capacity
+#   device = "Samsung NVMe"            # require Samsung vendor
+#   device = "SN850x"                  # require WD SN850x model
+#   device = "/dev/nvme0n1"            # absolute path (escape hatch)
+#   device = "S5GXNX0R123456"          # exact serial number
+
+[[disks]]
+name = "bulk"
+device = "SATA"
+# Override examples:
+#   device = "8TB Seagate SATA"        # spinning rust
+#   device = "4TB SATA SSD"            # SATA SSD instead of HDD
+#   device = "Crucial 2TB"             # specific drive
+
+# ── Partitions ─────────────────────────────────────────
+
+# /boot ESP — Limine + kernel images + initramfs live here.
+# 8G is generous (typical /boot needs 200M-1G); the extra headroom
+# accommodates multiple kernel variants (linux-cachyos + LTS) plus
+# fallback initramfs images plus a small margin for older kernel
+# snapshots if you bisect.
+[[partitions]]
+disk = "root"
+size = "8G"
+filesystem = "vfat"
+mount_point = "/boot"
+label = "ESP"
+
+# Single btrfs partition filling the rest of the root disk. All
+# subvolumes live inside this filesystem so they can be snapshotted
+# atomically.
+[[partitions]]
+disk = "root"
+size = "*"
+filesystem = "btrfs"
+mount_point = "/"
+label = "archroot"
+# zstd:1 is the fastest btrfs compression option — appropriate for
+# the OS and active workspaces where read latency matters more than
+# space savings. Bulk gets heavier compression (see below).
+mount_options = "compress=zstd:1,noatime,ssd,discard=async"
+
+[[partitions.subvolumes]]
+name = "@"
+mount_point = "/"
+
+[[partitions.subvolumes]]
+name = "@home"
+mount_point = "/home"
+
+# @var lets the snapshot tool exclude high-churn data (logs, pacman
+# cache) from / snapshots. Without this every system snapshot would
+# include the day's journal and the package cache, which is expensive
+# and rarely useful for rollback.
+[[partitions.subvolumes]]
+name = "@var"
+mount_point = "/var"
+
+# Nested subvolumes for the chunkiest sub-paths under /var. These
+# are NOT included in @var snapshots (btrfs subvolumes don't recurse),
+# so snapper rollback of @var leaves /var/log and /var/cache alone —
+# the right semantics for systemd boxes.
+[[partitions.subvolumes]]
+name = "@var-log"
+mount_point = "/var/log"
+
+[[partitions.subvolumes]]
+name = "@var-cache"
+mount_point = "/var/cache"
+
+# ── Bulk storage ───────────────────────────────────────
+# Single btrfs partition filling the bulk disk. Heavier compression
+# (zstd:3) since this data is mostly cold archives — model weights,
+# dataset tarballs, video, etc. — and benefits from the extra
+# squeeze. No subvolumes because per-file rollback isn't useful for
+# this data and snapshot overhead would be wasteful on TBs of cold
+# weights.
+[[partitions]]
+disk = "bulk"
+size = "*"
+filesystem = "btrfs"
+mount_point = "/opt/models"
+label = "models"
+mount_options = "compress=zstd:3,noatime"

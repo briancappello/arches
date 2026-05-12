@@ -17,14 +17,17 @@ from arches_installer.core.disk_layout import (
     RaidBackend,
     RaidConfig,
     RaidLevel,
+    ResolvedDiskRoles,
     apply_disk_layout,
+    apply_disk_layout_resolved,
     mirror_esp,
     setup_raid_mdadm,
+    write_disk_roles_state,
     _part_name,
 )
 from arches_installer.core.firstboot import inject_firstboot_service
-from arches_installer.core.hardware import HardwareConfig, deploy_hardware_files
-from arches_installer.core.install import install_system
+from arches_installer.core.hardware import HardwareConfig
+from arches_installer.core.install import append_swap_fstab_entries, install_system
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.run import LogCallback
 from arches_installer.core.snapper import setup_snapshots
@@ -48,11 +51,20 @@ class InstallParams:
     # Used when partition_map is None.
     disk_layout: DiskLayout | None = None
     # Optional RAID configuration (btrfs multi-device or mdadm).
+    # Used by the legacy single-disk-or-homogeneous-RAID flow only.
+    # Multi-disk role-based layouts use ``resolved_disk_roles`` instead.
     raid_config: RaidConfig | None = None
+    # Resolved multi-disk role assignments. When set, the disk layout
+    # is applied via :func:`apply_disk_layout_resolved` and the legacy
+    # ``device`` + ``raid_config`` parameters are ignored.
+    resolved_disk_roles: ResolvedDiskRoles | None = None
     # Hardware configuration (machine profile + auto-detected quirks).
     # When set, hardware-specific packages, services, modprobe/udev
     # configs, and Ansible roles are merged into the install.
     hardware: HardwareConfig | None = None
+    # Extra Ansible variables from auto-install config [ansible_vars].
+    # Forwarded as -e key=value to the firstboot ansible-playbook run.
+    ansible_vars: dict[str, str] | None = None
 
 
 def run_install_pipeline(
@@ -87,35 +99,52 @@ def run_install_pipeline(
             log(f"  Home: {parts.home}")
         log("[green]Manual mounts verified.[/green]")
     elif params.disk_layout is not None:
-        primary_device = params.device
-        extra_devices: list[str] = []
+        if params.resolved_disk_roles is not None:
+            # Multi-disk role-based path: a separate resolver step
+            # already mapped each layout role to physical disks.
+            log(
+                "[bold cyan]Applying multi-disk layout with "
+                f"{len(params.resolved_disk_roles.assignments)} role(s)...[/bold cyan]"
+            )
+            for role, devs in params.resolved_disk_roles.assignments.items():
+                paths = ", ".join(d.path for d in devs)
+                log(f"  {role}: {paths}")
+            parts = apply_disk_layout_resolved(
+                params.disk_layout,
+                params.resolved_disk_roles,
+                log=log,
+            )
+            log("[green]Disk prepared successfully.[/green]")
+        else:
+            primary_device = params.device
+            extra_devices: list[str] = []
 
-        if params.raid_config is not None:
-            if params.raid_config.backend == RaidBackend.MDADM:
-                # mdadm: assemble array first, then apply layout to /dev/md0
-                log(
-                    f"[bold cyan]Setting up mdadm "
-                    f"RAID{params.raid_config.level.value}...[/bold cyan]"
-                )
-                primary_device = setup_raid_mdadm(params.raid_config, log=log)
-            elif params.raid_config.backend == RaidBackend.BTRFS:
-                # btrfs RAID: apply layout to all disks simultaneously
-                log(
-                    f"[bold cyan]Preparing btrfs "
-                    f"RAID{params.raid_config.level.value} across "
-                    f"{len(params.raid_config.devices)} devices...[/bold cyan]"
-                )
-                primary_device = params.raid_config.devices[0]
-                extra_devices = params.raid_config.devices[1:]
+            if params.raid_config is not None:
+                if params.raid_config.backend == RaidBackend.MDADM:
+                    # mdadm: assemble array first, then apply layout to /dev/md0
+                    log(
+                        f"[bold cyan]Setting up mdadm "
+                        f"RAID{params.raid_config.level.value}...[/bold cyan]"
+                    )
+                    primary_device = setup_raid_mdadm(params.raid_config, log=log)
+                elif params.raid_config.backend == RaidBackend.BTRFS:
+                    # btrfs RAID: apply layout to all disks simultaneously
+                    log(
+                        f"[bold cyan]Preparing btrfs "
+                        f"RAID{params.raid_config.level.value} across "
+                        f"{len(params.raid_config.devices)} devices...[/bold cyan]"
+                    )
+                    primary_device = params.raid_config.devices[0]
+                    extra_devices = params.raid_config.devices[1:]
 
-        parts = apply_disk_layout(
-            primary_device,
-            params.disk_layout,
-            extra_devices=extra_devices or None,
-            raid_config=params.raid_config,
-            log=log,
-        )
-        log("[green]Disk prepared successfully.[/green]")
+            parts = apply_disk_layout(
+                primary_device,
+                params.disk_layout,
+                extra_devices=extra_devices or None,
+                raid_config=params.raid_config,
+                log=log,
+            )
+            log("[green]Disk prepared successfully.[/green]")
     else:
         raise RuntimeError(
             "No partition_map or disk_layout provided. "
@@ -133,6 +162,11 @@ def run_install_pipeline(
         hardware=params.hardware,
         log=log,
     )
+    # genfstab runs inside install_system before chroot config; swap
+    # partitions need to be appended afterward because genfstab reads
+    # /proc/swaps which is empty during install.
+    if parts.swap_partitions:
+        append_swap_fstab_entries(parts.swap_partitions, log=log)
     log("[green]System installed successfully.[/green]")
 
     # Phase 3: Bootloader
@@ -179,8 +213,17 @@ def run_install_pipeline(
         params.username,
         platform=platform,
         hardware=params.hardware,
+        extra_vars=params.ansible_vars,
         log=log,
     )
+
+    # Persist resolved disk-roles state so arches-hardware-rescan can
+    # validate disk presence on every subsequent boot. Only meaningful
+    # when the multi-disk role path was used; harmless otherwise.
+    if params.resolved_disk_roles is not None:
+        from arches_installer.core.disk import MOUNT_ROOT
+
+        write_disk_roles_state(params.resolved_disk_roles, MOUNT_ROOT, log=log)
 
     # Copy install log to the installed system for post-mortem debugging
     _persist_install_log(log)

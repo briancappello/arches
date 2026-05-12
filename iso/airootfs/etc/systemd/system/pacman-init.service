@@ -1,14 +1,28 @@
 [Unit]
 Description=Initializes Pacman keyring
+# Order strictly after the tmpfs is mounted and (best-effort) the clock is set.
+# time-sync.target is a passive sync point — it's "reached" at boot regardless
+# of whether ntp actually set the time, so we additionally chronyd-wait/restart
+# the keyring rebuild if the clock jumps. For now we just order after it.
 Requires=etc-pacman.d-gnupg.mount
-After=etc-pacman.d-gnupg.mount time-sync.target
+After=etc-pacman.d-gnupg.mount systemd-tmpfiles-setup.service time-sync.target
 BindsTo=etc-pacman.d-gnupg.mount
+# Gate any consumer of the keyring (getty/autologin → installer) until we're done.
+Before=getty@tty1.service getty@tty2.service systemd-user-sessions.service multi-user.target
+DefaultDependencies=no
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Ensure the homedir has gpg-correct permissions BEFORE pacman-key touches it.
+# Some libgcrypt/gpg2 versions refuse to write to a homedir that's group/other
+# accessible and surface this as "keyring is not writable" via pacman.
+ExecStartPre=/usr/bin/install -d -o root -g root -m 0700 /etc/pacman.d/gnupg
 ExecStart=/usr/bin/pacman-key --init
 ExecStart=/usr/bin/pacman-key --populate
+# Marker file so external waiters can poll without parsing systemctl.
+ExecStartPost=/usr/bin/touch /run/arches-keyring-ready
+TimeoutStartSec=180
 
 [Install]
 WantedBy=multi-user.target

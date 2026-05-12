@@ -22,7 +22,11 @@
     # ── base ──────────────────────────────────────────────
     - { role: base, tags: ['base'] }
     - { role: containers, tags: ['containers'] }
+    - { role: hardware-rescan, tags: ['hardware-rescan'] }
     - { role: zsh, tags: ['zsh'] }
+
+    # ── networking ────────────────────────────────────────
+    - { role: networking, tags: ['networking'] }
 
     # ── desktop ───────────────────────────────────────────
     - { role: cosmic, tags: ['cosmic'] }
@@ -32,6 +36,10 @@
     - { role: rust, tags: ['rust'] }
 
     # ── service ───────────────────────────────────────────
+    - { role: aphrodite, tags: ['aphrodite'] }
+    - { role: exo, tags: ['exo'] }
+    - { role: llama-cpp, tags: ['llama-cpp'] }
+    - { role: llama-cpp-hip, tags: ['llama-cpp-hip'] }
     - { role: nginx, tags: ['nginx'] }
     - { role: postgresql, tags: ['postgresql'] }
     - { role: rabbitmq, tags: ['rabbitmq'] }

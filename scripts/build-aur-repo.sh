@@ -67,12 +67,18 @@ while IFS= read -r line; do
     fi
 done < "$PLATFORM_DIR/platform.toml"
 
-# Discover module build scripts
+# Discover module build scripts — only for modules that are included in
+# templates listed in iso.toml.  This avoids building custom packages
+# for modules that won't be installed (e.g., KDE packages for a
+# headless-only ISO).
 MODULE_BUILD_SCRIPTS=()
-for build_script in "$MODULES_DIR"/*/build.sh; do
-    [[ -f "$build_script" ]] || continue
-    MODULE_BUILD_SCRIPTS+=("$build_script")
-done
+while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    build_script="$MODULES_DIR/$slug/build.sh"
+    if [[ -f "$build_script" ]]; then
+        MODULE_BUILD_SCRIPTS+=("$build_script")
+    fi
+done < <(python3 "$SCRIPT_DIR/iso-config.py" build-modules "$MODULES_DIR")
 
 # Export FORCE so module build scripts can check it
 export FORCE
@@ -90,7 +96,13 @@ if [[ $EUID -eq 0 ]]; then
     chown -R "$SUDO_USER":"$(id -g "$SUDO_USER")" "$REPO_DIR"
     FORCE_FLAG=""
     [[ "$FORCE" == true ]] && FORCE_FLAG="--force"
-    sudo -u "$SUDO_USER" --preserve-env=PATH \
+    # Preserve env vars the child invocation needs: ARCHES_TEMPLATE
+    # filters the build to a single template (so iso-config.py
+    # build-modules returns only the relevant modules), ARCHES_GPU
+    # selects the GPU compute stack (so only matching gpu-related
+    # modules are built), and FORCE is picked up from the env in
+    # addition to the flag. PATH is needed for makepkg to find tools.
+    sudo -u "$SUDO_USER" --preserve-env=PATH,ARCHES_TEMPLATE,ARCHES_GPU,FORCE \
         "$0" $FORCE_FLAG "$PLATFORM"
     chown -R root:root "$REPO_DIR"
     exit 0

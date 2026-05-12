@@ -1,0 +1,7 @@
+# Exo cluster node configuration
+#
+# Discovery mode: "udp" (LAN broadcast) or "static"
+# EXO_DISCOVERY_MODULE=udp
+#
+# For static discovery, set comma-separated seed node addresses:
+# EXO_SEED_NODES=192.168.1.10:52415,192.168.1.11:52415

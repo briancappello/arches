@@ -1,0 +1,11 @@
+# Aphrodite Engine configuration
+#
+# GPU memory utilization (fraction of VRAM to use)
+# APHRODITE_GPU_MEMORY_UTILIZATION=0.9
+#
+# Visible GPU devices (comma-separated indices)
+# CUDA_VISIBLE_DEVICES=0,1
+#
+# API host and port (default: 0.0.0.0:2242)
+# APHRODITE_HOST=0.0.0.0
+# APHRODITE_PORT=2242

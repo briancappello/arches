@@ -70,6 +70,11 @@ class InstallTemplate:
     graphical: bool = False
     # Module slugs selected by this template.
     module_slugs: list[str] = field(default_factory=list)
+    # GPU stack names this template wants enabled by default. Each
+    # stack maps (via scripts/gpu-stacks.toml) to additional modules
+    # and packages that get merged into the install. The ARCHES_GPU
+    # env var overrides this list at build time.
+    gpu_stacks: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InstallTemplate:
@@ -83,8 +88,10 @@ class InstallTemplate:
         meta = data.get("meta", {})
         sys_raw = data.get("system", {})
         modules_raw = data.get("modules", {})
+        gpu_raw = data.get("gpu", {})
 
         module_slugs = modules_raw.get("include", [])
+        gpu_stacks = gpu_raw.get("stacks", [])
 
         return cls(
             name=meta.get("name", "Unknown"),
@@ -98,6 +105,7 @@ class InstallTemplate:
             ansible=AnsibleConfig(),
             graphical=False,
             module_slugs=module_slugs,
+            gpu_stacks=gpu_stacks,
         )
 
 
@@ -105,24 +113,59 @@ def resolve_and_merge_modules(template: InstallTemplate) -> InstallTemplate:
     """Resolve a template's modules and merge their contents.
 
     Loads, validates, and merges the modules declared in
-    ``template.module_slugs`` into the template's ``install``, ``services``,
-    ``ansible``, and ``graphical`` fields.
+    ``template.module_slugs`` (plus any GPU-stack-derived modules from
+    ``template.gpu_stacks``) into the template's ``install``,
+    ``services``, ``ansible``, and ``graphical`` fields.
 
-    This import is deferred to avoid circular imports at module level.
+    The GPU-stack merge happens FIRST so the resulting module list goes
+    through normal validation (category constraints, dependency checks,
+    conflict detection) alongside the template's explicit modules.
+
+    These imports are deferred to avoid circular imports at module level.
     """
+    from arches_installer.core.gpu_stacks import resolve_gpu_stacks
     from arches_installer.core.module import resolve_modules
 
-    if not template.module_slugs:
+    # 1. Resolve GPU stacks (template default + ARCHES_GPU env override).
+    #    Adds extra modules and packages to the template's existing lists.
+    gpu = resolve_gpu_stacks(template.gpu_stacks)
+
+    # 2. Merge stack-provided modules into the template's include list,
+    #    deduplicating and respecting llama.cpp arbitration exclusions.
+    effective_slugs: list[str] = []
+    for slug in template.module_slugs:
+        if slug in gpu.excluded_modules:
+            continue  # arbitration removed it (e.g. llama-cpp-hip excluded by Vulkan wins)
+        if slug not in effective_slugs:
+            effective_slugs.append(slug)
+    for slug in gpu.extra_modules:
+        if slug not in effective_slugs:
+            effective_slugs.append(slug)
+
+    if not effective_slugs and not gpu.extra_packages:
         return template
 
-    resolved = resolve_modules(template.module_slugs)
+    resolved = resolve_modules(effective_slugs) if effective_slugs else None
+
+    # 3. Build the merged install phases. Stack-provided extra packages
+    #    are appended to pacstrap so they're cached and installed
+    #    alongside everything else.
+    if resolved is not None:
+        merged_install = resolved.merged_install()
+    else:
+        merged_install = InstallPhases()
+    for pkg in gpu.extra_packages:
+        if pkg not in merged_install.pacstrap:
+            merged_install.pacstrap.append(pkg)
 
     return dataclasses.replace(
         template,
-        install=resolved.merged_install(),
-        services=resolved.merged_services(),
-        ansible=AnsibleConfig(firstboot_roles=resolved.ansible_roles),
-        graphical=resolved.graphical,
+        install=merged_install,
+        services=resolved.merged_services() if resolved else [],
+        ansible=AnsibleConfig(
+            firstboot_roles=resolved.ansible_roles if resolved else []
+        ),
+        graphical=resolved.graphical if resolved else False,
     )
 
 

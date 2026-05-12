@@ -37,15 +37,9 @@ kde_extra_packages:
 #   multi-row panels, grouping off, manual sorting, maxStripes=2 by default.
 #   Installs to the system Qt plugin path, overriding the stock applet.
 #   Source: ../kde-task-manager  (plasma-desktop 6.6.0 + fullheight-launchers.patch)
-#
-# plasma-ai-usage-monitor:
-#   Custom plasmoid (com.github.loofi.aiusagemonitor) — monitors AI API token
-#   usage, rate limits, costs, and budgets across multiple providers.
-#   Source: ../plasma-ai-usage-monitor
 # ==========================================================================
 kde_custom_plasmoid_packages:
   - arches-taskmanager-patched   # local repo pkg built from ../kde-task-manager
-  - plasma-ai-usage-monitor      # local repo pkg built from ../plasma-ai-usage-monitor
   - arches-kwin-patched          # local repo pkg built from ../kwin-gestures (3-finger Overview)
 
 # ==========================================================================
@@ -242,8 +236,6 @@ kde_panel:
           forceStripes: "true"
           launchers: ""
     - plugin: "org.kde.plasma.systemtray"
-      config: {}
-    - plugin: "com.github.loofi.aiusagemonitor"
       config: {}
     - plugin: "org.kde.plasma.digitalclock"
       config:

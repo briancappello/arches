@@ -14,7 +14,6 @@ from arches_installer.core.disk_layout import (
     RaidLevel,
     SubvolumeSpec,
     _validate_layout,
-    discover_disk_layouts,
     load_disk_layout,
     parse_size_spec,
 )
@@ -85,7 +84,10 @@ class TestValidateLayout:
         )
         errors = _validate_layout(layout)
         assert len(errors) == 1
-        assert "fill the remaining space" in errors[0]
+        # New (multi-disk-aware) error message phrases this as a
+        # per-disk-role constraint; old text was generic.
+        assert "fill remaining space" in errors[0]
+        assert "LAST partition" in errors[0]
 
     def test_duplicate_mount_points(self) -> None:
         layout = DiskLayout(
@@ -235,7 +237,7 @@ filesystem = "btrfs"
 size = "100G"
 mount_point = "/"
 """)
-        with pytest.raises(ValueError, match="fill the remaining space"):
+        with pytest.raises(ValueError, match="fill remaining space"):
             load_disk_layout(toml)
 
 

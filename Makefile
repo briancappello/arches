@@ -16,6 +16,15 @@ OUT_DIR     := $(PROJECT_DIR)/out
 OFFLINE     ?= 1
 ISO_MODE    ?= graphical
 
+# Optional template filter. When set, restricts the ISO build to a
+# single template from iso.toml's [install].templates. Accepts either
+# "llm-inference" or "llm-inference.toml". Exported as ARCHES_TEMPLATE
+# so downstream scripts (iso-config.py, cache-template-packages.sh,
+# build-aur-repo.sh) all operate on the same filtered list.
+TEMPLATE         ?=
+ARCHES_TEMPLATE  := $(TEMPLATE)
+export ARCHES_TEMPLATE
+
 # ─── Phony targets ────────────────────────────────────
 
 .PHONY: help \
@@ -23,7 +32,7 @@ ISO_MODE    ?= graphical
         builder-start builder-stop builder-status builder-iso builder-iso-fb \
         sv-install sv-dry-run sv-uninstall \
         fmt test test-unit test-template dry-run \
-        qemu-install qemu-boot qemu-raid qemu-disk qemu-ansible \
+        qemu-install qemu-install-llm qemu-boot qemu-raid qemu-disk qemu-ansible \
         clean clean-caches clean-all \
         _iso _aur-repo \
         _stage-installer _stage-modules _stage-ansible _stage-hardware _stage-platform _stage-bootconfig \
@@ -54,17 +63,17 @@ help: ## Show this help
 
 ##@ Build
 
-iso: ## Build graphical live ISO (OFFLINE=0 to skip package cache)
-	ISO_MODE=graphical OFFLINE=$(OFFLINE) $(SCRIPTS)/build-iso.sh
+iso: ## Build graphical live ISO (OFFLINE=0 skip cache; TEMPLATE=<name>, ARCHES_GPU=<stack-list>)
+	ISO_MODE=graphical OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/build-iso.sh
 
-iso-fb: ## Build framebuffer-only ISO (no desktop, minimal)
-	ISO_MODE=fb OFFLINE=$(OFFLINE) $(SCRIPTS)/build-iso.sh
+iso-fb: ## Build framebuffer-only ISO (TEMPLATE=<name>, ARCHES_GPU=<stack-list>)
+	ISO_MODE=fb OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/build-iso.sh
 
 usb: ## Build install media and write to USB drive (requires sudo + Podman)
-	ISO_MODE=graphical OFFLINE=$(OFFLINE) $(SCRIPTS)/build-usb.sh
+	ISO_MODE=graphical OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/build-usb.sh
 
 usb-fb: ## Build framebuffer-only USB install media
-	ISO_MODE=fb OFFLINE=$(OFFLINE) $(SCRIPTS)/build-usb.sh
+	ISO_MODE=fb OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/build-usb.sh
 
 ##@ Persistent Builder
 
@@ -78,10 +87,10 @@ builder-status: ## Check if persistent builder is running
 	@$(SCRIPTS)/builder.sh status
 
 builder-iso: ## Build graphical ISO via persistent builder (no sudo)
-	$(SCRIPTS)/builder.sh build
+	OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/builder.sh build
 
 builder-iso-fb: ## Build framebuffer ISO via persistent builder (no sudo)
-	$(SCRIPTS)/builder.sh build-fb
+	OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/builder.sh build-fb
 
 ##@ Host Install (Apple Silicon)
 
@@ -136,6 +145,9 @@ dry-run: ## Dry-run the example auto-install config
 
 qemu-install: ## Build ISO + boot QEMU VM (OFFLINE=1 for offline install, no network)
 	OFFLINE=$(OFFLINE) $(SCRIPTS)/qemu-install.sh
+
+qemu-install-llm: ## Two-disk QEMU install (20G root + 60G bulk, simulates llm-workstation)
+	OFFLINE=$(OFFLINE) $(SCRIPTS)/qemu-install.sh --disk 20G --disk 60G
 
 qemu-boot: ## Boot the installed test disk in QEMU (UEFI, no ISO)
 	@echo "══ Booting installed disk in QEMU (UEFI) ══"
@@ -215,8 +227,11 @@ clean: ## Remove staged files from ISO airootfs
 	rm -f  $(ISO_PROFILE)/pacman.conf
 	# Graphical staging artifacts
 	rm -f  $(ISO_PROFILE)/airootfs/etc/systemd/system/arches-liveuser.service
+	rm -f  $(ISO_PROFILE)/airootfs/etc/systemd/system/arches-live-sshd.service
 	rm -f  $(ISO_PROFILE)/airootfs/etc/systemd/system/display-manager.service
 	rm -f  $(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants/arches-liveuser.service
+	rm -f  $(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants/arches-live-sshd.service
+	rm -f  $(ISO_PROFILE)/airootfs/usr/local/bin/arches-live-sshd-setup
 	rm -rf $(ISO_PROFILE)/airootfs/etc/systemd/system/sddm.service.d
 	rm -rf $(ISO_PROFILE)/airootfs/etc/sddm.conf.d
 	rm -rf $(ISO_PROFILE)/airootfs/etc/xdg
@@ -227,17 +242,48 @@ clean: ## Remove staged files from ISO airootfs
 
 clean-caches: ## Remove AUR repo, pacman cache, and offline package cache
 	@echo "══ Cleaning caches ══"
+	@# The persistent builder bind-mounts .pkg-cache/ and .offline-cache/.
+	@# Deleting those directories while the container is running makes the
+	@# mounts stale — the next build inside the container will fail with
+	@# "No such file or directory" when pacman tries to write to the cache.
+	@# Stop the builder first so the mounts are released cleanly.
+	@if sudo -n podman inspect --format '{{.State.Running}}' arches-builder 2>/dev/null | grep -q true; then \
+		echo "  Persistent builder is running — stopping it first..."; \
+		sudo -n podman rm -f arches-builder >/dev/null 2>&1 || { \
+			echo "ERROR: The persistent builder (arches-builder) is running and"; \
+			echo "       bind-mounts the cache directories. Deleting them while"; \
+			echo "       the container is running will break the next build."; \
+			echo ""; \
+			echo "       Stop it first:  make builder-stop"; \
+			echo "       Then retry:     make clean-caches"; \
+			exit 1; \
+		}; \
+		echo "  Builder stopped."; \
+	fi
 	rm -rf .aur-repo
 	rm -rf .pkg-cache
 	rm -rf .offline-cache
 
-clean-all: clean clean-caches ## Remove all build artifacts
+clean-all: clean clean-caches ## Remove all build artifacts (incl. builder container + image)
 	@echo "══ Cleaning output ══"
 	rm -rf $(OUT_DIR)
 	rm -f /tmp/arches-test-disk.qcow2
+	rm -f /tmp/arches-test-disk-*.qcow2
 	rm -f /tmp/arches-efi-vars.raw
 	rm -f /tmp/arches-raid-disk-*.qcow2
 	rm -f /tmp/arches-raid-efi-vars.raw
+	@echo "══ Cleaning builder container + image ══"
+	@# clean-caches already stopped/removed the arches-builder container
+	@# (it bind-mounts the caches). Also remove the builder image so the
+	@# next build starts from a clean slate. Both amd64 and arm64 variants
+	@# are removed if present.
+	@for img in arches-builder-amd64 arches-builder-arm64; do \
+		if sudo -n podman image exists "$$img" 2>/dev/null; then \
+			echo "  Removing image: $$img"; \
+			sudo -n podman rmi -f "$$img" >/dev/null 2>&1 || \
+				echo "  WARNING: failed to remove $$img (in use?)"; \
+		fi; \
+	done
 
 # ─────────────────────────────────────────────────────────
 # Internal targets (not shown in help)
@@ -253,7 +299,7 @@ _iso: _check-root _check-deps _aur-repo _stage-installer _stage-modules _stage-a
 	@if [ "$(OFFLINE)" != "1" ]; then \
 		rm -rf $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache; \
 	fi
-	@echo "══ Building Arches ISO ($(PLATFORM), mode: $(ISO_MODE)$(if $(filter 1,$(OFFLINE)), — OFFLINE)) ══"
+	@echo "══ Building Arches ISO ($(PLATFORM), mode: $(ISO_MODE)$(if $(filter 1,$(OFFLINE)), — OFFLINE)$(if $(ARCHES_TEMPLATE), — TEMPLATE=$(ARCHES_TEMPLATE))) ══"
 	@rm -rf $(WORK_DIR)
 	@mkdir -p $(OUT_DIR)
 	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
@@ -272,10 +318,79 @@ _stage-installer:
 	@echo "══ Staging installer ══"
 	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/installer
 	@cp -r $(INSTALLER)/* $(ISO_PROFILE)/airootfs/opt/arches/installer/
-	@# Stage templates (the installer discovers them at /opt/arches/templates/)
+	@# Stage scripts/gpu-stacks.toml (the GPU stack -> modules mapping
+	@# read by arches_installer.core.gpu_stacks at install time). The
+	@# search path in that module looks for /opt/arches/scripts/gpu-stacks.toml.
+	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/scripts
+	@cp $(SCRIPTS)/gpu-stacks.toml $(ISO_PROFILE)/airootfs/opt/arches/scripts/
+	@# Stage templates (the installer discovers them at /opt/arches/templates/).
+	@# When ARCHES_TEMPLATE is set, only stage that one workload template;
+	@# always stage iso.toml itself. The auto-install.toml is staged only
+	@# if its [install].template matches the workload — otherwise the
+	@# autoinstall would point at a template that isn't in the ISO.
+	@# Per-template autoinstall files (auto-install-<name>.toml) are
+	@# preferred when ARCHES_TEMPLATE is set.
 	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/templates
-	@cp $(TEMPLATES)/*.toml $(ISO_PROFILE)/airootfs/opt/arches/templates/
-	@echo "  Staged templates: $$(ls $(TEMPLATES)/*.toml | xargs -n1 basename | tr '\n' ' ')"
+	@rm -f $(ISO_PROFILE)/airootfs/opt/arches/templates/*.toml
+	@cp $(TEMPLATES)/iso.toml $(ISO_PROFILE)/airootfs/opt/arches/templates/
+	@# Resolve the filtered template list from iso-config.py. Capture into
+	@# a temp file first so an iso-config.py failure (e.g. invalid
+	@# ARCHES_TEMPLATE) propagates as a Make error instead of being
+	@# swallowed by command substitution inside the for-loop.
+	@tmpl_list=$$(mktemp); trap "rm -f $$tmpl_list" EXIT; \
+	if ! python3 $(SCRIPTS)/iso-config.py templates > "$$tmpl_list"; then \
+		echo "ERROR: iso-config.py failed to resolve template list"; \
+		exit 1; \
+	fi; \
+	while read -r tmpl; do \
+		[ -z "$$tmpl" ] && continue; \
+		src="$(TEMPLATES)/$$tmpl"; \
+		if [ ! -f "$$src" ]; then \
+			echo "ERROR: Template '$$tmpl' (from iso.toml) not found at $$src"; \
+			exit 1; \
+		fi; \
+		cp "$$src" $(ISO_PROFILE)/airootfs/opt/arches/templates/; \
+	done < "$$tmpl_list"
+	@# Pick the right auto-install file for the staged workload.
+	@# An auto-install candidate is suitable iff its [install].template
+	@# field references a template we just staged. We prefer
+	@# auto-install-<filter>.toml when ARCHES_TEMPLATE is set, falling
+	@# back to any auto-install*.toml whose target template is staged,
+	@# then plain auto-install.toml. The match is by .template field, NOT
+	@# filename, so the existing auto-install-inference.toml convention
+	@# (which references llm-inference.toml) works without name mapping.
+	@# Place the auto-install file at BOTH locations:
+	@#   1. /opt/arches/templates/auto-install.toml — discoverable by the
+	@#      installer's TUI for inspection/debugging.
+	@#   2. /root/auto-install.toml — the path that
+	@#      installer/arches_installer/__main__.py:AUTO_INSTALL_PATH
+	@#      reads at boot. Without this, the kernel cmdline flag
+	@#      arches.autoinstall=1 fires but the installer can't find the
+	@#      config and silently falls back to interactive TUI — fatal
+	@#      on a headless install.
+	@# pick-auto-install.py emits the chosen path on stdout, validation
+	@# errors on stderr (and exit code 2). Capture both so a placeholder
+	@# password aborts the build with a visible message rather than
+	@# silently producing a no-autoinstall ISO.
+	@AUTOINSTALL_SRC=$$($(SCRIPTS)/pick-auto-install.py \
+		"$(TEMPLATES)" \
+		"$(ISO_PROFILE)/airootfs/opt/arches/templates") || exit 2; \
+	if [ -n "$$AUTOINSTALL_SRC" ]; then \
+		ai_template=$$(python3 -c "import tomllib; \
+print(tomllib.load(open('$$AUTOINSTALL_SRC','rb')).get('install',{}).get('template',''))"); \
+		cp "$$AUTOINSTALL_SRC" $(ISO_PROFILE)/airootfs/opt/arches/templates/auto-install.toml; \
+		mkdir -p $(ISO_PROFILE)/airootfs/root; \
+		cp "$$AUTOINSTALL_SRC" $(ISO_PROFILE)/airootfs/root/auto-install.toml; \
+		chmod 600 $(ISO_PROFILE)/airootfs/root/auto-install.toml; \
+		echo "  Auto-install: $$(basename $$AUTOINSTALL_SRC) -> $$ai_template (staged to /root/ + /opt/arches/templates/)"; \
+	else \
+		rm -f $(ISO_PROFILE)/airootfs/root/auto-install.toml 2>/dev/null || true; \
+		echo "  Auto-install: none (no auto-install*.toml references a staged template — manual install only)"; \
+	fi
+	@if [ -n "$(ARCHES_TEMPLATE)" ]; then \
+		echo "  Template filter: ARCHES_TEMPLATE=$(ARCHES_TEMPLATE)"; \
+	fi
+	@echo "  Staged templates: $$(ls $(ISO_PROFILE)/airootfs/opt/arches/templates/*.toml | xargs -n1 basename | tr '\n' ' ')"
 	@# Stage disk layouts (the installer discovers them at /opt/arches/disk-layouts/)
 	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/disk-layouts
 	@cp $(PROJECT_DIR)/disk-layouts/*.toml $(ISO_PROFILE)/airootfs/opt/arches/disk-layouts/
@@ -298,6 +413,21 @@ exec python -m arches_installer "$$@"\n' > $(ISO_PROFILE)/airootfs/usr/local/bin
 		echo "  WARNING: No SSH public key found ($$REAL_HOME/.ssh/id_ed25519.pub or id_rsa.pub)"; \
 		echo "           Installed systems will not have build-host SSH access."; \
 	fi
+	@# Live-ISO sshd: seed root's authorized_keys from the build-host
+	@# public key and start sshd. Runs in BOTH graphical and fb ISO
+	@# modes (this stanza is in _stage-installer, not _stage-graphical)
+	@# so a headless operator can SSH into a stuck install for debug.
+	@# To disable: `touch iso/airootfs/etc/arches-no-live-ssh` before build.
+	@mkdir -p $(ISO_PROFILE)/airootfs/usr/local/bin
+	@mkdir -p $(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants
+	@cp $(ISO_PROFILE)/services/arches-live-sshd-setup \
+		$(ISO_PROFILE)/airootfs/usr/local/bin/arches-live-sshd-setup
+	@chmod 755 $(ISO_PROFILE)/airootfs/usr/local/bin/arches-live-sshd-setup
+	@cp $(ISO_PROFILE)/services/arches-live-sshd.service \
+		$(ISO_PROFILE)/airootfs/etc/systemd/system/arches-live-sshd.service
+	@ln -sf ../arches-live-sshd.service \
+		$(ISO_PROFILE)/airootfs/etc/systemd/system/multi-user.target.wants/arches-live-sshd.service
+	@echo "  Live-ISO sshd: setup script + service staged"
 	@# Test logging: the installer writes to /dev/virtio-ports/arches-log
 	@# if it exists (QEMU test harness). No staging needed — handled in run.py.
 
@@ -379,7 +509,7 @@ _stage-bootconfig:
 	echo "  Generating boot configs from templates"; \
 	echo "  ISO mode: $(ISO_MODE)"; \
 	HAS_AUTOINSTALL=false; \
-	if [ -f "$(TEMPLATES)/auto-install.toml" ]; then \
+	if [ -f "$(ISO_PROFILE)/airootfs/opt/arches/templates/auto-install.toml" ]; then \
 		HAS_AUTOINSTALL=true; \
 	fi; \
 	echo "  Auto-install: $$HAS_AUTOINSTALL"; \

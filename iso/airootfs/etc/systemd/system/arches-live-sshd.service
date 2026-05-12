@@ -1,0 +1,16 @@
+[Unit]
+Description=Seed live-ISO authorized_keys and start sshd
+Documentation=man:sshd(8)
+After=network.target systemd-tmpfiles-setup.service
+Before=multi-user.target
+ConditionPathExists=!/etc/arches-no-live-ssh
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/arches-live-sshd-setup
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

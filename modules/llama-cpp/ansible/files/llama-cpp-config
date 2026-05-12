@@ -1,0 +1,36 @@
+# Global llama.cpp configuration — sourced by llama-server@<alias>.service
+# before the per-model file at /etc/llama-cpp/models.d/<alias>.conf.
+#
+# Per-model files override these defaults. Anything set in <alias>.conf
+# (LLAMA_MODEL, LLAMA_OPTS, etc.) wins.
+
+# Bind address (0.0.0.0 = all interfaces; 127.0.0.1 = local only)
+LLAMA_HOST=127.0.0.1
+
+# Default port — per-model files should override this if running
+# multiple instances simultaneously.
+LLAMA_PORT=8080
+
+# Default GPU layer offload. -1 = offload all layers to GPU.
+# Reduce if a model is too large for VRAM (will spill to RAM).
+LLAMA_NGL=-1
+
+# Context length (tokens). Larger = more VRAM/RAM needed for KV cache.
+LLAMA_CTX=8192
+
+# Default extra flags. Override per-model via LLAMA_OPTS in models.d/<alias>.conf.
+# Useful flags:
+#   --flash-attn          enable flash attention (faster, less VRAM)
+#   --threads N           CPU threads for non-offloaded layers
+#   --batch-size N        prompt processing batch (default 2048)
+#   --ubatch-size N       physical batch (default 512)
+#   --mlock               lock model in RAM (avoid swap)
+#   --no-mmap             disable mmap (use with --mlock for big MoE)
+#   --override-tensor 'exps=CPU'   route MoE experts to CPU (huge MoE wins)
+LLAMA_OPTS=--flash-attn
+
+# Model file — typically set per-model in models.d/<alias>.conf instead.
+# Default model search root is /opt/models, which is the bulk-storage
+# btrfs partition on the llm-workstation disk layout. Users can also
+# access this via ~/models thanks to the symlink created at firstboot.
+# LLAMA_MODEL=/opt/models/Qwen3-235B-A22B-Q4_K_M.gguf

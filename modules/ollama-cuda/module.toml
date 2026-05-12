@@ -1,0 +1,17 @@
+[meta]
+name = "Ollama CUDA"
+description = "CUDA-accelerated Ollama backend (NVIDIA GPUs)"
+category = "service"
+
+# Adds the CUDA-linked ollama binary alongside the base `ollama`
+# package. Ollama auto-selects this variant at runtime when an
+# NVIDIA GPU is detected. Selected automatically by templates that
+# include "nvidia-cuda" in their [gpu].stacks list.
+
+[install.pacstrap]
+packages = [
+    "ollama-cuda",
+]
+
+[dependencies]
+requires = ["ollama"]

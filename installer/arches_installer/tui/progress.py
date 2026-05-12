@@ -124,7 +124,14 @@ class InstallProgressScreen(ArrowNavScreen):
                 if partition_mode != "manual"
                 else None,
                 raid_config=self.app.raid_config,
+                # Multi-disk role-based assignment (auto-install path).
+                # When None, pipeline falls back to legacy single-device
+                # + raid_config behavior.
+                resolved_disk_roles=getattr(
+                    self.app, "resolved_disk_roles", None
+                ),
                 hardware=self.app.hardware_config,
+                ansible_vars=self.app.ansible_vars,
             )
 
             parts = run_install_pipeline(params, log=self.log_msg)
@@ -140,7 +147,34 @@ class InstallProgressScreen(ArrowNavScreen):
         except Exception as e:
             self.log_msg(f"\n[bold red]INSTALL FAILED: {e}[/bold red]")
             self.log_msg("Check the log above for details.")
-            self.app.call_from_thread(self._enable_reboot)
+            # In auto-install mode, headless operators won't be at the
+            # console to press a button. Honor app.auto_install_failed_action
+            # so the box doesn't sit idle forever.
+            if getattr(self.app, "auto_install", False):
+                self.app.call_from_thread(self._on_install_failed_auto)
+            else:
+                self.app.call_from_thread(self._enable_reboot)
+
+    def _on_install_failed_auto(self) -> None:
+        """Handle install failure in auto-install mode.
+
+        Reads ``app.auto_install_failed_action`` and acts accordingly.
+        Defaults to "poweroff" (set in TUI app constructor).
+        """
+        import subprocess
+
+        action = getattr(self.app, "auto_install_failed_action", "poweroff")
+        self._write_log(f"Auto-install failure action: {action}")
+        if action == "poweroff":
+            self._write_log("Powering off in 10 seconds...")
+            subprocess.run(["sleep", "10"], check=False)
+            subprocess.run(["systemctl", "poweroff"], check=False)
+        elif action == "reboot":
+            self._write_log("Rebooting in 10 seconds...")
+            subprocess.run(["sleep", "10"], check=False)
+            subprocess.run(["systemctl", "reboot"], check=False)
+        else:  # "wait" or unknown
+            self._enable_reboot()
 
     def _on_install_complete(self) -> None:
         """Handle install completion — auto shutdown/reboot or enable buttons.

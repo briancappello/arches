@@ -1,0 +1,64 @@
+#!/bin/bash
+# Seed authorized_keys for the live ISO's root account from the
+# build-host's embedded public key, then enable sshd.
+#
+# Run at boot by arches-live-sshd.service. Idempotent.
+#
+# This is what makes the live ISO accessible over SSH for headless
+# debugging — without it, a stuck install on a rack-mounted box would
+# be unreachable. The embedded key lives at /opt/arches/build-host.pub
+# (placed there by Makefile:347-364 from $HOME/.ssh/id_ed25519.pub
+# on the build host) and is the same key that gets baked into the
+# installed user's authorized_keys, so a single SSH key gives the
+# build operator access to BOTH the live installer and the finished
+# system.
+#
+# Logs to journal (journalctl -u arches-live-sshd).
+#
+# NOTE: This script must NOT use `set -e` or `set -o pipefail` —
+# individual failures (missing key file, sshd already running, etc.)
+# are handled explicitly and must not abort the whole service unit.
+# A failed sshd is inconvenient but must never block boot.
+
+PUB_KEY="/opt/arches/build-host.pub"
+SSH_DIR="/root/.ssh"
+AUTH_KEYS="$SSH_DIR/authorized_keys"
+
+echo "arches-live-sshd-setup: starting"
+
+if [ ! -f "$PUB_KEY" ]; then
+    echo "arches-live-sshd-setup: WARNING — no $PUB_KEY found"
+    echo "  The build host had no SSH key when this ISO was built."
+    echo "  Live-ISO SSH will require password authentication, which is"
+    echo "  disabled in the default sshd_config. To use it, set a root"
+    echo "  password (passwd root) and edit /etc/ssh/sshd_config."
+else
+    mkdir -p "$SSH_DIR"
+    chmod 700 "$SSH_DIR"
+    # Append idempotently — don't duplicate the key on re-runs.
+    if [ ! -f "$AUTH_KEYS" ] || ! grep -qFxf "$PUB_KEY" "$AUTH_KEYS" 2>/dev/null; then
+        cat "$PUB_KEY" >> "$AUTH_KEYS"
+        chmod 600 "$AUTH_KEYS"
+        echo "arches-live-sshd-setup: installed build-host key into $AUTH_KEYS"
+    else
+        echo "arches-live-sshd-setup: build-host key already present"
+    fi
+fi
+
+# Generate host keys if not present (first boot on a fresh ISO).
+# The glob is quoted to avoid nounset issues; ls handles the literal.
+if ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1; then
+    echo "arches-live-sshd-setup: generating host keys"
+    ssh-keygen -A || echo "arches-live-sshd-setup: WARNING — ssh-keygen -A failed"
+fi
+
+# Start sshd (best-effort — don't fail the unit if sshd can't start)
+echo "arches-live-sshd-setup: starting sshd"
+if systemctl start sshd.service 2>&1; then
+    echo "arches-live-sshd-setup: complete"
+else
+    echo "arches-live-sshd-setup: WARNING — sshd.service failed to start"
+    echo "  Check: journalctl -u sshd.service"
+fi
+
+exit 0

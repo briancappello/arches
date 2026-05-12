@@ -1,0 +1,81 @@
+---
+# Networking — finish-up tasks beyond what pacstrap and services handle.
+#
+# Most of the networking module is just packages + enabled services
+# (NetworkManager, sshd, firewalld, avahi-daemon). This role handles
+# the two configuration steps that need editing existing files:
+#
+#   1. Patch /etc/nsswitch.conf so glibc resolves *.local via mDNS.
+#      Without this, avahi-daemon runs but `getent hosts foo.local`
+#      still misses.
+#   2. Open firewalld for the mDNS UDP port (5353) on the default
+#      zone so peers on the LAN can discover this host.
+#
+# Both are idempotent and safe to run every firstboot.
+
+# ── 1. mDNS resolution via nsswitch ──────────────────
+
+- name: Enable mdns_minimal in nsswitch.conf hosts line
+  # Insert `mdns_minimal [NOTFOUND=return]` immediately before the
+  # `resolve` or `dns` entry on the hosts: line. Idempotent: if
+  # mdns_minimal is already present we don't add it again.
+  #
+  # Standard Arch hosts line looks like:
+  #   hosts: mymachines resolve [!UNAVAIL=return] files myhostname dns
+  # We want:
+  #   hosts: mymachines mdns_minimal [NOTFOUND=return] resolve [!UNAVAIL=return] files myhostname dns
+  ansible.builtin.replace:
+    path: /etc/nsswitch.conf
+    regexp: '^(hosts:\s+(?!.*\bmdns_minimal\b).*?)(\s+(?:resolve|dns)\b)'
+    replace: '\1 mdns_minimal [NOTFOUND=return]\2'
+
+# ── 2. Firewall: allow mDNS in/out ──────────────────
+
+- name: Allow mdns service in firewalld default zone
+  ansible.builtin.command: firewall-cmd --permanent --add-service=mdns
+  register: fw_mdns
+  changed_when: "'success' in fw_mdns.stdout.lower() or fw_mdns.rc == 0"
+  failed_when: fw_mdns.rc != 0 and 'ALREADY_ENABLED' not in (fw_mdns.stderr | upper)
+
+- name: Reload firewalld to apply mdns rule
+  ansible.builtin.command: firewall-cmd --reload
+  changed_when: false
+  when: fw_mdns.changed
+
+# ── 3. Wake-on-LAN default for wired interfaces ─────
+# Set NetworkManager's default WoL setting to 'magic' for every wired
+# interface unless an explicit per-connection setting overrides it.
+# This lets a headless server be powered on remotely via `wol <mac>` or
+# `etherwake <mac>`. Wireless WoL (wowlan) is intentionally not set —
+# it's spotty across chipsets and rarely useful on rack hardware.
+
+- name: Configure NetworkManager default wake-on-lan = magic for ethernet
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/conf.d/10-arches-wake-on-lan.conf
+    mode: '0644'
+    content: |
+      # Arches default: enable WoL (magic packet) on all wired interfaces
+      # unless overridden by a per-connection [ethernet] setting.
+      # Override per-host by writing a higher-priority file in conf.d/
+      # or by setting `802-3-ethernet.wake-on-lan` on the connection.
+      [connection-arches-wol]
+      match-device=type:ethernet
+      ethernet.wake-on-lan=magic
+  notify: reload NetworkManager
+
+- name: Set ethtool WoL hint via systemd-networkd-like service (optional fallback)
+  # NetworkManager doesn't always invoke ethtool at link-up. As a
+  # belt-and-suspenders measure, set the link's WoL bit via systemd
+  # link config so it survives NM not picking up the connection.
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/50-arches-wol.link
+    mode: '0644'
+    content: |
+      # Arches: ensure ethernet links report wake-on-lan=g (magic) to
+      # the kernel/firmware on bring-up. This survives even if
+      # NetworkManager's ethernet.wake-on-lan setting fails to apply.
+      [Match]
+      Type=ether
+
+      [Link]
+      WakeOnLan=magic

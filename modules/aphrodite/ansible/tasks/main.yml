@@ -1,0 +1,186 @@
+---
+# Aphrodite Engine — high-performance LLM inference server
+#
+# Installs aphrodite-engine into a virtualenv via uv, creates a
+# dedicated system user, and deploys a systemd service template.
+# The service is NOT enabled by default — it requires a model name
+# as the instance parameter (e.g. aphrodite-engine@mistral-7b).
+
+# ── 1. System user ────────────────────────────────────
+
+- name: Create aphrodite system group
+  group:
+    name: aphrodite
+    system: yes
+    state: present
+
+- name: Create aphrodite system user
+  user:
+    name: aphrodite
+    group: aphrodite
+    system: yes
+    # Real shell + create_home: yes is intentional — uv stores its
+    # managed Python interpreters and download cache under $HOME, and
+    # without a real home dir it falls back to /tmp which doesn't
+    # survive reboots. Matches the exo role.
+    shell: /bin/bash
+    home: /opt/aphrodite
+    create_home: yes
+    comment: "Aphrodite Engine inference server"
+
+# ── 2. Directories ───────────────────────────────────
+
+- name: Create /opt/aphrodite directory
+  file:
+    path: /opt/aphrodite
+    state: directory
+    owner: aphrodite
+    group: aphrodite
+    mode: "0755"
+
+- name: Create /etc/aphrodite directory
+  file:
+    path: /etc/aphrodite
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── 3. Virtual environment and aphrodite install ─────
+#
+# Why Python 3.13 (NOT the system 3.14):
+#   aphrodite-engine 0.21.0 depends transitively on
+#   `flashinfer-python==0.6.8.post1` which depends on `cuda-tile`.
+#   `cuda-tile` only ships wheels for cp310-cp313 (no cp314), so
+#   installing aphrodite under the system Python 3.14 fails with
+#   "no wheels with matching Python ABI tag". We materialise a
+#   uv-managed CPython 3.13 in the `aphrodite` user's home and pin
+#   the venv to it. Mirrors the exo role's approach.
+#
+# Why we pin >=0.21.0:
+#   0.21.0 is the first release whose top-level wheel works without
+#   building from source on a recent Python (`cp38-abi3` stable-ABI
+#   wheel, valid on 3.10-3.13). Older releases (e.g. 0.10.0) drag in
+#   `numba==0.61.2` / `llvmlite==0.44`, which fail to build with
+#   recent setuptools/distutils.
+#
+# Why we conditionally use the PyTorch CPU index:
+#   aphrodite-engine depends on `torch`. By default `pip install
+#   torch` pulls the CUDA-12 build, which drags in ~6 GB of
+#   nvidia-cuda-* wheels — pointless on a Vulkan/HIP/CPU host and
+#   guaranteed to overflow modest /opt partitions. We use the CPU
+#   wheel index from pytorch.org on any host whose `arches_gpu_stacks`
+#   does NOT include `nvidia-cuda`. NVIDIA hosts get the default CUDA
+#   torch (which the engine actually exercises).
+#
+# `arches_gpu_stacks` is set by inject_firstboot_service() from
+# template.gpu_stacks (resolved via scripts/gpu-stacks.toml). It's a
+# comma-separated list of stack names. Empty / unset → assume no GPU
+# stack and fall through to CPU torch (the safe default).
+
+- name: Install managed Python 3.13 for aphrodite
+  command: uv python install 3.13
+  args:
+    creates: /opt/aphrodite/.local/share/uv/python
+  become_user: aphrodite
+  environment:
+    UV_PYTHON_INSTALL_DIR: /opt/aphrodite/.local/share/uv/python
+
+- name: Create virtualenv with uv (pinned to Python 3.13)
+  command: uv venv --python 3.13 /opt/aphrodite/venv
+  args:
+    creates: /opt/aphrodite/venv/bin/python
+  become_user: aphrodite
+  environment:
+    UV_PYTHON_INSTALL_DIR: /opt/aphrodite/.local/share/uv/python
+
+- name: Determine torch wheel index for aphrodite
+  set_fact:
+    aphrodite_torch_extra_index: >-
+      {{ '' if (arches_gpu_stacks | default('')) is search('nvidia-cuda')
+         else '--extra-index-url https://download.pytorch.org/whl/cpu' }}
+
+# `--index-strategy unsafe-best-match` is required because the
+# pytorch.org/whl/cpu index serves an old `setuptools<=70.2.0`,
+# while aphrodite-engine 0.21.0 pins `setuptools>=77.0.3,<81.0.0`.
+# uv's default index strategy is "first-index-wins per package" — a
+# dependency-confusion mitigation — which here resolves setuptools
+# from the pytorch index and then can't satisfy aphrodite. The
+# `unsafe-best-match` strategy considers all configured indexes for
+# each package, picking the best version. Safe in this context: the
+# only extra index we add is pytorch.org, an Astral/PyPI-mirroring
+# CDN we explicitly trust.
+- name: Install aphrodite-engine into virtualenv
+  command: >-
+    uv pip install
+    'aphrodite-engine>=0.21.0'
+    {{ aphrodite_torch_extra_index }}
+    --index-strategy unsafe-best-match
+    --python /opt/aphrodite/venv/bin/python
+  register: aphrodite_install
+  become_user: aphrodite
+  environment:
+    UV_PYTHON_INSTALL_DIR: /opt/aphrodite/.local/share/uv/python
+  # Big download (~1-7 GB depending on torch variant + transitive
+  # CUDA wheels). Default 30-second ansible command timeout would
+  # otherwise abort mid-download on slow links.
+  async: 3600
+  poll: 15
+  # Don't abort the whole playbook on this failure. Aphrodite is a
+  # heavy CUDA-leaning dep that can fail for transient network or
+  # resolver reasons that aren't fatal to the overall install — the
+  # rest of the system (llama.cpp, ollama, exo) still needs to come
+  # up. The failure is surfaced in /var/log/arches-firstboot.log
+  # and via the aphrodite-install-failed marker below.
+  failed_when: false
+
+- name: Record aphrodite install failure for operator visibility
+  copy:
+    dest: /opt/aphrodite/install-failed
+    content: |
+      aphrodite-engine install failed at first-boot.
+      To retry manually:
+        sudo -u aphrodite bash -c '
+          export UV_PYTHON_INSTALL_DIR=/opt/aphrodite/.local/share/uv/python
+          uv pip install "aphrodite-engine>=0.21.0" \
+            {{ aphrodite_torch_extra_index }} \
+            --index-strategy unsafe-best-match \
+            --python /opt/aphrodite/venv/bin/python
+        '
+      Error (from ansible):
+      {{ aphrodite_install.stderr | default('(no stderr captured)') }}
+    owner: aphrodite
+    group: aphrodite
+    mode: "0644"
+  when: aphrodite_install.rc | default(0) != 0
+
+- name: Remove stale aphrodite install-failed marker
+  file:
+    path: /opt/aphrodite/install-failed
+    state: absent
+  when: aphrodite_install.rc | default(0) == 0
+
+# ── 4. Configuration ────────────────────────────────
+
+- name: Deploy aphrodite environment config
+  copy:
+    src: aphrodite-config
+    dest: /etc/aphrodite/config
+    owner: root
+    group: aphrodite
+    mode: "0644"
+    force: no  # Don't overwrite if already customized
+
+# ── 5. Systemd service template ─────────────────────
+
+- name: Deploy aphrodite-engine systemd service template
+  copy:
+    src: aphrodite-engine.service
+    dest: /etc/systemd/system/aphrodite-engine@.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes

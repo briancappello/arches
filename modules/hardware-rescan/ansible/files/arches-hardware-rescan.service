@@ -1,0 +1,41 @@
+[Unit]
+Description=Arches hardware rescan (re-evaluate quirks and GPU drivers)
+Documentation=man:arches-hardware-rescan(8)
+
+# Run after the filesystem is up and udev has settled, but BEFORE the
+# display manager starts. If the GPU vendor changed, this gives chwd
+# time to install the right drivers so SDDM doesn't try to start on
+# top of llvmpipe.
+After=local-fs.target systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+Before=display-manager.service multi-user.target
+
+# Network is NOT required: chwd installs from local pacman cache when
+# packages are available, and we don't want to delay boot waiting for
+# DHCP just to discover the network isn't needed. If chwd needs to
+# download new drivers and there's no network, it will fail loudly in
+# the journal and the user can re-run manually after networking is up.
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/local/bin/arches-hardware-rescan
+
+# Resource limits — this is a privileged boot-time service. Allow
+# enough time for chwd to potentially install a multi-GB driver
+# package (worst case: cold cache + slow network).
+TimeoutStartSec=20min
+
+# Output goes to the journal automatically. Set a distinct prefix so
+# `journalctl -u arches-hardware-rescan` is easy to filter.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=arches-hardware-rescan
+
+# Don't fail boot if the rescan fails — degraded GPU drivers are
+# annoying but recoverable; failing to boot is not. The user can
+# always run `arches-hardware-rescan --force` after login.
+SuccessExitStatus=0 10
+
+[Install]
+WantedBy=multi-user.target

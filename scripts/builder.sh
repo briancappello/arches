@@ -240,26 +240,76 @@ cmd_build() {
         exit 1
     fi
 
-    local offline_flag=""
-    [[ "${OFFLINE:-1}" == "1" ]] && offline_flag="OFFLINE=1"
+    # Verify the package cache bind-mount is still functional. If the
+    # host directory was deleted and recreated (e.g. make clean-caches)
+    # while the container was running, the mount goes stale and pacman
+    # will fail with "No such file or directory" deep inside the build.
+    if ! _podman exec "$CONTAINER_NAME" test -d /var/cache/pacman/pkg 2>/dev/null; then
+        echo "ERROR: Package cache mount is stale inside the builder container."
+        echo ""
+        echo "  This usually happens when the host .pkg-cache/ directory was"
+        echo "  deleted while the builder was running (e.g. make clean-caches)."
+        echo ""
+        echo "  Fix: restart the builder to refresh the bind-mounts:"
+        echo "    make builder-stop"
+        echo "    make builder-start"
+        exit 1
+    fi
+
+    local offline_flag="OFFLINE=${OFFLINE:-1}"
 
     local force_flag=""
     [[ "${FORCE:-}" == "1" ]] && force_flag="FORCE=1"
 
-    echo "══ Building ISO (mode: $iso_mode, platform: $PLATFORM) ══"
+    # TEMPLATE filters iso.toml [install].templates to a single workload.
+    # Passed both as a make argument (so the Makefile's TEMPLATE ?= picks
+    # it up) and as ARCHES_TEMPLATE in the env (so subprocesses inherit
+    # the filter without re-parsing make args).
+    local template_flag=""
+    [[ -n "${TEMPLATE:-}" ]] && template_flag="TEMPLATE=$TEMPLATE"
+
+    echo "══ Building ISO (mode: $iso_mode, platform: $PLATFORM${TEMPLATE:+, template: $TEMPLATE}) ══"
     echo "  Log: $BUILD_LOG"
 
+    # Run the build under a bash wrapper that chowns artifacts back
+    # to the host user on every exit (success, failure, signal). The
+    # Makefile staging targets run as root (mkarchiso requires it),
+    # and the workspace is bind-mounted from the host, so without
+    # this cleanup root-owned files would leak into the host repo
+    # and break subsequent git/make operations.
+    #
     # shellcheck disable=SC2086
     _podman exec \
         -e SUDO_USER=builder \
+        -e ARCHES_TEMPLATE="${TEMPLATE:-}" \
+        -e ARCHES_GPU="${ARCHES_GPU:-}" \
+        -e ARCHES_ALLOW_DEFAULT_PASSWORD="${ARCHES_ALLOW_DEFAULT_PASSWORD:-}" \
         "$CONTAINER_NAME" \
-        make -C /build _iso \
-            PLATFORM="$PLATFORM" \
-            ARCHES_ARCH="$ARCHES_ARCH" \
-            ISO_MODE="$iso_mode" \
-            $offline_flag \
-            $force_flag \
-            "$@" \
+        bash -c '
+            _chown_back() {
+                chown -R builder:builder \
+                    /build/iso/airootfs \
+                    /build/iso/grub \
+                    /build/iso/syslinux \
+                    /build/iso/pacman.conf \
+                    /build/iso/packages.x86_64 \
+                    /build/iso/packages.aarch64 \
+                    /build/out \
+                    /build/.pkg-cache \
+                    /build/.offline-cache \
+                    /build/.aur-repo \
+                    2>/dev/null || true
+            }
+            trap "_chown_back" EXIT INT TERM
+            make -C /build _iso \
+                PLATFORM='"$PLATFORM"' \
+                ARCHES_ARCH='"$ARCHES_ARCH"' \
+                ISO_MODE='"$iso_mode"' \
+                '"$offline_flag"' \
+                '"$force_flag"' \
+                '"$template_flag"' \
+                '"$*"'
+        ' \
         2>&1 | tee "$BUILD_LOG"
 
     local exit_code=${PIPESTATUS[0]}

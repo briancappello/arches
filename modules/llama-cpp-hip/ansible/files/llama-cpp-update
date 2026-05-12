@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+#
+# llama-cpp-update — rebuild llama.cpp in place from upstream mainline.
+#
+# This is a developer-experience helper for the running system: it
+# clones (or fast-forwards) the upstream master and rebuilds the local
+# package using the same PKGBUILD logic as the ISO builder, then
+# pacman -U's the result.
+#
+# The system pacman package is auto-detected — one of:
+#   - llama.cpp-vulkan-arches
+#   - llama.cpp-hip-arches
+#   - llama.cpp-cuda-arches
+# whichever is installed gets rebuilt with the same backend.
+#
+# Usage:
+#   llama-cpp-update                  # build + install upstream master
+#   llama-cpp-update --build-only     # build, don't install
+#   llama-cpp-update --commit <sha>   # pin to a specific commit
+#   llama-cpp-update --force          # rebuild even if SHA is unchanged
+#
+# Source/build state lives under ~/.cache/llama-cpp-update/ for the
+# invoking user. Installation requires sudo.
+#
+set -euo pipefail
+
+UPSTREAM_REPO="https://github.com/ggml-org/llama.cpp"
+UPSTREAM_BRANCH="master"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/llama-cpp-update"
+
+BUILD_ONLY=false
+FORCE=false
+PIN_COMMIT=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --build-only) BUILD_ONLY=true; shift ;;
+        --force)      FORCE=true; shift ;;
+        --commit)     PIN_COMMIT="$2"; shift 2 ;;
+        -h|--help)
+            sed -n '3,22p' "$0" | sed 's/^# \?//'
+            exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+
+# ── Detect installed backend ──────────────────────────
+if pacman -Qq llama.cpp-vulkan-arches &>/dev/null; then
+    INSTALLED_PKG="llama.cpp-vulkan-arches"
+    BACKEND="vulkan"
+elif pacman -Qq llama.cpp-hip-arches &>/dev/null; then
+    INSTALLED_PKG="llama.cpp-hip-arches"
+    BACKEND="hip"
+elif pacman -Qq llama.cpp-cuda-arches &>/dev/null; then
+    INSTALLED_PKG="llama.cpp-cuda-arches"
+    BACKEND="cuda"
+else
+    echo "ERROR: no llama.cpp-{vulkan,hip,cuda}-arches package found." >&2
+    echo "       Install one via the Arches installer first." >&2
+    exit 1
+fi
+echo "── Detected installed backend: $BACKEND ($INSTALLED_PKG) ──"
+
+# ── Resolve target commit ─────────────────────────────
+mkdir -p "$CACHE_DIR"
+SRC_DIR="$CACHE_DIR/llama.cpp"
+if [[ ! -d "$SRC_DIR/.git" ]]; then
+    echo "── Cloning $UPSTREAM_REPO ──"
+    git clone "$UPSTREAM_REPO" "$SRC_DIR"
+fi
+git -C "$SRC_DIR" fetch origin "$UPSTREAM_BRANCH"
+
+if [[ -n "$PIN_COMMIT" ]]; then
+    TARGET_SHA="$PIN_COMMIT"
+else
+    TARGET_SHA=$(git -C "$SRC_DIR" rev-parse "origin/$UPSTREAM_BRANCH")
+fi
+SHORT_SHA="${TARGET_SHA:0:10}"
+echo "── Target commit: $TARGET_SHA ──"
+
+# ── Skip if already at this SHA (unless --force) ──────
+CURRENT_PKGVER=$(pacman -Q "$INSTALLED_PKG" | awk '{print $2}')
+if [[ "$FORCE" == false && "$CURRENT_PKGVER" == *".${SHORT_SHA}"* ]]; then
+    echo "── Already on $SHORT_SHA ($CURRENT_PKGVER), nothing to do. Use --force to rebuild. ──"
+    exit 0
+fi
+
+# ── Checkout target ───────────────────────────────────
+git -C "$SRC_DIR" checkout --quiet "$TARGET_SHA"
+git -C "$SRC_DIR" submodule update --init --recursive
+
+# ── Build ─────────────────────────────────────────────
+BUILD_DIR="$SRC_DIR/build-$BACKEND"
+rm -rf "$BUILD_DIR"
+
+CMAKE_COMMON=(
+    -G Ninja
+    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_INSTALL_PREFIX=/usr
+    -DBUILD_SHARED_LIBS=ON
+    -DLLAMA_BUILD_TESTS=OFF
+    -DLLAMA_BUILD_EXAMPLES=ON
+    -DLLAMA_BUILD_SERVER=ON
+    -DLLAMA_OPENSSL=ON
+    -DGGML_LTO=ON
+    -DGGML_NATIVE=OFF
+    -DGGML_BLAS=ON
+    -DGGML_BLAS_VENDOR=OpenBLAS
+)
+
+case "$BACKEND" in
+    vulkan)
+        cmake -S "$SRC_DIR" -B "$BUILD_DIR" "${CMAKE_COMMON[@]}" \
+            -DGGML_VULKAN=ON
+        ;;
+    hip)
+        AMDGPU_TARGETS="${AMDGPU_TARGETS:-gfx1201;gfx1100;gfx1101;gfx1102;gfx1030}"
+        export ROCM_PATH=/opt/rocm
+        export HIP_PATH=/opt/rocm
+        cmake -S "$SRC_DIR" -B "$BUILD_DIR" "${CMAKE_COMMON[@]}" \
+            -DCMAKE_C_COMPILER=/opt/rocm/llvm/bin/clang \
+            -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ \
+            -DGGML_HIP=ON \
+            -DGGML_HIP_ROCWMMA_FATTN=ON \
+            -DAMDGPU_TARGETS="$AMDGPU_TARGETS"
+        ;;
+    cuda)
+        CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES:-60;70;75;80;86;89}"
+        export CUDACXX="${CUDACXX:-/opt/cuda/bin/nvcc}"
+        export PATH="/opt/cuda/bin:$PATH"
+        cmake -S "$SRC_DIR" -B "$BUILD_DIR" "${CMAKE_COMMON[@]}" \
+            -DGGML_CUDA=ON \
+            -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCHITECTURES"
+        ;;
+    *)
+        echo "ERROR: internal: unknown backend $BACKEND" >&2
+        exit 1
+        ;;
+esac
+
+cmake --build "$BUILD_DIR"
+
+if [[ "$BUILD_ONLY" == true ]]; then
+    echo "── Build complete at $BUILD_DIR (--build-only, not installing) ──"
+    echo "    Binaries: $BUILD_DIR/bin/"
+    exit 0
+fi
+
+# ── Install over the system package ───────────────────
+echo "── Installing to /usr (sudo required) ──"
+sudo cmake --install "$BUILD_DIR"
+
+# Note: this overwrites pacman-tracked files. The next pacman -Syu of
+# llama.cpp-*-arches (rebuilt by the next ISO/system update) will
+# restore canonical files. This is intentional for a dev workflow —
+# you get fresh upstream bits between formal package rebuilds.
+echo ""
+echo "── Done. Installed llama.cpp at upstream $SHORT_SHA. ──"
+echo "    Restart the service to pick up the new binary:"
+echo "      sudo systemctl restart 'llama-server@*'"
