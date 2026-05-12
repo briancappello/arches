@@ -53,7 +53,9 @@ install = [
 ]
 
 [aur_packages]
-build = []
+build = [
+    "yay",
+]
 
 [iso]
 boot_modes = [

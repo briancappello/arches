@@ -75,6 +75,7 @@ install = [
 # AUR packages to pre-build into the local repo for this platform
 build = [
     "limine-snapper-sync",
+    "yay",
 ]
 
 [iso]

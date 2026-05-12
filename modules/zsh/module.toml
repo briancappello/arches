@@ -9,4 +9,4 @@ packages = [
 ]
 
 [dependencies]
-requires = ["base"]
+requires = ["base", "dev-tools"]

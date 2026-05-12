@@ -11,6 +11,7 @@ include = [
     # Base
     "base",
     "zsh",
+    "dev-tools",
     # Networking
     "networking",
     # Services

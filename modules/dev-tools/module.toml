@@ -15,6 +15,7 @@ packages = [
     "bottom",
     "dust",
     "duf",
+    "bat",
 ]
 
 [dependencies]

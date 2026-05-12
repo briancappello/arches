@@ -32,4 +32,6 @@ packages = [
     "man-pages",
     "tree",
     "fzf",
+    # AUR helper
+    "yay",
 ]

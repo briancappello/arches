@@ -32,6 +32,7 @@ include = [
     # Base
     "base",
     "zsh",
+    "dev-tools",
     "hardware-rescan",
     # Networking
     "networking",
