@@ -42,6 +42,7 @@ packages = [
     "mesa",
     "vulkan-radeon",
     "vulkan-icd-loader",
+    "vulkan-tools",
 ]
 llama_cpp_variant = "vulkan"
 
@@ -69,6 +70,7 @@ packages = [
     "mesa",
     "vulkan-intel",
     "vulkan-icd-loader",
+    "vulkan-tools",
     "intel-media-driver",
 ]
 llama_cpp_variant = "vulkan"

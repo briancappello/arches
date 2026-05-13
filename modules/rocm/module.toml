@@ -6,6 +6,8 @@ category = "service"
 [install.pacstrap]
 packages = [
     "rocm-hip-runtime",
+    "rocm-hip-sdk",
     "rocm-opencl-runtime",
     "rocm-smi-lib",
+    "rocminfo",
 ]

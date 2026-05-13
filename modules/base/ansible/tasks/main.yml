@@ -139,3 +139,15 @@
     src: init.lua
     dest: /root/.config/nvim/init.lua
     mode: '0644'
+
+- name: Symlink vi to nvim
+  file:
+    src: /usr/bin/nvim
+    dest: /usr/local/bin/vi
+    state: link
+
+- name: Symlink vim to nvim
+  file:
+    src: /usr/bin/nvim
+    dest: /usr/local/bin/vim
+    state: link
