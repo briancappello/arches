@@ -146,8 +146,12 @@ dry-run: ## Dry-run the example auto-install config
 qemu-install: ## Build ISO + boot QEMU VM (OFFLINE=1 for offline install, no network)
 	OFFLINE=$(OFFLINE) $(SCRIPTS)/qemu-install.sh
 
-qemu-install-llm: ## Two-disk QEMU install (20G root + 60G bulk, simulates llm-workstation)
-	OFFLINE=$(OFFLINE) $(SCRIPTS)/qemu-install.sh --disk 20G --disk 60G
+qemu-install-llm: ## Two-disk QEMU install (500G root + 60G bulk, simulates llm-workstation; qcow2 sparse)
+	# The llm-workstation layout reserves 8G ESP + 200G btrfs / + 200G
+	# spare slot + ext4 /home on the root disk, so the root VM image
+	# must be at least ~410G. qcow2 is sparse on disk — actual usage
+	# stays in the low GB range until the installer writes to it.
+	OFFLINE=$(OFFLINE) $(SCRIPTS)/qemu-install.sh --disk 500G --disk 60G
 
 qemu-boot: ## Boot the installed test disk in QEMU (UEFI, no ISO)
 	@echo "══ Booting installed disk in QEMU (UEFI) ══"

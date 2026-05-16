@@ -31,6 +31,9 @@ LLAMA_OPTS=--flash-attn
 
 # Model file — typically set per-model in models.d/<alias>.conf instead.
 # Default model search root is /opt/models, which is the bulk-storage
-# btrfs partition on the llm-workstation disk layout. Users can also
-# access this via ~/models thanks to the symlink created at firstboot.
+# ext4 partition on the llm-workstation disk layout (ext4 deliberately,
+# not btrfs — see disk-layouts/llm-workstation.toml: btrfs CoW +
+# checksums + redundant zstd on already-quantized weights costs real
+# throughput for zero benefit on immutable model downloads). Users can
+# also access this via ~/models thanks to the symlink at firstboot.
 # LLAMA_MODEL=/opt/models/Qwen3-235B-A22B-Q4_K_M.gguf

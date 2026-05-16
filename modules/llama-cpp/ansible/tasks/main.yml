@@ -44,9 +44,13 @@
 
 # Canonical model-storage path on Arches. When the system is installed
 # with the llm-workstation disk layout, /opt/models is a separate
-# btrfs partition on the bulk disk; on other layouts it falls back to
-# a plain directory on the root disk. Either way, everything that
-# stores model weights uses this single path.
+# ext4 partition on the bulk disk (chosen over btrfs to avoid CoW
+# fragmentation, redundant compression of already-quantized weights,
+# and per-block checksum overhead on multi-GB mmap reads — see
+# disk-layouts/llm-workstation.toml for the full rationale). On other
+# layouts /opt/models falls back to a plain directory on the root
+# disk. Either way, everything that stores model weights uses this
+# single path.
 - name: Create canonical models directory
   file:
     path: /opt/models

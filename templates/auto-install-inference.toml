@@ -1,8 +1,10 @@
 [install]
 template = "llm-inference.toml"
 # The llm-workstation layout declares two disk roles:
-#   - "root":  fast NVMe SSD for the OS and active workloads
-#   - "bulk":  larger SATA disk mounted at /var/lib/models
+#   - "root":  fast NVMe SSD — btrfs / (with snapshot subvolumes),
+#              200G raw spare slot, and ext4 /home filling the rest.
+#   - "bulk":  larger SATA disk — ext4, mounted at /opt/models.
+# Firstboot Ansible symlinks ~/models -> /opt/models for convenience.
 # On a single-disk host, override [[disks]] below to pin both roles
 # to the same physical disk, or switch disk_layout to "basic.toml".
 disk_layout = "llm-workstation.toml"
@@ -98,7 +100,7 @@ name = "bulk"
 device = "8TB SATA"
 
 # Example: single-disk host (no bulk drive). Pin both roles to the
-# same NVMe to make the install succeed even though /var/lib/models
+# same NVMe to make the install succeed even though /opt/models
 # ends up on the same physical disk as /.
 # [[disks]]
 # name = "root"

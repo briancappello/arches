@@ -99,14 +99,26 @@ class TestShippedFiles:
         roles_used = {p.target_role for p in layout.partitions}
         assert roles_used == {"root", "bulk"}
 
-    def test_layout_has_three_partitions(self) -> None:
+    def test_layout_has_five_partitions(self) -> None:
         layout = load_disk_layout(_REPO_ROOT / "disk-layouts/llm-workstation.toml")
-        assert len(layout.partitions) == 3
-        # ESP, root, bulk
+        # ESP + btrfs / + raw spare slot + ext4 /home + ext4 /opt/models
+        assert len(layout.partitions) == 5
         mount_points = [p.mount_point for p in layout.partitions]
         assert "/boot" in mount_points
         assert "/" in mount_points
+        assert "/home" in mount_points
         assert "/opt/models" in mount_points
+        # The spare slot is intentionally unformatted and unmounted —
+        # it's reserved for a second OS install.
+        spare = next(p for p in layout.partitions if p.label == "spare-root")
+        assert spare.filesystem == ""
+        assert spare.mount_point is None
+
+        # Filesystem split: btrfs only for /, ext4 for /home and /opt/models.
+        by_mount = {p.mount_point: p for p in layout.partitions if p.mount_point}
+        assert by_mount["/"].filesystem == "btrfs"
+        assert by_mount["/home"].filesystem == "ext4"
+        assert by_mount["/opt/models"].filesystem == "ext4"
 
     def test_basic_layout_still_works(self) -> None:
         """basic.toml has no [[disks]] block; the resolver synthesises

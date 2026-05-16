@@ -4,19 +4,61 @@
 #   - "bulk":  larger SATA disk for archived models / datasets,
 #              exposed inside home via a symlink (created at firstboot)
 #
-# The root disk uses a single btrfs partition with snapshot-friendly
-# subvolumes:
-#   @          — root filesystem
-#   @home      — user home dirs
-#   @var       — /var (high churn — separate so / can snapshot cleanly)
-#   @var/log   — system logs (excluded from / snapshots; replaced via
-#                snapper exclude rules — most distros' convention)
-#   @var/cache — pacman/journal caches (large + ephemeral)
+# Filesystem split on the root NVMe:
+#   /          — btrfs (snapshot-friendly, with @, @var, @var-log,
+#                @var-cache subvolumes for clean snapper rollback)
+#   <spare>    — raw, unformatted 200G partition reserved for a
+#                second OS install (sibling slot for distro hopping
+#                or A/B upgrades without touching /home)
+#   /home      — ext4 (independent of root snapshots; survives a
+#                full / rollback or a second-distro install in the
+#                spare slot)
 #
-# The bulk disk is mounted at /opt/models. The llm-inference template's
-# firstboot Ansible (modules/llama-cpp/ansible) creates a symlink at
-# /home/<username>/models -> /opt/models so users can address bulk
-# storage as ~/models without the layout needing to know the username.
+# Why ext4 for /home and /opt/models — NOT btrfs:
+#
+#   btrfs is materially slower than ext4 for the dominant workload
+#   on this box: large sequential reads of multi-GB, already-
+#   compressed files (GGUF / safetensors model weights, dataset
+#   tarballs, video). Four compounding issues:
+#
+#     1. CoW fragmentation. Even read-mostly weights accumulate
+#        metadata / atime / partial-write updates that scatter
+#        extents across the disk over time. A 70B-parameter Q4
+#        weight that started as a single contiguous file degrades
+#        to thousands of extents after a few weeks of use, and
+#        mmap-driven sequential walks (llama.cpp's hot path) turn
+#        into semi-random I/O. `chattr +C` and `nodatacow` mitigate
+#        but don't eliminate it, and they also disable checksums
+#        and compression — at which point ext4 is the cleaner
+#        choice with none of the caveats.
+#
+#     2. Redundant compression. `compress=zstd` re-compresses data
+#        that is already entropy-coded (quantized weights have ~0
+#        compressible redundancy at q4/q5/q8). The CPU is spent
+#        for ~0% space savings AND adds latency on every read.
+#
+#     3. Per-block checksums. btrfs checksums every 4K block on
+#        every read; on multi-GB mmap walks this is non-trivial
+#        CPU overhead (a single token decode of a 70B model can
+#        touch tens of GB of weights). ext4 trusts the device.
+#
+#     4. Snapshot value is zero here. Model weights are immutable
+#        downloads — rollback is meaningless (just re-download).
+#        Datasets are append-only archives. The one benefit btrfs
+#        offers for / (snapper rollback of system state) does not
+#        apply to bulk data.
+#
+#   We accept these costs on / because snapper rollback of a broken
+#   pacman -Syu is genuinely valuable — and the OS workload is
+#   small-file random I/O where btrfs is competitive with ext4.
+#   We do not accept them on /home and /opt/models where they buy
+#   nothing and cost real throughput.
+#
+# /opt/models is mounted at this canonical path so every inference
+# runner (llama.cpp, ollama, aphrodite, exo) finds models in the
+# same place. The llm-inference firstboot Ansible symlinks
+# ~/models -> /opt/models so users can address bulk storage as
+# ~/models without the layout needing to know the username.
 #
 # To customise per-host:
 #   - Pin disks by serial/model in templates/auto-install-inference.toml
@@ -30,7 +72,7 @@
 
 [meta]
 name = "LLM Workstation"
-description = "Root on NVMe (btrfs, snapshot-friendly subvolumes) + bulk on SATA, symlinked into home."
+description = "btrfs / (snapshot subvols) + 200G spare slot + ext4 /home on NVMe; ext4 /opt/models on bulk SATA."
 bootloaders = ["limine", "grub"]
 
 # ── Disk roles ─────────────────────────────────────────
@@ -67,32 +109,29 @@ filesystem = "vfat"
 mount_point = "/boot"
 label = "ESP"
 
-# Single btrfs partition filling the rest of the root disk. All
-# subvolumes live inside this filesystem so they can be snapshotted
-# atomically.
+# 200G btrfs root with snapshot-friendly subvolumes. 200G is plenty
+# for the OS, container images (podman/docker), build artefacts, and
+# headroom for /var/lib growth (ollama caches, journald, pacman).
+# /home lives on a separate ext4 partition further down, so this
+# btrfs filesystem stays focused on the OS lifecycle.
 [[partitions]]
 disk = "root"
-size = "*"
+size = "200G"
 filesystem = "btrfs"
 mount_point = "/"
 label = "archroot"
 # zstd:1 is the fastest btrfs compression option — appropriate for
-# the OS and active workspaces where read latency matters more than
-# space savings. Bulk gets heavier compression (see below).
+# the OS where read latency matters more than space savings.
 mount_options = "compress=zstd:1,noatime,ssd,discard=async"
 
 [[partitions.subvolumes]]
 name = "@"
 mount_point = "/"
 
-[[partitions.subvolumes]]
-name = "@home"
-mount_point = "/home"
-
-# @var lets the snapshot tool exclude high-churn data (logs, pacman
-# cache) from / snapshots. Without this every system snapshot would
-# include the day's journal and the package cache, which is expensive
-# and rarely useful for rollback.
+# @var lets snapper exclude high-churn data (logs, pacman cache) from
+# / snapshots. Without this every system snapshot would include the
+# day's journal and the package cache, which is expensive and rarely
+# useful for rollback.
 [[partitions.subvolumes]]
 name = "@var"
 mount_point = "/var"
@@ -109,17 +148,49 @@ mount_point = "/var/log"
 name = "@var-cache"
 mount_point = "/var/cache"
 
+# 200G raw, unformatted partition reserved for a second OS install
+# (distro hopping, A/B kernel testing, or a future arches re-install
+# that wants to keep the current root around as a fallback). Sized
+# to mirror the primary root so an installer dropped into this slot
+# has the same headroom budget.
+#
+# No filesystem, no mount point — the installer will skip it. To
+# claim the slot later, edit a copy of this layout to set
+# `filesystem = "btrfs"` and `mount_point = "/"` on this entry and
+# the previous root, then pick which one to boot via the bootloader.
+[[partitions]]
+disk = "root"
+size = "200G"
+label = "spare-root"
+
+# /home — ext4, fills the rest of the NVMe. ext4 chosen over btrfs
+# for the throughput reasons documented in the header (no CoW
+# fragmentation on large downloads, no redundant compression on
+# already-compressed media, no per-block checksum overhead on bulk
+# reads). Putting /home on its own filesystem also decouples user
+# data from the / snapshot lifecycle: a snapper rollback of / leaves
+# /home untouched, and a fresh install into the spare slot above can
+# remount this partition without migration.
+[[partitions]]
+disk = "root"
+size = "*"
+filesystem = "ext4"
+mount_point = "/home"
+label = "archhome"
+mount_options = "noatime,defaults"
+
 # ── Bulk storage ───────────────────────────────────────
-# Single btrfs partition filling the bulk disk. Heavier compression
-# (zstd:3) since this data is mostly cold archives — model weights,
-# dataset tarballs, video, etc. — and benefits from the extra
-# squeeze. No subvolumes because per-file rollback isn't useful for
-# this data and snapshot overhead would be wasteful on TBs of cold
-# weights.
+# /opt/models — ext4 filling the bulk disk. This is the workload that
+# most justifies the ext4 choice: model weights are multi-GB,
+# write-once, read-mostly files accessed via mmap during inference.
+# See the header for the full rationale (CoW fragmentation, redundant
+# zstd on entropy-coded weights, per-block checksum overhead,
+# snapshots irrelevant for immutable downloads). Firstboot Ansible
+# symlinks ~/models -> /opt/models for convenience.
 [[partitions]]
 disk = "bulk"
 size = "*"
-filesystem = "btrfs"
+filesystem = "ext4"
 mount_point = "/opt/models"
 label = "models"
-mount_options = "compress=zstd:3,noatime"
+mount_options = "noatime,defaults"
