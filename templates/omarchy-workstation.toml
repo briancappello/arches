@@ -1,0 +1,12 @@
+[meta]
+name = "Omarchy Workstation"
+description = "Omarchy stable owns desktop, accounts, networking, and snapshots"
+workload = "workstation"
+providers = ["omarchy"]
+
+[system]
+timezone = "UTC"
+locale = "en_US.UTF-8"
+
+[modules]
+include = []

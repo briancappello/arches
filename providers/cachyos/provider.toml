@@ -1,0 +1,27 @@
+# Default x86 package policy. Platform fields remain a compatibility view.
+[platform]
+arch = "x86_64"
+cachyos_optimization_tier = "x86-64-v3"
+
+[kernel]
+variants = [
+    { package = "linux-cachyos", headers = "linux-cachyos-headers" },
+    { package = "linux-cachyos-lts", headers = "linux-cachyos-lts-headers" },
+]
+
+[hardware_detection]
+enabled = true
+tool = "chwd"
+args = ["-a"]
+optional = true
+
+[base_packages]
+install = [
+    "base", "linux-firmware", "mkinitcpio", "sudo", "ansible", "terminus-font",
+    "cachyos-keyring", "cachyos-mirrorlist", "cachyos-v3-mirrorlist", "cachyos-settings",
+    "limine", "limine-mkinitcpio-hook", "efibootmgr", "limine-snapper-sync",
+    "memtest86+-efi", "chwd",
+]
+
+[iso]
+extra_packages = ["cachyos-keyring", "cachyos-mirrorlist", "cachyos-v3-mirrorlist", "cachyos-settings", "chwd"]

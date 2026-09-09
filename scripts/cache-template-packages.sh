@@ -8,9 +8,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-INSTALLER_DIR="$PROJECT_ROOT/installer/arches_installer"
-TEMPLATES_DIR="$PROJECT_ROOT/templates"
-CACHE_DIR="$PROJECT_ROOT/.offline-cache"
 PLATFORM="${1:-}"
 
 if [[ -z "$PLATFORM" ]]; then
@@ -26,61 +23,26 @@ fi
 
 # Read the platform.toml for base packages (kernel, etc.)
 PLATFORM_TOML="$PROJECT_ROOT/platforms/$PLATFORM/platform.toml"
+ARCHES_PROVIDER=$(python3 "$SCRIPT_DIR/iso-config.py" provider-id "$PLATFORM_TOML")
+export ARCHES_PROVIDER
+case "$ARCHES_PROVIDER" in
+    arch|omarchy)
+        echo "ERROR: Alternative provider caches require authenticated ProviderInputs from Task 5."
+        exit 1 ;;
+esac
+source "$SCRIPT_DIR/lib/build-cache.sh"
 
 # Collect base packages from platform.toml (single source of truth).
 # This matches what install.py:pacstrap() installs.
-base_packages=()
-while IFS= read -r pkg; do
-    [[ -n "$pkg" ]] && base_packages+=("$pkg")
-done < <(PYTHONPATH="$INSTALLER_DIR/.." python3 -c "
-from arches_installer.core.platform import load_platform
-
-platform = load_platform('$PLATFORM_TOML')
-
-# Base packages (core system + platform-specific)
-for p in platform.base_packages:
-    print(p)
-
-# Kernel variants
-for v in platform.kernel.variants:
-    print(v.package)
-    print(v.headers)
-")
-
-# Collect install-time template packages.
-# Read the template list from iso.toml and resolve each template's modules.
-template_packages=()
-echo "  Reading template list from iso.toml..."
-while IFS= read -r tmpl_name; do
-    [[ -n "$tmpl_name" ]] || continue
-    tmpl_file="$TEMPLATES_DIR/$tmpl_name"
-    if [[ ! -f "$tmpl_file" ]]; then
-        echo "  WARNING: Template not found: $tmpl_file"
-        continue
-    fi
-    echo "  Reading template: $tmpl_name"
-    while IFS= read -r pkg; do
-        [[ -n "$pkg" ]] && template_packages+=("$pkg")
-    done < <(PYTHONPATH="$INSTALLER_DIR/.." python3 -c "
-from arches_installer.core.template import load_template, resolve_and_merge_modules
-from pathlib import Path
-
-tmpl = load_template(Path('$tmpl_file'))
-if tmpl.module_slugs:
-    resolved = resolve_and_merge_modules(tmpl)
-    for p in resolved.install.all_packages:
-        print(p)
-")
-done < <(python3 "$SCRIPT_DIR/iso-config.py" templates)
+packages=$(python3 "$SCRIPT_DIR/iso-config.py" target-packages "$PLATFORM_TOML")
+mapfile -t base_packages <<< "$packages"
 
 # Collect ISO environment packages (both framebuffer and graphical layers).
 # Even for an fb-only ISO build, we cache graphical packages because the
 # installed system templates may include desktop modules.
-iso_packages=()
 echo "  Reading ISO environment packages (framebuffer + graphical)..."
-while IFS= read -r pkg; do
-    [[ -n "$pkg" ]] && iso_packages+=("$pkg")
-done < <(python3 "$SCRIPT_DIR/iso-config.py" packages "$PROJECT_ROOT/modules" graphical)
+packages=$(python3 "$SCRIPT_DIR/iso-config.py" packages "$PROJECT_ROOT/modules" graphical)
+mapfile -t iso_packages <<< "$packages"
 echo "  ISO environment packages: ${#iso_packages[@]}"
 
 # Common hardware driver packages installed by chwd (hardware detection).
@@ -108,27 +70,25 @@ machine_packages=()
 echo "  Reading hardware machine profiles..."
 for machine_toml in "$PROJECT_ROOT"/hardware/machines/*.toml; do
     [[ -f "$machine_toml" ]] || continue
-    while IFS= read -r pkg; do
-        [[ -n "$pkg" ]] && machine_packages+=("$pkg")
-    done < <(python3 -c "
+    packages=$(python3 -c "
 import tomllib
 d = tomllib.load(open('$machine_toml', 'rb'))
 for p in d.get('packages', {}).get('install', []):
     print(p)
 ")
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] && machine_packages+=("$pkg")
+    done <<< "$packages"
 done
 if [[ ${#machine_packages[@]} -gt 0 ]]; then
     echo "  Machine profile packages: ${machine_packages[*]}"
 fi
 
 # Deduplicate
-all_packages=($(printf '%s\n' "${base_packages[@]}" "${template_packages[@]}" "${iso_packages[@]}" "${hw_driver_packages[@]}" "${machine_packages[@]}" | sort -u))
+all_packages=($(printf '%s\n' "${base_packages[@]}" "${iso_packages[@]}" "${hw_driver_packages[@]}" "${machine_packages[@]}" | sort -u))
 
 echo "  Packages to cache: ${#all_packages[@]}"
 echo "  Package list: ${all_packages[*]}"
-
-# Create cache dir
-mkdir -p "$CACHE_DIR"
 
 # Download packages (and dependencies) without installing.
 # Use the platform pacman.conf so we get the right repos.
@@ -141,7 +101,6 @@ else
 fi
 
 echo "  Config: $_conf"
-echo "  Downloading to: $CACHE_DIR"
 
 # Use a temporary dbpath so pacman resolves the full dependency tree
 # as if nothing is installed (the host may already have these packages,
@@ -156,6 +115,17 @@ echo "  ── Syncing package databases ──"
 pacman -Sy --noconfirm \
     --config "$_conf" \
     --dbpath "$TEMP_DB"
+
+# New scopes never reuse the old flat cache, nor mix database generations.
+dependencies=$(pacman -Q)
+scope=$(compute_cache_hash "str:provider=$ARCHES_PROVIDER" "str:platform=$PLATFORM" \
+    "str:architecture=$(uname -m)" "str:channel=stable" \
+    "str:packages=${all_packages[*]}" "str:image=${ARCHES_BUILD_IMAGE:?Builder image identity is required}" \
+    "str:dependencies=$dependencies" "$PLATFORM_TOML" "$_conf" \
+    "str:snapshot=$(compute_cache_hash "$TEMP_DB/sync")")
+CACHE_DIR="$PROJECT_ROOT/.offline-cache/$PLATFORM/$ARCHES_PROVIDER/$scope"
+mkdir -p "$CACHE_DIR"
+echo "  Downloading to: $CACHE_DIR"
 
 # Download all packages AND their dependencies
 echo ""
@@ -178,3 +148,5 @@ echo "  Copied $(ls "$CACHE_DIR/sync/"*.db 2>/dev/null | wc -l) database files"
 echo ""
 echo "  Cached $(find "$CACHE_DIR" -name '*.pkg.tar.*' | wc -l) packages"
 echo "  Cache size: $(du -sh "$CACHE_DIR" | cut -f1)"
+# This pointer is build-local routing, not an authentication assertion.
+printf '%s\n' "$CACHE_DIR" > "$PROJECT_ROOT/.offline-cache/$PLATFORM/$ARCHES_PROVIDER/current"

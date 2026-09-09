@@ -18,14 +18,12 @@ lsblk on a real QEMU VM would report.
 from __future__ import annotations
 
 import pytest
+import subprocess
 
 from arches_installer.core.disk import BlockDevice
 from arches_installer.core.disk_layout import (
     DiskRole,
     DiskRoleResolutionError,
-    PartitionSpec,
-    SubvolumeSpec,
-    DiskLayout,
     load_disk_layout,
     resolve_disk_roles,
 )
@@ -37,6 +35,52 @@ from pathlib import Path
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize("case", ["existing", "missing", "no-value", "rebuild"])
+def test_explicit_iso_selection(tmp_path: Path, case: str) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for name in ("qemu-install.sh", "detect-platform.sh"):
+        source = (_REPO_ROOT / "scripts" / name).read_text()
+        source = source.replace("/tmp/arches-test-disk", str(tmp_path / "disk"))
+        source = source.replace("/tmp/arches-efi-vars.raw", str(tmp_path / "vars"))
+        (scripts / name).write_text(source)
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    (commands / "dirname").symlink_to("/usr/bin/dirname")
+    calls = tmp_path / "calls"
+    for name in ("python3", "sudo", "rm", "cp", "qemu-img"):
+        stub = commands / name
+        stub.write_text(f'#!/bin/bash\nprintf "{name}\\n" >> "$CALLS"\nexit 71\n')
+        stub.chmod(0o755)
+    builder = scripts / "build-iso.sh"
+    builder.write_text('#!/bin/bash\nprintf "builder\\n" >> "$CALLS"\nexit 72\n')
+    builder.chmod(0o755)
+    iso = tmp_path / "selected artifact.iso"
+    if case != "missing":
+        iso.touch()
+    args = ["--iso"] if case == "no-value" else ["--iso", str(iso)]
+    if case == "existing":
+        args.extend(["--platform", "x86-64"])
+    if case == "missing":
+        args.append("--fresh-disk")
+    if case == "rebuild":
+        args.append("--rebuild")
+    result = subprocess.run(
+        ["/bin/bash", str(scripts / "qemu-install.sh"), *args],
+        env={"PATH": str(commands), "PLATFORM": "x86-64", "CALLS": str(calls)},
+        capture_output=True, text=True, timeout=10,
+    )
+    if case == "existing":
+        assert f"ISO: {iso}" in result.stdout
+        assert calls.read_text() == "qemu-img\n"
+        assert result.returncode == 71
+    else:
+        assert result.returncode == 2
+        assert "--iso" in result.stderr
+        assert {"missing": "not found", "no-value": "requires", "rebuild": "--rebuild"}[case] in result.stderr
+        assert not calls.exists()
 
 
 # ---------------------------------------------------------------------------

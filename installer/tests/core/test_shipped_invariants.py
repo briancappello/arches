@@ -73,6 +73,9 @@ class TestTemplateCategoryCoverage:
         with open(tmpl_path, "rb") as f:
             data = tomllib.load(f)
         slugs = data.get("modules", {}).get("include", [])
+        if data.get("meta", {}).get("providers") == ["omarchy"]:
+            assert slugs == [], "Omarchy owns base policy without Arches modules"
+            return
         categories = {_module_category(s) for s in slugs} - {None}
         assert "base" in categories, (
             f"{tmpl_path.name} has no base-category module. "
@@ -96,6 +99,9 @@ class TestTemplateCategoryCoverage:
         with open(tmpl_path, "rb") as f:
             data = tomllib.load(f)
         slugs = data.get("modules", {}).get("include", [])
+        if data.get("meta", {}).get("providers") == ["omarchy"]:
+            assert slugs == [], "Omarchy owns networking without Arches modules"
+            return
         categories = {_module_category(s) for s in slugs} - {None}
         assert "networking" in categories, (
             f"{tmpl_path.name} has no networking-category module. "

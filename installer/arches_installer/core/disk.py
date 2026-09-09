@@ -316,13 +316,15 @@ def detect_mounts() -> PartitionMap | None:
     and mounts everything themselves, then the installer inspects what's there.
     """
     mounts: dict[str, str] = {}  # mountpoint -> device
+    filesystems: dict[str, str] = {}
     try:
         with open("/proc/mounts") as f:
             for line in f:
                 parts = line.split()
-                if len(parts) >= 2:
+                if len(parts) >= 3:
                     device_path, mountpoint = parts[0], parts[1]
                     mounts[mountpoint] = device_path
+                    filesystems[mountpoint] = parts[2]
     except OSError:
         return None
 
@@ -344,6 +346,7 @@ def detect_mounts() -> PartitionMap | None:
             root=root_dev,
             boot=boot_dev,
             home=home_dev,
+            root_filesystem=filesystems[root_str],
         )
     elif boot_dev:
         # ESP mounted at /boot -- Limine-style (x86-64)
@@ -351,6 +354,7 @@ def detect_mounts() -> PartitionMap | None:
             esp=boot_dev,
             root=root_dev,
             home=home_dev,
+            root_filesystem=filesystems[root_str],
         )
     else:
         # No boot mount detected -- return just root
@@ -358,6 +362,7 @@ def detect_mounts() -> PartitionMap | None:
             esp="",
             root=root_dev,
             home=home_dev,
+            root_filesystem=filesystems[root_str],
         )
 
 

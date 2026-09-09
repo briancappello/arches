@@ -136,6 +136,8 @@ class TestRunInstallPipelineLayoutBased:
             "testpass",
             hardware=None,
             log=log,
+            provider=auto_params.provider,
+            inputs=auto_params.inputs,
         )
 
     def test_passes_parts_to_bootloader(self, auto_params, mock_pipeline):

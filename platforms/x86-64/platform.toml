@@ -10,17 +10,14 @@
 name = "x86-64"
 description = "x86-64 with CachyOS x86-64-v3 optimized packages (AVX2/SSE4.2)"
 arch = "x86_64"
-cachyos_optimization_tier = "x86-64-v3"
+required_packages = ["linux-firmware"]
 default_template = "dev-workstation"
 swap = "zram"
 
+[provider]
+id = "cachyos"
+
 [kernel]
-# Multiple kernel variants produce multiple bootloader entries.
-# The first variant is the default unless one is explicitly marked default = true.
-variants = [
-    { package = "linux-cachyos", headers = "linux-cachyos-headers" },
-    { package = "linux-cachyos-lts", headers = "linux-cachyos-lts-headers" },
-]
 # Platform-specific kernel command-line parameters.
 # Applied to both ISO boot and installed system bootloader configs.
 # Archiso-specific params (archisobasedir, etc.) are NOT here — they
@@ -39,38 +36,6 @@ efi_fallback_path = "EFI/BOOT/BOOTX64.EFI"
 supports_bios = true
 snapshot_boot = true
 
-[hardware_detection]
-enabled = true
-tool = "chwd"
-args = ["-a"]
-optional = true  # non-fatal failure (expected in VMs without discrete GPU)
-
-[base_packages]
-# Always installed by pacstrap regardless of template.
-# Kernel packages are NOT listed here — they come from [kernel].variants.
-install = [
-    # Core system
-    "base",
-    "linux-firmware",
-    "mkinitcpio",
-    "sudo",
-    "ansible",
-    "terminus-font",
-    # CachyOS repos
-    "cachyos-keyring",
-    "cachyos-mirrorlist",
-    "cachyos-v3-mirrorlist",
-    "cachyos-settings",
-    # Bootloader
-    "limine",
-    "limine-mkinitcpio-hook",
-    "efibootmgr",
-    "limine-snapper-sync",
-    "memtest86+-efi",
-    # Hardware detection
-    "chwd",
-]
-
 [aur_packages]
 # AUR packages to pre-build into the local repo for this platform
 build = [
@@ -88,11 +53,6 @@ boot_modes = [
 # from [kernel].variants by the build system.
 extra_packages = [
     "linux-firmware",
-    "cachyos-keyring",
-    "cachyos-mirrorlist",
-    "cachyos-v3-mirrorlist",
-    "cachyos-settings",
-    "chwd",
     "limine",
     "efibootmgr",
 ]

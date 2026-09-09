@@ -1,0 +1,42 @@
+# Published artifact identity, not a reproducible source-to-binary attestation.
+revision = "4.0.2"
+channel = "stable"
+architecture = "x86_64"
+iso_url = "https://iso.omarchy.org/omarchy-4.0.2.iso"
+signature_url = "https://iso.omarchy.org/omarchy-4.0.2.iso.sig"
+iso_sha256 = "2ef8e624aa1bec7e277e28056b8535a6c9373ba48d7ede3f1a01cb6d2373cfb8"
+squashfs_sha256 = "b6a3f3fd4cb3a1e15955fea71d9ca2a253f25523f42774b00b9ef3cb1c806090"
+fingerprint = "40DFB630FF42BCFFB047046CF0134EE680CAC571"
+key_url = "https://keys.openpgp.org/vks/v1/by-fingerprint/40DFB630FF42BCFFB047046CF0134EE680CAC571"
+# Dearmored public key used by gpgv, never an initialized live keyring.
+key_sha256 = "763114ca466f5d850a39743b2f2f9572e33aacd1039aeed93e44654da919894d"
+iso_source_revision = "2673c613d9a71e23920e43fbb951238145e0f1e8"
+runtime_source_revision = "346e69e1cec6c4e8924531874af6ba010a1bc99e"
+selected_manifest_sha256 = "33eeb0938949a0e2950bb116af17c0d5bb7b7b4992de9b7ff456358aa093a297"
+targets_sha256 = "685c220ed192ffe543b32ce05414470a410aa4be56455db328c0b1f5b2ed24db"
+base_list_sha256 = "99434167d84b242050bbb32485679e92c29934fd5102df01265f7673612167fc"
+# Node is authenticated by extraction from this exact signed ISO/squashfs.
+node_source = "opt/packages/node-v*-linux-x64.tar.gz"
+
+[sources]
+"orchestrator/main.py" = "92dce329f089e85761660c7ad8dfa5a44bd878eee21fd2a6d61fc5764b21bf9d"
+"orchestrator/phases_impl.py" = "e75c17efbaba464f976ef88719a8ca726f7fedbda5c6260b813eb97eac81713e"
+"orchestrator/archinstall_adapter.py" = "d0bc68bf62b950173f17502f87a8c53c6a8f77aefeac30f09f768253bdf3754c"
+
+[databases]
+core = "c904c80bedd387beb86021d20e90c8519785c8b1ab7e94f27b75066a566e8648"
+extra = "69cca941b3da9958ca6802a6f9ef3327158ee00f1104f4ceda9410f6e5ed701b"
+multilib = "955ca1fb0dcad09d95b7cd65d0a2b4513f17e1cc445d0a9b94bb0146dbc7333f"
+omarchy = "3105b5ab098c05a95bb61ab2bcb999f13fabd758e4fd03e90b181726e77fae00"
+
+[packages]
+"pacman-7.1.0.r9.g54d9411-2-x86_64.pkg.tar.zst" = "2092ec7a0391416e4a1757c455bc071d7b58a124cedc83f582cb7d37d52f211b"
+"omarchy-4.0.2-1-any.pkg.tar.zst" = "cb24bb99a4b890fed643b4c92ab729daf353b6c632c29634d8cac09827ce5863"
+"omarchy-settings-4.0.2-1-any.pkg.tar.zst" = "8f594aabc9d96cf136bd1192d65e7e2437901b7525f4a3cbf280125e6e6a6869"
+"omarchy-keyring-20251027-1-any.pkg.tar.zst" = "f4bc258879f493462736f9a072c4f4c7f753eb559f6b346f5bdf8ed816f75f66"
+"archlinux-keyring-20260727-1-any.pkg.tar.zst" = "694c4236ff403b5be549436d2df2910092cb6d778bb027fd232be9dddf4ea090"
+
+[arch_public_roots]
+"archlinux.gpg" = "45be20e923b6d156203b73daf96c3b0fc0b4e646967ed7942d7bebc80a6151f3"
+"archlinux-trusted" = "384c7daf07a89ec6610859142b009ca5c0b3062ed3ab2d3c50629fef9d002e8f"
+"archlinux-revoked" = "aafbc33d6be7e200dd6226dbb467623a38a00db431826258bccfaf5cebfef6a1"

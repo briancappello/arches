@@ -17,6 +17,8 @@ chwd
 # ─── Bootloader ───────────────────────────────────────
 limine
 efibootmgr
+# Supplies memdiskfind for the live initramfs memdisk hook.
+syslinux
 
 # ─── Memory testing ──────────────────────────────────
 memtest86+

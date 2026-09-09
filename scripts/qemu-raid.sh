@@ -48,7 +48,7 @@ fi
 echo "Platform: $PLATFORM"
 
 # ── Step 1: Ensure ISO exists ────────────────────────
-ISO=$(ls -t "$OUT_DIR"/arches-"${PLATFORM}"-*.iso 2>/dev/null | head -1 || true)
+ISO=$(python3 "$SCRIPT_DIR/iso-config.py" latest-iso "$PROJECT_DIR/platforms/$PLATFORM/platform.toml" "$OUT_DIR")
 
 if [[ -z "$ISO" ]] || [[ "${#BUILD_ISO_ARGS[@]}" -gt 0 ]]; then
     if [[ -z "$ISO" ]]; then

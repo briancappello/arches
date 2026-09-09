@@ -36,6 +36,39 @@ class TestLoadPlatform:
         with pytest.raises(FileNotFoundError):
             load_platform(tmp_path / "nope.toml")
 
+    def test_provider_defaults_with_explicit_legacy_overrides(self):
+        platform = PlatformConfig.from_dict({
+            "provider": {"id": "cachyos"},
+            "platform": {"arch": "x86_64", "cachyos_optimization_tier": "znver4"},
+            "kernel": {"package": "linux-custom", "headers": "linux-custom-headers"},
+            "hardware_detection": {"enabled": False},
+            "base_packages": {"install": ["custom-package"]},
+        })
+        assert platform.provider_id == "cachyos"
+        assert platform.kernel.package == "linux-custom"
+        assert platform.base_packages == ["custom-package"]
+        assert not platform.hardware_detection.enabled
+        assert platform.cachyos_optimization_tier == "znver4"
+
+    def test_new_hardware_definition_does_not_own_provider_defaults(self):
+        import tomllib
+
+        root = Path(__file__).resolve().parents[3]
+        data = tomllib.loads((root / "platforms/x86-64/platform.toml").read_text())
+        assert "variants" not in data["kernel"]
+        assert "cachyos_optimization_tier" not in data["platform"]
+        assert "hardware_detection" not in data
+        assert data["platform"]["required_packages"] == ["linux-firmware"]
+        assert not any("cachyos" in p or p == "chwd" for p in data["iso"]["extra_packages"])
+
+    def test_provider_composition_keeps_intrinsic_firmware(self):
+        platform = PlatformConfig.from_dict({
+            "provider": {"id": "arch"},
+            "platform": {"required_packages": ["linux-firmware", "device-firmware"]},
+            "base_packages": {"install": ["base"]},
+        })
+        assert platform.base_packages == ["base", "linux-firmware", "device-firmware"]
+
     def test_load_empty_toml(self, tmp_path: Path) -> None:
         empty = tmp_path / "empty.toml"
         empty.write_text("")

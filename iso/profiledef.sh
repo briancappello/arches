@@ -12,7 +12,12 @@
 
 # ARCHES_PLATFORM is set by the build system (e.g., x86-64, aarch64-generic).
 # Include it in the ISO name so different platforms produce distinct files.
-iso_name="arches-${ARCHES_PLATFORM:-unknown}"
+case "${ARCHES_PLATFORM:-}" in
+    aarch64-apple) default_provider=asahi ;;
+    aarch64-generic) default_provider=alarm ;;
+    *) default_provider=cachyos ;;
+esac
+iso_name="arches-${ARCHES_PROVIDER:-$default_provider}-${ARCHES_PLATFORM:-unknown}"
 # FAT32 volume labels are limited to 11 characters. Keep this short
 # and stable so the USB image can use the same label for archisolabel=.
 iso_label="ARCHES_2026"

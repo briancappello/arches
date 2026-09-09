@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from arches_installer.core.disk import MOUNT_ROOT
 from arches_installer.core.platform import PlatformConfig
+from arches_installer.core.provider import ProviderConfig, resolve_provider
 from arches_installer.core.run import LogCallback, _log
 from arches_installer.core.template import InstallTemplate
 
@@ -172,7 +173,7 @@ def generate_firstboot_script(
             '        echo "exit code: $_ANSIBLE_RC"',
             '        echo "log:       /var/log/arches-firstboot.log"',
             '        echo "to retry:  sudo touch /opt/arches/firstboot-pending '
-            '\\&\\& sudo systemctl start arches-firstboot.service"',
+            '&& sudo systemctl start arches-firstboot.service"',
             "    } > /opt/arches/firstboot-failed",
             "fi",
             "rm -f /opt/arches/firstboot-pending",
@@ -199,7 +200,11 @@ def generate_firstboot_script(
             "    {",
             '        echo ""',
             '        echo "╔════════════════════════════════════════════════╗"',
-            '        echo "║   Arches — System ready                        ║"',
+            '        if [ "$_ANSIBLE_RC" -eq 0 ]; then',
+            '            echo "║   Arches — System ready                        ║"',
+            '        else',
+            '            echo "║   Arches — First-boot setup FAILED              ║"',
+            '        fi',
             '        echo "╚════════════════════════════════════════════════╝"',
             '        _hn=$(uname -n)',
             '        echo "  hostname: $_hn"',
@@ -236,6 +241,7 @@ def generate_firstboot_script(
             "# watching serial output during the first boot).",
             "_banner_to >/var/log/arches-ready.log 2>&1 || true",
             "_banner_to > /dev/console 2>&1 || true",
+            'exit "$_ANSIBLE_RC"',
         ]
     )
 
@@ -249,8 +255,15 @@ def inject_firstboot_service(
     hardware: HardwareConfig | None = None,
     extra_vars: dict[str, str] | None = None,
     log: LogCallback | None = None,
+    *,
+    provider: ProviderConfig | None = None,
 ) -> None:
     """Write the first-boot systemd service and script into the target."""
+    selected = provider or (resolve_provider(platform) if platform else None)
+    if (selected and selected.lifecycle_owner == "omarchy") or template.providers == [
+        "omarchy"
+    ]:
+        raise ValueError("Omarchy owns firstboot configuration")
     # Merge hardware ansible roles with template roles
     all_roles = list(template.ansible.firstboot_roles)
     if hardware:

@@ -1,0 +1,12 @@
+# Non-production example. Replace CHANGE_ME before staging an unattended ISO.
+# The installer rejects this placeholder before disk changes.
+[install]
+provider = "omarchy"
+template = "omarchy-workstation.toml"
+disk_layout = "omarchy.toml"
+hostname = "omarchy-test"
+username = "tester"
+password = "CHANGE_ME_NOT_A_PRODUCTION_PASSWORD"
+reboot = false
+shutdown = false
+failed_action = "wait"

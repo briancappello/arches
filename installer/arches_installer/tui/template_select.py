@@ -38,7 +38,7 @@ class TemplateSelectScreen(ArrowNavScreen):
         self._templates: list[InstallTemplate] = []
 
         try:
-            self._templates = discover_templates()
+            self._templates = discover_templates(provider_id=self.app.provider.id)
             for tmpl in self._templates:
                 template_list.add_option(Option(tmpl.name, id=tmpl.name))
             if self._templates:
@@ -71,7 +71,7 @@ class TemplateSelectScreen(ArrowNavScreen):
         template_list = self.query_one("#template-list", OptionList)
         if template_list.highlighted is not None and self._templates:
             self.app.selected_template = self._templates[template_list.highlighted]
-            self.app.push_screen("module_select")
+            self.app.push_screen("user_setup" if self.app.provider.id == "omarchy" else "module_select")
 
     def on_option_list_option_selected(
         self,

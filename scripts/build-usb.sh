@@ -44,12 +44,12 @@ fi
 
 # ── Step 1: Build ISO ────────────────────────────────
 # Check if a recent ISO already exists for this platform
-ISO=$(ls -t "$OUT_DIR"/arches-"${PLATFORM}"-*.iso 2>/dev/null | head -1 || true)
+ISO=$(python3 "$SCRIPT_DIR/iso-config.py" latest-iso "$PROJECT_DIR/platforms/$PLATFORM/platform.toml" "$OUT_DIR")
 
 if [[ -z "$ISO" ]]; then
     echo "══ No ISO found for $PLATFORM — building ══"
     "$SCRIPT_DIR/build-iso.sh" ${BUILD_ISO_ARGS[@]+"${BUILD_ISO_ARGS[@]}"}
-    ISO=$(ls -t "$OUT_DIR"/arches-"${PLATFORM}"-*.iso 2>/dev/null | head -1 || true)
+    ISO=$(python3 "$SCRIPT_DIR/iso-config.py" latest-iso "$PROJECT_DIR/platforms/$PLATFORM/platform.toml" "$OUT_DIR")
     if [[ -z "$ISO" ]]; then
         echo "ERROR: ISO build failed — no ISO found in $OUT_DIR/"
         exit 1
@@ -73,8 +73,8 @@ case "$PLATFORM" in
         echo "══ aarch64: Converting ISO to USB image ══"
         "$SCRIPT_DIR/iso-to-usb-image.sh" "$ISO"
 
-        IMG=$(ls -t "$OUT_DIR"/arches-"${PLATFORM}"-*.usb.img 2>/dev/null | head -1 || true)
-        if [[ -z "$IMG" ]]; then
+        IMG="${ISO%.iso}.usb.img"
+        if [[ ! -f "$IMG" ]]; then
             echo "ERROR: USB image conversion failed"
             exit 1
         fi

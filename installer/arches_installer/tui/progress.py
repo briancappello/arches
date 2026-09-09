@@ -89,6 +89,7 @@ class InstallProgressScreen(ArrowNavScreen):
 
     def on_mount(self) -> None:
         """Start the install in a background thread."""
+        self.app.install_started = True
         # Initialize the log file
         try:
             INSTALL_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -100,10 +101,12 @@ class InstallProgressScreen(ArrowNavScreen):
 
     def _run_install(self) -> None:
         """Run the full install pipeline."""
+        self.app.install_started = True
         template = self.app.selected_template
         device = self.app.selected_device
         platform = self.app.platform
         partition_mode = self.app.partition_mode
+        self.app.install_success = False
 
         if template is None:
             self.log_msg("[red]ERROR: No template selected![/red]")
@@ -132,6 +135,8 @@ class InstallProgressScreen(ArrowNavScreen):
                 ),
                 hardware=self.app.hardware_config,
                 ansible_vars=self.app.ansible_vars,
+                provider=self.app.provider,
+                inputs=self.app.inputs,
             )
 
             parts = run_install_pipeline(params, log=self.log_msg)
@@ -163,6 +168,10 @@ class InstallProgressScreen(ArrowNavScreen):
         """
         import subprocess
 
+        if self.app.provider.id == "omarchy":
+            self._write_log("Installation failed. Target state retained; automatic reboot disabled.")
+            self._enable_reboot()
+            return
         action = getattr(self.app, "auto_install_failed_action", "poweroff")
         self._write_log(f"Auto-install failure action: {action}")
         if action == "poweroff":
@@ -200,7 +209,7 @@ class InstallProgressScreen(ArrowNavScreen):
     def _enable_reboot(self) -> None:
         """Enable the reboot/shutdown buttons and focus reboot."""
         title = self.query_one("#title", Label)
-        title.update("Complete")
+        title.update("Complete" if self.app.install_success else "Failed")
         btn_reboot = self.query_one("#btn-reboot", Button)
         btn_reboot.disabled = False
         btn_reboot.focus()

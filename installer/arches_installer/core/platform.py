@@ -1,9 +1,8 @@
 """Load and validate platform configuration from TOML files.
 
-A platform defines the hardware-level foundation: kernel, package repos,
-bootloader, hardware detection, and base packages. Templates build on top
-of the platform to define workload-specific packages and configuration.
-Disk layouts are now a separate concept (see ``disk_layout.py``).
+A platform defines hardware constraints and boot capabilities. New configs
+compose provider package defaults into the legacy kernel/package fields so
+existing installer consumers keep working. Disk layouts are separate.
 """
 
 from __future__ import annotations
@@ -110,6 +109,10 @@ class PlatformConfig:
     # partition table is managed externally (e.g. Apple Silicon, where
     # Asahi's m1n1/U-Boot/macOS recovery partitions must not be touched).
     allow_auto_install: bool = True
+    # None preserves shipped configs and manually constructed fixtures.
+    provider_id: str | None = None
+    required_packages: list[str] = field(default_factory=list)
+    pacman_conf: str = ""
 
     @property
     def pacman_architectures(self) -> list[str]:
@@ -151,6 +154,20 @@ class PlatformConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PlatformConfig:
         """Build a PlatformConfig from a parsed TOML dict."""
+        provider_id = data.get("provider", {}).get("id")
+        if "provider" in data:
+            from arches_installer.core.provider import load_provider_data, provider_id_for_platform
+
+            meta = data.get("platform", {})
+            provider_id = provider_id_for_platform(meta.get("arch", "x86_64"), meta.get("name", "unknown"), provider_id)
+            defaults = load_provider_data(provider_id) if provider_id in ("cachyos", "arch", "omarchy") else {}
+            merged = dict(data)
+            for section in ("platform", "kernel", "hardware_detection", "base_packages"):
+                merged[section] = defaults.get(section, {}) | data.get(section, {})
+            # An explicit legacy kernel pair replaces the variants, not just its flags.
+            if "package" in data.get("kernel", {}) and "variants" not in data["kernel"]:
+                merged["kernel"].pop("variants", None)
+            data = merged
         plat = data.get("platform", {})
         kern = data.get("kernel", {})
         boot = data.get("bootloader", {})
@@ -185,7 +202,7 @@ class PlatformConfig:
         # empty string for other architectures (CachyOS is x86-64 only).
         arch = plat.get("arch", "x86_64")
         cachyos_tier = plat.get("cachyos_optimization_tier", "")
-        if not cachyos_tier and arch == "x86_64":
+        if not cachyos_tier and arch == "x86_64" and provider_id in (None, "cachyos"):
             cachyos_tier = "x86-64"
 
         # Swap strategy (was in [disk_layout], now top-level in [platform])
@@ -209,12 +226,14 @@ class PlatformConfig:
                 args=hw.get("args", []),
                 optional=hw.get("optional", True),
             ),
-            base_packages=base.get("install", []),
+            base_packages=list(dict.fromkeys(base.get("install", []) + plat.get("required_packages", []))),
             swap=swap,
             cachyos_optimization_tier=cachyos_tier,
             kernel_flags=kern.get("flags", []),
             default_template=plat.get("default_template", ""),
             allow_auto_install=plat.get("allow_auto_install", True),
+            provider_id=provider_id,
+            required_packages=plat.get("required_packages", []),
         )
 
 
@@ -222,7 +241,11 @@ def load_platform(path: Path) -> PlatformConfig:
     """Load a platform config from a TOML file."""
     with open(path, "rb") as f:
         data = tomllib.load(f)
-    return PlatformConfig.from_dict(data)
+    platform = PlatformConfig.from_dict(data)
+    repo_path = path.with_name("pacman.conf")
+    if repo_path.is_file():
+        platform.pacman_conf = repo_path.read_text()
+    return platform
 
 
 def load_platform_from_iso() -> PlatformConfig:

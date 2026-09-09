@@ -5,14 +5,42 @@
 # Regular user: bullet-train theme (Powerline prompt)
 # Root user:    fino theme (visually distinct so it's obvious you are root)
 #
-# oh-my-zsh is pre-cloned at install time by preseed_network_deps().
-# The git tasks below are no-ops when the directory exists (update: no),
-# but are kept so this role works standalone with network access.
+# New media stages a verified bundle and helper before firstboot. Older media
+# and standalone online runs retain their existing Git acquisition behavior.
 # ==========================================================================
 
 # --------------------------------------------------------------------------
 # Regular user setup
 # --------------------------------------------------------------------------
+
+- name: Detect offline Oh My Zsh contract
+  stat:
+    path: /opt/arches/ohmyzsh.py
+  register: zsh_offline
+
+- name: Detect offline Oh My Zsh manifest
+  stat:
+    path: /opt/arches/firstboot-assets.json
+  register: zsh_asset_contract
+
+- name: Require complete offline Oh My Zsh contract
+  assert:
+    that:
+      - not (zsh_offline_required | default(false)) or (zsh_offline.stat.exists and zsh_asset_contract.stat.exists)
+      - zsh_offline.stat.exists == zsh_asset_contract.stat.exists
+    fail_msg: "Incomplete Oh My Zsh offline assets; restore the staged manifest and helper."
+
+- name: Install offline oh-my-zsh for {{ zsh_user }}
+  become_user: "{{ zsh_user }}"
+  command:
+    argv:
+      - python3
+      - /opt/arches/ohmyzsh.py
+      - /opt/arches
+      - "{{ zsh_user_home }}/.oh-my-zsh"
+  register: zsh_checkout
+  changed_when: zsh_checkout.stdout == 'changed'
+  when: zsh_offline.stat.exists
 
 - name: Clone oh-my-zsh for {{ zsh_user }}
   become_user: "{{ zsh_user }}"
@@ -22,6 +50,7 @@
     depth: "{{ zsh_omz_depth }}"
     version: master
     update: no
+  when: not zsh_offline.stat.exists
 
 - name: Create custom themes directory for {{ zsh_user }}
   become_user: "{{ zsh_user }}"
@@ -48,6 +77,17 @@
 # Root user setup
 # --------------------------------------------------------------------------
 
+- name: Install offline oh-my-zsh for root
+  command:
+    argv:
+      - python3
+      - /opt/arches/ohmyzsh.py
+      - /opt/arches
+      - /root/.oh-my-zsh
+  register: zsh_checkout
+  changed_when: zsh_checkout.stdout == 'changed'
+  when: zsh_offline.stat.exists
+
 - name: Clone oh-my-zsh for root
   git:
     repo: "{{ zsh_omz_repo }}"
@@ -55,6 +95,7 @@
     depth: "{{ zsh_omz_depth }}"
     version: master
     update: no
+  when: not zsh_offline.stat.exists
 
 - name: Deploy .zshrc for root
   template:

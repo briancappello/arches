@@ -17,6 +17,7 @@
 #   OFFLINE=1 ./scripts/qemu-install.sh          # offline install
 #   ./scripts/qemu-install.sh --log <file>        # capture installer log
 #   ./scripts/qemu-install.sh --fresh-disk        # recreate the disk image
+#   ./scripts/qemu-install.sh --iso <file>        # use exactly this ISO, no build
 #
 # === MULTI-DISK MODE (for testing the disk-role system) ===
 # Pass --disk <size> one or more times. The first disk becomes the
@@ -67,8 +68,15 @@ DISK_SIZES=()
 
 # ── Parse arguments ───────────────────────────────────
 BUILD_ISO_ARGS=()
+ISO=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --iso)
+            if [[ -z "${2:-}" || "$2" == --* ]]; then
+                echo "ERROR: --iso requires a path" >&2
+                exit 2
+            fi
+            ISO="$2"; shift ;;
         --rebuild) BUILD_ISO_ARGS+=(--rebuild) ;;
         --platform) BUILD_ISO_ARGS+=(--platform "$2"); PLATFORM="$2"; shift ;;
         --log) LOG_FILE="$2"; shift ;;
@@ -95,6 +103,19 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+if [[ -n "$ISO" ]]; then
+    if [[ ! -f "$ISO" ]]; then
+        echo "ERROR: --iso file not found: $ISO" >&2
+        exit 2
+    fi
+    for arg in "${BUILD_ISO_ARGS[@]}"; do
+        if [[ "$arg" == --rebuild ]]; then
+            echo "ERROR: --iso cannot be combined with --rebuild" >&2
+            exit 2
+        fi
+    done
+fi
+
 # Multi-disk mode flag. Used below to switch between single-disk
 # (legacy, untouched) and multi-disk attachment.
 if [[ ${#DISK_SIZES[@]} -eq 0 ]]; then
@@ -119,13 +140,16 @@ fi
 echo "Platform: $PLATFORM"
 
 # ── Step 1: Ensure ISO exists ────────────────────────
-ISO=$(ls -t "$OUT_DIR"/arches-"${PLATFORM}"-*.iso 2>/dev/null | head -1 || true)
+EXPLICIT_ISO="$ISO"
+if [[ -z "$ISO" ]]; then
+    ISO=$(python3 "$SCRIPT_DIR/iso-config.py" latest-iso "$PROJECT_DIR/platforms/$PLATFORM/platform.toml" "$OUT_DIR")
+fi
 
 # Dry-run mode (ARCHES_QEMU_DRY_RUN=1) skips ISO building and QEMU
 # launch — useful for CI smoke-testing the disk-creation + argument
 # assembly logic without requiring a working ISO or root.
 if [[ "${ARCHES_QEMU_DRY_RUN:-0}" != "1" ]]; then
-    if [[ -z "$ISO" ]] || [[ "${#BUILD_ISO_ARGS[@]}" -gt 0 ]]; then
+    if [[ -z "$EXPLICIT_ISO" ]] && { [[ -z "$ISO" ]] || [[ "${#BUILD_ISO_ARGS[@]}" -gt 0 ]]; }; then
         if [[ -z "$ISO" ]]; then
             echo "══ No ISO found for $PLATFORM — building ══"
         else
@@ -136,9 +160,9 @@ if [[ "${ARCHES_QEMU_DRY_RUN:-0}" != "1" ]]; then
             PLATFORM="$PLATFORM" "$SCRIPT_DIR/build-iso.sh" ${BUILD_ISO_ARGS[@]+"${BUILD_ISO_ARGS[@]}"}
         else
             echo "  (This requires sudo for the container build)"
-            sudo PLATFORM="$PLATFORM" SUDO_USER="${SUDO_USER:-$USER}" "$SCRIPT_DIR/build-iso.sh" ${BUILD_ISO_ARGS[@]+"${BUILD_ISO_ARGS[@]}"}
+            sudo PLATFORM="$PLATFORM" ARCHES_PROVIDER="${ARCHES_PROVIDER:-}" SUDO_USER="${SUDO_USER:-$USER}" "$SCRIPT_DIR/build-iso.sh" ${BUILD_ISO_ARGS[@]+"${BUILD_ISO_ARGS[@]}"}
         fi
-        ISO=$(ls -t "$OUT_DIR"/arches-"${PLATFORM}"-*.iso 2>/dev/null | head -1 || true)
+        ISO=$(python3 "$SCRIPT_DIR/iso-config.py" latest-iso "$PROJECT_DIR/platforms/$PLATFORM/platform.toml" "$OUT_DIR")
         if [[ -z "$ISO" ]]; then
             echo "ERROR: ISO build failed — no ISO found in $OUT_DIR/"
             exit 1

@@ -92,6 +92,14 @@ class TestInstallTemplateFromDict:
         assert tmpl.description == ""
         assert tmpl.module_slugs == []
 
+    def test_provider_compatibility_metadata(self):
+        template = InstallTemplate.from_dict({"meta": {
+            "workload": "workstation", "providers": ["omarchy"],
+        }})
+        assert template.workload == "workstation"
+        assert template.providers == ["omarchy"]
+        assert InstallTemplate.from_dict({}).providers == []
+
     def test_modules_dict(self) -> None:
         data = {
             "meta": {"name": "Test", "description": "A test template"},

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from unittest.mock import patch
+from .test_provider_entrypoints import isolated as isolated
 
 
 from arches_installer.core.disk import PartitionMap
@@ -58,7 +59,10 @@ def test_configure_snapper_handles_existing_config(
     mock_chroot, x86_64_platform, tmp_path
 ):
     """configure_snapper should continue when create-config fails (config exists)."""
-    mock_chroot.side_effect = subprocess.CalledProcessError(1, "snapper")
+    config = tmp_path / "etc/snapper/configs/root"
+    config.parent.mkdir(parents=True)
+    config.write_text('SUBVOLUME="/"\nFSTYPE="btrfs"\n')
+    mock_chroot.side_effect = [subprocess.CalledProcessError(1, "snapper"), subprocess.CompletedProcess([], 0)]
 
     with patch("arches_installer.core.snapper.MOUNT_ROOT", tmp_path):
         configure_snapper(x86_64_platform)

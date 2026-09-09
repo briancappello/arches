@@ -32,6 +32,9 @@
 # Prints the hex digest to stdout.
 compute_cache_hash() {
     {
+        if [[ -n "${ARCHES_BUILD_IDENTITY:-}" ]]; then
+            printf 'STR:build-context=%s\n' "$ARCHES_BUILD_IDENTITY"
+        fi
         for arg in "$@"; do
             if [[ "$arg" == str:* ]]; then
                 # Literal string — hash the value directly
@@ -40,7 +43,7 @@ compute_cache_hash() {
                 # Hash all files in the directory, sorted by path
                 find "$arg" -type f | sort | while IFS= read -r f; do
                     # Include relative path in hash so renames are detected
-                    echo "FILE:$f"
+                    echo "FILE:${f#"$arg/"}"
                     sha256sum "$f" | cut -d' ' -f1
                 done
             elif [[ -f "$arg" ]]; then

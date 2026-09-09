@@ -172,6 +172,9 @@ cmd_start() {
 
     local volumes
     volumes=$(_build_volumes)
+    local build_image
+    build_image=$(_podman image inspect --format '{{.Id}}' "$IMAGE_NAME")
+    [[ -n "$build_image" ]] || { echo "ERROR: Missing builder image identity"; return 1; }
 
     echo "══ Starting persistent builder ══"
     echo "  Platform:  $PLATFORM ($ARCHES_ARCH)"
@@ -185,6 +188,7 @@ cmd_start() {
         --security-opt label=disable \
         --pids-limit=-1 \
         $volumes \
+        -e ARCHES_BUILD_IMAGE="$build_image" \
         "$IMAGE_NAME" \
         /bin/bash -c "
             usermod -u $build_uid builder 2>/dev/null
@@ -234,6 +238,8 @@ cmd_exec() {
 cmd_build() {
     local iso_mode="${1:-graphical}"
     shift 2>/dev/null || true
+    local provider
+    provider=$(python3 "$SCRIPT_DIR/iso-config.py" provider-id "$PROJECT_DIR/platforms/$PLATFORM/platform.toml")
 
     if ! _builder_running; then
         echo "ERROR: Builder is not running. Start with: $0 start"
@@ -255,6 +261,13 @@ cmd_build() {
         echo "    make builder-start"
         exit 1
     fi
+
+    local build_image
+    build_image=$(_podman exec "$CONTAINER_NAME" printenv ARCHES_BUILD_IMAGE) || {
+        echo "ERROR: Builder lacks image identity. Restart it with builder-stop / builder-start."
+        return 1
+    }
+    [[ -n "$build_image" ]] || { echo "ERROR: Missing builder image identity"; return 1; }
 
     local offline_flag="OFFLINE=${OFFLINE:-1}"
 
@@ -282,6 +295,8 @@ cmd_build() {
     _podman exec \
         -e SUDO_USER=builder \
         -e ARCHES_TEMPLATE="${TEMPLATE:-}" \
+        -e ARCHES_PROVIDER="$provider" \
+        -e ARCHES_BUILD_IMAGE="$build_image" \
         -e ARCHES_GPU="${ARCHES_GPU:-}" \
         -e ARCHES_ALLOW_DEFAULT_PASSWORD="${ARCHES_ALLOW_DEFAULT_PASSWORD:-}" \
         "$CONTAINER_NAME" \

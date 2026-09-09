@@ -9,6 +9,11 @@ from pathlib import Path
 
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.template import InstallTemplate
+from arches_installer.core.provider import (
+    ProviderConfig,
+    resolve_install_provider,
+    resolve_provider,
+)
 
 AUTO_INSTALL_PATH = Path("/root/auto-install.toml")
 
@@ -30,11 +35,31 @@ def _print_dry_run_summary(
     hostname: str,
     username: str,
     extra_lines: list[str] | None = None,
+    provider: ProviderConfig | None = None,
 ) -> None:
     """Print a dry-run configuration summary (shared by --auto and --host)."""
     print(f"== {title} ==")
     print(f"  Platform:    {platform.name} ({platform.arch})")
-    print(f"  Kernel:      {platform.kernel.package}")
+    provider = provider or resolve_provider(platform)
+    print(f"  Provider:    {provider.id}")
+    print(f"  Kernel:      {provider.kernel.package}")
+    print("  Channel:     stable (installation provenance only)")
+    print(
+        "  Support:     "
+        + (
+            "x86 UEFI Btrfs, fresh standard layout, QEMU virtio display only; Task 7 acceptance pending"
+            if provider.id == "omarchy"
+            else "platform/provider restrictions apply"
+        )
+    )
+    print(
+        "  Inputs:      "
+        + (
+            "complete authenticated staged snapshot required; no online acquisition or live fallback"
+            if provider.id in ("arch", "omarchy")
+            else "matching legacy media cache or selected repositories"
+        )
+    )
     print(f"  Bootloader:  {platform.bootloader.type}")
     if extra_lines:
         for line in extra_lines:
@@ -73,6 +98,9 @@ def main() -> int:
         type=Path,
         help="Path to platform.toml (default: /opt/arches/platform/platform.toml)",
     )
+    parser.add_argument(
+        "--provider", metavar="ID", help="Select the build-staged target provider (M1)"
+    )
     args = parser.parse_args()
 
     # Require root for all modes except --dry-run
@@ -86,11 +114,21 @@ def main() -> int:
 
     # --host flag: host-install mode (install into subvolumes on existing system)
     if args.host:
-        return _run_host(args.host, platform_path=args.platform, dry_run=args.dry_run)
+        return _run_host(
+            args.host,
+            platform_path=args.platform,
+            dry_run=args.dry_run,
+            provider_id=args.provider,
+        )
 
     # Explicit --auto flag takes priority — fail hard on errors
     if args.auto:
-        return _run_auto(args.auto, platform_path=args.platform, dry_run=args.dry_run)
+        return _run_auto(
+            args.auto,
+            platform_path=args.platform,
+            dry_run=args.dry_run,
+            provider_id=args.provider,
+        )
 
     # Auto-detect config baked into the ISO at /root/auto-install.toml.
     # Only auto-installs when the kernel cmdline includes arches.autoinstall=1
@@ -102,16 +140,14 @@ def main() -> int:
         and not args.dry_run
         and _kernel_cmdline_has("arches.autoinstall=1")
     ):
-        rc = _run_auto(
+        return _run_auto(
             AUTO_INSTALL_PATH,
             platform_path=args.platform,
             dry_run=False,
-            fallback_to_tui=True,
+            provider_id=args.provider,
         )
-        if rc == 0:
-            return 0
 
-    return _run_tui(platform_path=args.platform)
+    return _run_tui(platform_path=args.platform, provider_id=args.provider)
 
 
 def _load_platform(platform_path: Path | None):
@@ -123,14 +159,21 @@ def _load_platform(platform_path: Path | None):
     return load_platform_from_iso()
 
 
-def _run_tui(*, platform_path: Path | None = None) -> int:
+def _run_tui(
+    *, platform_path: Path | None = None, provider_id: str | None = None
+) -> int:
     """Launch the interactive Textual TUI."""
     from arches_installer.tui.app import ArchesApp
 
-    platform = _load_platform(platform_path)
-    app = ArchesApp(platform=platform)
+    try:
+        platform = _load_platform(platform_path)
+        provider, inputs = resolve_install_provider(platform, provider_id)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    app = ArchesApp(platform=platform, provider=provider, inputs=inputs)
     app.run()
-    return 0
+    return 1 if app.install_started and not app.install_success else 0
 
 
 def _run_auto(
@@ -139,6 +182,7 @@ def _run_auto(
     platform_path: Path | None = None,
     dry_run: bool = False,
     fallback_to_tui: bool = False,
+    provider_id: str | None = None,
 ) -> int:
     """Run unattended install from a TOML config file.
 
@@ -161,6 +205,15 @@ def _run_auto(
 
     try:
         config = AutoInstallConfig.from_file(config_path)
+        provider, inputs = resolve_install_provider(
+            platform, provider_id, config.provider_id
+        )
+        if config.template.providers and provider.id not in config.template.providers:
+            raise ValueError("Template/provider mismatch")
+        if provider.id == "arch":
+            raise ValueError(
+                "Stock Arch boot integration is unproven; no runnable template enabled"
+            )
     except Exception as e:
         _auto_install_error(f"Invalid config: {e}", fallback_to_tui)
         return 1
@@ -179,6 +232,7 @@ def _run_auto(
             hostname=config.hostname,
             username=config.username,
             extra_lines=extra,
+            provider=provider,
         )
         print(f"  Reboot:      {config.reboot}")
         print(f"  Shutdown:    {config.shutdown}")
@@ -195,8 +249,8 @@ def _run_auto(
             print(
                 f"  Ansible (1st boot):  {', '.join(config.template.ansible.firstboot_roles)}"
             )
-        if platform.hardware_detection.enabled:
-            print(f"  HW detect:   {platform.hardware_detection.tool}")
+        if provider.hardware_detection.enabled:
+            print(f"  HW detect:   {provider.hardware_detection.tool}")
         if config.wifi:
             print(f"  WiFi:        {config.wifi.ssid}")
         if config.wired:
@@ -257,8 +311,8 @@ def _run_auto(
     try:
         pci_ids = detect_pci_ids()
         dmi = get_dmi_info()
-        all_quirks = discover_quirks()
-        all_machines = discover_machines()
+        all_quirks = [] if provider.id == "omarchy" else discover_quirks()
+        all_machines = [] if provider.id == "omarchy" else discover_machines()
         matched_quirks = match_quirks(all_quirks, pci_ids, dmi.chassis_type)
         suggested_machine = suggest_machine(all_machines, dmi)
         hw_config = resolve_hardware(suggested_machine, matched_quirks, all_quirks)
@@ -309,8 +363,6 @@ def _run_auto(
             # The bootloader still wants a single "primary" device for
             # legacy code paths. Pick the device backing the root role
             # (or DEFAULT_DISK_ROLE for the implicit single-disk case).
-            from arches_installer.core.disk_layout import DEFAULT_DISK_ROLE
-
             for role_name, parts in resolved_roles.assignments.items():
                 # Prefer the role that hosts the / mount
                 for p in config.disk_layout.partitions:
@@ -342,7 +394,7 @@ def _run_auto(
     # The app skips straight to the progress screen.
     from arches_installer.tui.app import ArchesApp
 
-    app = ArchesApp(platform=platform)
+    app = ArchesApp(platform=platform, provider=provider, inputs=inputs)
     app.selected_device = primary_disk_path
     app.selected_template = config.template
     app.selected_layout = config.disk_layout
@@ -380,6 +432,7 @@ def _run_host(
     *,
     platform_path: Path | None = None,
     dry_run: bool = False,
+    provider_id: str | None = None,
 ) -> int:
     """Run host-install from a TOML config file."""
     from arches_installer.core.host_install import HostInstallConfig, run_host_install
@@ -396,6 +449,11 @@ def _run_host(
 
     try:
         config = HostInstallConfig.from_file(config_path)
+        config.provider, config.inputs = resolve_install_provider(platform, provider_id, config.provider_id)
+        if config.provider.id in ("omarchy", "arch"):
+            raise ValueError(f"Provider {config.provider.id} host installation is unsupported")
+        if config.template.providers and config.provider.id not in config.template.providers:
+            raise ValueError("Template/provider mismatch")
     except Exception as e:
         print(f"ERROR: Invalid config: {e}", file=sys.stderr)
         return 1
@@ -413,6 +471,7 @@ def _run_host(
             hostname=config.hostname,
             username=config.username,
             extra_lines=extra,
+            provider=config.provider,
         )
         if config.mode == "alongside":
             print(

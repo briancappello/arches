@@ -90,6 +90,8 @@ class Module:
     requires: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     iso: IsoConfig | None = None
+    # Shipped modules are approved only for the existing provider paths.
+    providers: list[str] = field(default_factory=lambda: ["cachyos", "alarm", "asahi"])
 
     @classmethod
     def from_dict(cls, slug: str, data: dict[str, Any], *, has_ansible: bool) -> Module:
@@ -130,6 +132,7 @@ class Module:
             requires=deps_raw.get("requires", []),
             conflicts=deps_raw.get("conflicts", []),
             iso=iso_config,
+            providers=meta.get("providers", ["cachyos", "alarm", "asahi"]),
         )
 
 
@@ -266,9 +269,31 @@ def discover_modules() -> list[Module]:
 # ---------------------------------------------------------------------------
 
 
+def select_modules(
+    slugs: list[str],
+    available: list[Module] | None = None,
+    *, provider_id: str | None = None,
+) -> list[Module]:
+    """Check identities and provider approval before dependency expansion."""
+    if available is None:
+        available = discover_modules()
+    by_slug = {m.slug: m for m in available}
+    selected = []
+    for slug in slugs:
+        if slug not in by_slug:
+            known = ", ".join(sorted(by_slug))
+            raise ModuleError(f"Unknown module '{slug}'. Available modules: {known}")
+        mod = by_slug[slug]
+        if provider_id is not None and provider_id not in mod.providers:
+            raise ModuleError(f"Module '{mod.slug}' does not support provider '{provider_id}'")
+        selected.append(mod)
+    return selected
+
+
 def resolve_modules(
     slugs: list[str],
     available: list[Module] | None = None,
+    *, provider_id: str | None = None,
 ) -> ResolvedModules:
     """Validate and order a selection of modules.
 
@@ -290,19 +315,7 @@ def resolve_modules(
         If validation fails (unknown slug, missing dependency, conflict,
         unsatisfied category constraint, or multiple desktop modules).
     """
-    if available is None:
-        available = discover_modules()
-
-    by_slug: dict[str, Module] = {m.slug: m for m in available}
-
-    # 1. Check all slugs are known
-    selected: list[Module] = []
-    for slug in slugs:
-        if slug not in by_slug:
-            known = ", ".join(sorted(by_slug.keys()))
-            raise ModuleError(f"Unknown module '{slug}'. Available modules: {known}")
-        selected.append(by_slug[slug])
-
+    selected = select_modules(slugs, available, provider_id=provider_id)
     selected_slugs = set(slugs)
 
     # 2. Check per-module requires

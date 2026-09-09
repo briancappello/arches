@@ -1,0 +1,27 @@
+[platform]
+arch = "x86_64"
+
+[kernel]
+variants = [{ package = "linux", headers = "linux-headers" }]
+
+[base_packages]
+install = ["base", "linux-firmware", "mkinitcpio", "sudo", "ansible", "terminus-font", "archlinux-keyring", "limine", "efibootmgr"]
+
+[repository]
+config = """
+[options]
+HoldPkg = pacman glibc
+Architecture = x86_64
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Required
+RemoteFileSigLevel = Required
+
+[core]
+Include = /etc/pacman.d/mirrorlist
+
+[extra]
+Include = /etc/pacman.d/mirrorlist
+
+[multilib]
+Include = /etc/pacman.d/mirrorlist
+"""

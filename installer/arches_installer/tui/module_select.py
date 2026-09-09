@@ -52,6 +52,9 @@ class ModuleSelectScreen(ArrowNavScreen):
 
     def on_mount(self) -> None:
         """Load modules and populate checkboxes grouped by category."""
+        if self.app.provider.id == "omarchy":
+            self.app.push_screen("user_setup")
+            return
         self._all_modules: list[Module] = []
         self._checkboxes: dict[str, Checkbox] = {}
         scroll = self.query_one("#module-scroll", VerticalScroll)
@@ -111,7 +114,7 @@ class ModuleSelectScreen(ArrowNavScreen):
             return
 
         try:
-            resolved = resolve_modules(slugs, available=self._all_modules)
+            resolved = resolve_modules(slugs, available=self._all_modules, provider_id=self.app.provider.id)
             n_pkg = len(resolved.merged_install().all_packages)
             n_svc = len(resolved.merged_services())
             n_roles = len(resolved.ansible_roles)
@@ -126,13 +129,15 @@ class ModuleSelectScreen(ArrowNavScreen):
 
     def _apply_selection(self) -> None:
         """Resolve modules, update the template, and advance."""
+        if self.app.provider.id == "omarchy":
+            return
         slugs = self._selected_slugs()
 
         if not slugs:
             return
 
         try:
-            resolved = resolve_modules(slugs, available=self._all_modules)
+            resolved = resolve_modules(slugs, available=self._all_modules, provider_id=self.app.provider.id)
         except ModuleError:
             # Status already shows the error
             return

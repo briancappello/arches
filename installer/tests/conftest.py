@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+
 from arches_installer.core.disk_layout import (
     DiskLayout,
     PartitionSpec,
@@ -25,6 +26,16 @@ from arches_installer.core.template import (
     InstallTemplate,
     SystemConfig,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_provider_target(tmp_path, monkeypatch):
+    """Identity integration must never inspect installed metadata or write /mnt."""
+    from arches_installer.core import pipeline, provider
+    root = tmp_path / "pipeline-target"
+    monkeypatch.setattr(pipeline, "MOUNT_ROOT", root)
+    monkeypatch.setattr(provider, "STAGED_ROOT", tmp_path / "absent-staged-provider")
+    monkeypatch.setattr(pipeline, "check_existing_disk_identity", lambda _: None)
 
 
 @pytest.fixture

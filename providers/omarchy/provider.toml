@@ -1,0 +1,41 @@
+# Task 1 proved the non-T2 stable x86 reference only. No executable hooks.
+[platform]
+arch = "x86_64"
+
+[kernel]
+variants = [{ package = "linux", headers = "linux-headers" }]
+
+[base_packages]
+# Bootstrap roots, not the complete runtime closure or lifecycle recipe.
+install = ["base", "linux-firmware", "mkinitcpio", "sudo", "archlinux-keyring", "omarchy-keyring", "omarchy-settings", "limine", "efibootmgr"]
+
+[policy]
+pacman_owner = "omarchy"
+lifecycle_owner = "omarchy"
+workloads = ["workstation"]
+firmware = ["uefi"]
+filesystems = ["btrfs"]
+install_modes = ["fresh"]
+
+[repository]
+# Explicit URLs avoid inheriting the live environment's mirror selection.
+config = """
+[options]
+HoldPkg = pacman glibc
+Architecture = x86_64
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Required
+RemoteFileSigLevel = Required
+
+[core]
+Server = https://stable-mirror.omarchy.org/$repo/os/$arch
+
+[extra]
+Server = https://stable-mirror.omarchy.org/$repo/os/$arch
+
+[multilib]
+Server = https://stable-mirror.omarchy.org/$repo/os/$arch
+
+[omarchy]
+Server = https://pkgs.omarchy.org/stable/$arch
+"""

@@ -56,13 +56,20 @@ echo "Log: $LOG_FILE"
 REBUILD=false
 DRY_RUN=""
 CONFIG_FILE=""
+PROVIDER_ARGS=()
 
-for arg in "$@"; do
-    case "$arg" in
+while (($#)); do
+    case "$1" in
         --rebuild)  REBUILD=true ;;
         --dry-run)  DRY_RUN="--dry-run" ;;
-        *)          CONFIG_FILE="$arg" ;;
+        --provider)
+            [[ $# -ge 2 ]] || { echo "ERROR: --provider requires an ID"; exit 1; }
+            PROVIDER_ARGS=(--provider "$2")
+            shift ;;
+        --*) echo "ERROR: Unknown option: $1"; exit 1 ;;
+        *) CONFIG_FILE="$1" ;;
     esac
+    shift
 done
 
 if [[ -z "$CONFIG_FILE" ]]; then
@@ -87,6 +94,12 @@ fi
 
 # Resolve to absolute path
 CONFIG_FILE="$(cd "$(dirname "$CONFIG_FILE")" && pwd)/$(basename "$CONFIG_FILE")"
+
+# Resolve the host mode before any container, cache, mount, or disk operation.
+PYTHONPATH="$PROJECT_DIR/installer" python3 -m arches_installer \
+    --host "$CONFIG_FILE" --platform "$PROJECT_DIR/platforms/aarch64-apple/platform.toml" \
+    --dry-run "${PROVIDER_ARGS[@]}"
+[[ -z "$DRY_RUN" ]] || exit 0
 
 # ── Require root ──────────────────────────────────────
 if [[ $EUID -ne 0 ]]; then
@@ -238,7 +251,7 @@ podman run --rm --privileged \
     "$IMAGE_NAME" \
     arches-install --host /opt/arches/config.toml \
         --platform /opt/arches/platform/platform.toml \
-        $DRY_RUN
+        "${PROVIDER_ARGS[@]}"
 
 INSTALL_RC=$?
 if [[ $INSTALL_RC -ne 0 ]]; then

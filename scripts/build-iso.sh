@@ -31,6 +31,8 @@ done
 
 # ── Detect platform ──────────────────────────────────
 source "$SCRIPT_DIR/detect-platform.sh"
+ARCHES_PROVIDER=$(python3 "$SCRIPT_DIR/iso-config.py" provider-id "$PROJECT_DIR/platforms/$PLATFORM/platform.toml")
+export ARCHES_PROVIDER
 
 # Map platform to container base image.
 # Image name includes arch so x86-64 and aarch64 images don't collide.
@@ -147,6 +149,8 @@ for mounts_file in "$PROJECT_DIR"/modules/*/build.mounts; do
 done
 
 # ── Run the build ─────────────────────────────────────
+BUILD_IMAGE=$(podman image inspect --format '{{.Id}}' "$IMAGE_NAME")
+[[ -n "$BUILD_IMAGE" ]] || { echo "ERROR: Missing builder image identity"; exit 1; }
 echo "══ Starting container build (platform: $PLATFORM, template: ${TEMPLATE:-<default>}) ══"
 
 FORCE_FLAG=""
@@ -170,6 +174,8 @@ podman run --rm --privileged \
     "${VOLUMES[@]}" \
     -e SUDO_USER=builder \
     -e ARCHES_TEMPLATE="${TEMPLATE:-}" \
+    -e ARCHES_PROVIDER="$ARCHES_PROVIDER" \
+    -e ARCHES_BUILD_IMAGE="$BUILD_IMAGE" \
     -e ARCHES_GPU="${ARCHES_GPU:-}" \
     -e ARCHES_ALLOW_DEFAULT_PASSWORD="${ARCHES_ALLOW_DEFAULT_PASSWORD:-}" \
     "$IMAGE_NAME" \

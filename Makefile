@@ -24,6 +24,8 @@ ISO_MODE    ?= graphical
 TEMPLATE         ?=
 ARCHES_TEMPLATE  := $(TEMPLATE)
 export ARCHES_TEMPLATE
+PROVIDER ?= $(ARCHES_PROVIDER)
+export ARCHES_PROVIDER := $(PROVIDER)
 
 # ─── Phony targets ────────────────────────────────────
 
@@ -37,7 +39,7 @@ export ARCHES_TEMPLATE
         _iso _aur-repo \
         _stage-installer _stage-modules _stage-ansible _stage-hardware _stage-platform _stage-bootconfig \
         _assemble-packages _stage-graphical _cache-packages _stage-offline-cache \
-        _check-root _check-deps
+        _check-root _check-deps _stage-firstboot-assets
 
 # ─── Default ──────────────────────────────────────────
 
@@ -64,7 +66,7 @@ help: ## Show this help
 ##@ Build
 
 iso: ## Build graphical live ISO (OFFLINE=0 skip cache; TEMPLATE=<name>, ARCHES_GPU=<stack-list>)
-	ISO_MODE=graphical OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/build-iso.sh
+	ARCHES_PROVIDER=$(ARCHES_PROVIDER) ISO_MODE=graphical OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/build-iso.sh
 
 iso-fb: ## Build framebuffer-only ISO (TEMPLATE=<name>, ARCHES_GPU=<stack-list>)
 	ISO_MODE=fb OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/build-iso.sh
@@ -87,7 +89,7 @@ builder-status: ## Check if persistent builder is running
 	@$(SCRIPTS)/builder.sh status
 
 builder-iso: ## Build graphical ISO via persistent builder (no sudo)
-	OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/builder.sh build
+	ARCHES_PROVIDER=$(ARCHES_PROVIDER) OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/builder.sh build
 
 builder-iso-fb: ## Build framebuffer ISO via persistent builder (no sudo)
 	OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/builder.sh build-fb
@@ -219,6 +221,8 @@ clean: ## Remove staged files from ISO airootfs
 	rm -f  $(ISO_PROFILE)/airootfs/root/auto-install.toml
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches-repo
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache
+	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/firstboot-assets
+	rm -f $(ISO_PROFILE)/airootfs/opt/arches/firstboot-assets.json
 	rm -f  $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub
 	rm -f  $(ISO_PROFILE)/packages.x86_64
 	rm -f  $(ISO_PROFILE)/packages.aarch64
@@ -297,16 +301,17 @@ clean-all: clean clean-caches ## Remove all build artifacts (incl. builder conta
 # PLATFORM, ARCHES_ARCH, and TEMPLATE are passed in by the container.
 _iso: export ARCHES_ARCH := $(ARCHES_ARCH)
 _iso: export ARCHES_PLATFORM := $(PLATFORM)
-_iso: _check-root _check-deps _aur-repo _stage-installer _stage-modules _stage-ansible _stage-hardware _stage-platform _stage-bootconfig _assemble-packages _stage-graphical $(if $(filter 1,$(OFFLINE)),_cache-packages _stage-offline-cache)
+_iso: _check-root _check-deps _aur-repo _stage-installer _stage-modules _stage-ansible _stage-hardware _stage-platform _stage-bootconfig _assemble-packages _stage-graphical _stage-firstboot-assets $(if $(filter 1,$(OFFLINE)),_cache-packages _stage-offline-cache)
 	@# Ensure pkg-cache is NOT in airootfs for online builds (may be left over
 	@# from a prior OFFLINE=1 build). The host-side .offline-cache/ is untouched.
 	@if [ "$(OFFLINE)" != "1" ]; then \
 		rm -rf $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache; \
 	fi
 	@echo "══ Building Arches ISO ($(PLATFORM), mode: $(ISO_MODE)$(if $(filter 1,$(OFFLINE)), — OFFLINE)$(if $(ARCHES_TEMPLATE), — TEMPLATE=$(ARCHES_TEMPLATE))) ══"
-	@rm -rf $(WORK_DIR)
-	@mkdir -p $(OUT_DIR)
-	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
+	@provider=$$(python3 $(SCRIPTS)/iso-config.py provider-id $(PLATFORMS)/$(PLATFORM)/platform.toml) || exit 1; \
+	mkdir -p "$(WORK_DIR)/$(PLATFORM)/$$provider" "$(OUT_DIR)"; \
+	build_work=$$(mktemp -d "$(WORK_DIR)/$(PLATFORM)/$$provider/build-XXXXXX") || exit 1; \
+	mkarchiso -v -w "$$build_work" -o "$(OUT_DIR)" "$(ISO_PROFILE)"
 	@echo ""
 	@echo "══ ISO built ══"
 	@for f in $(OUT_DIR)/arches-*.iso; do \
@@ -314,8 +319,12 @@ _iso: _check-root _check-deps _aur-repo _stage-installer _stage-modules _stage-a
 		echo "  out/$$(basename $$f) ($$size)"; \
 	done
 
+_aur-repo: export ISO_MODE := $(ISO_MODE)
 _aur-repo:
 	@echo "══ Building AUR repo ($(PLATFORM)) ══"
+	@python3 $(SCRIPTS)/iso-config.py target-packages $(PLATFORMS)/$(PLATFORM)/platform.toml > /dev/null
+	@provider=$$(python3 $(SCRIPTS)/iso-config.py provider-id $(PLATFORMS)/$(PLATFORM)/platform.toml) || exit 1; \
+	case "$$provider" in arch|omarchy) export ARCHES_BUILD_PURPOSE=live ;; esac; \
 	$(SCRIPTS)/build-aur-repo.sh $(if $(FORCE),--force) $(PLATFORM)
 
 _stage-installer:
@@ -481,23 +490,19 @@ _stage-platform:
 		echo "ERROR: Platform directory not found: $(PLATFORMS)/$(PLATFORM)"; \
 		exit 1; \
 	fi
-	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/platform
-	@cp $(PLATFORMS)/$(PLATFORM)/platform.toml $(ISO_PROFILE)/airootfs/opt/arches/platform/
-	@cp $(PLATFORMS)/$(PLATFORM)/pacman.conf $(ISO_PROFILE)/airootfs/opt/arches/platform/
+	@python3 $(SCRIPTS)/iso-config.py stage-provider \
+		$(PLATFORMS)/$(PLATFORM)/platform.toml $(ISO_PROFILE)/airootfs/opt/arches
 	@echo "  Copied platform.toml and pacman.conf for $(PLATFORM)"
 
 _stage-bootconfig:
 	@echo "══ Staging boot config ($(PLATFORM)) ══"
 	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
 	@# Read default kernel and kernel flags from platform.toml
-	@KERNEL=$$(python3 -c "import tomllib; \
-		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
-		vs=d['kernel']['variants']; \
-		print(next((v['package'] for v in vs if v.get('default')), vs[0]['package']))"); \
+	@KERNEL=$$(python3 $(SCRIPTS)/iso-config.py live-kernel $(PLATFORMS)/$(PLATFORM)/platform.toml) || exit 1; \
 	KERNEL_FLAGS=$$(python3 -c "import tomllib; \
 		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
 		flags=d.get('kernel',{}).get('flags',[]); \
-		print(' '.join(flags))"); \
+		print(' '.join(flags))") || exit 1; \
 	if [ -z "$$KERNEL" ]; then \
 		echo "ERROR: Could not read kernel package from platform.toml"; \
 		exit 1; \
@@ -553,18 +558,12 @@ _assemble-packages:
 	@if [ -z "$(PLATFORM)" ]; then echo "ERROR: PLATFORM not set"; exit 1; fi
 	@ARCH=$$(python3 -c "import tomllib; \
 		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
-		print(d['platform']['arch'])"); \
-	KERNEL_PKGS=$$(python3 -c "import tomllib; \
-		d=tomllib.load(open('$(PLATFORMS)/$(PLATFORM)/platform.toml','rb')); \
-		vs=d['kernel']['variants']; \
-		pkgs=[]; \
-		[pkgs.extend([v['package'], v['headers']]) for v in vs]; \
-		pkgs.append('linux-firmware'); \
-		print('\n'.join(pkgs))"); \
+		print(d['platform']['arch'])") || exit 1; \
+	KERNEL_PKGS=$$(python3 $(SCRIPTS)/iso-config.py live-kernel-packages $(PLATFORMS)/$(PLATFORM)/platform.toml) || exit 1; \
 	echo "  Platform arch: $$ARCH"; \
 	echo "  ISO mode: $(ISO_MODE)"; \
 	echo "  Kernel packages: $$(echo $$KERNEL_PKGS | tr '\n' ' ')"; \
-	ISO_PKGS=$$(python3 $(SCRIPTS)/iso-config.py packages $(MODULES_DIR) $(ISO_MODE)); \
+	ISO_PKGS=$$(python3 $(SCRIPTS)/iso-config.py packages $(MODULES_DIR) $(ISO_MODE)) || exit 1; \
 	echo "  ISO packages: $$(echo "$$ISO_PKGS" | wc -l) from iso.toml"; \
 	{ cat $(PLATFORMS)/$(PLATFORM)/packages; \
 	  echo "$$KERNEL_PKGS"; \
@@ -593,7 +592,8 @@ _stage-graphical:
 		$(ISO_PROFILE)/airootfs/home 2>/dev/null || true; \
 	if [ "$(ISO_MODE)" = "graphical" ]; then \
 		echo "══ Staging graphical live boot ══"; \
-		eval $$(python3 $(SCRIPTS)/iso-config.py graphical-config $(MODULES_DIR)); \
+		graphical_config=$$(python3 $(SCRIPTS)/iso-config.py graphical-config $(MODULES_DIR)) || exit 1; \
+		eval "$$graphical_config"; \
 		echo "  Desktop: $$SESSION (DM: $$DISPLAY_MANAGER, terminal: $$TERMINAL)"; \
 		echo "  Installing liveuser setup service"; \
 		mkdir -p $(ISO_PROFILE)/airootfs/usr/local/bin; \
@@ -625,20 +625,24 @@ _stage-graphical:
 		echo "══ Skipping graphical live boot (ISO_MODE=$(ISO_MODE)) ══"; \
 	fi
 
+_stage-firstboot-assets: _stage-platform
+	@python3 $(SCRIPTS)/iso-config.py stage-firstboot-assets \
+		$(PLATFORMS)/$(PLATFORM)/platform.toml $(ISO_PROFILE)/airootfs/opt/arches \
+		$(PROJECT_DIR)/.offline-cache/firstboot-assets
+
 _cache-packages:
 	@echo "══ Caching template packages (into .offline-cache/) ══"
 	@$(SCRIPTS)/cache-template-packages.sh $(PLATFORM)
 
 _stage-offline-cache:
 	@echo "══ Staging offline package cache into ISO ══"
-	@mkdir -p $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache
-	@cp -a .offline-cache/* $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache/ 2>/dev/null || true
-	@echo "  Staged $$(ls .offline-cache/*.pkg.tar.* 2>/dev/null | wc -l) packages"
+	@python3 $(SCRIPTS)/iso-config.py stage-cache $(PLATFORMS)/$(PLATFORM)/platform.toml \
+		$(ISO_PROFILE)/airootfs/opt/arches $(PROJECT_DIR)/.offline-cache
 
 # ─── Checks ──────────────────────────────────────────
 
 _check-root:
-	@if [ "$$(id -u)" -ne 0 ]; then \
+	@if [ "$$EUID" -ne 0 ]; then \
 		echo "ERROR: This target requires root. Run with sudo."; \
 		exit 1; \
 	fi

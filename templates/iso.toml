@@ -21,6 +21,7 @@ templates = [
     "cosmic-workstation.toml",
     "vm-server.toml",
     "llm-inference.toml",
+    "omarchy-workstation.toml",
 ]
 
 # ── Framebuffer layer ────────────────────────────────

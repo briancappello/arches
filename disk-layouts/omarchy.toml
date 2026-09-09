@@ -1,0 +1,33 @@
+[meta]
+name = "Omarchy Standard"
+description = "Fresh single-disk Omarchy: 2 GiB ESP and exact provider-owned Btrfs mounts"
+bootloaders = ["limine"]
+
+[[partitions]]
+filesystem = "vfat"
+size = "2G"
+mount_point = "/boot"
+label = "ESP"
+
+[[partitions]]
+filesystem = "btrfs"
+size = "*"
+mount_point = "/"
+label = "omarchy"
+mount_options = "compress=zstd:1,noatime"
+
+[[partitions.subvolumes]]
+name = "@"
+mount_point = "/"
+
+[[partitions.subvolumes]]
+name = "@home"
+mount_point = "/home"
+
+[[partitions.subvolumes]]
+name = "@log"
+mount_point = "/var/log"
+
+[[partitions.subvolumes]]
+name = "@pkg"
+mount_point = "/var/cache/pacman/pkg"

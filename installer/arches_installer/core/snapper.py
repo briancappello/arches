@@ -68,7 +68,20 @@ def configure_snapper(
     try:
         chroot_run(["snapper", "--no-dbus", "create-config", "/"], log=log)
     except subprocess.CalledProcessError:
-        _log("snapper create-config failed, config may already exist.", log)
+        existing = MOUNT_ROOT / "etc/snapper/configs/root"
+        if not existing.is_file():
+            raise
+        content = existing.read_text()
+        if not all(
+            re.search(pattern, content, re.MULTILINE)
+            for pattern in (
+                r'^SUBVOLUME="/"\s*$',
+                r'^FSTYPE="btrfs"\s*$',
+            )
+        ):
+            raise
+        chroot_run(["btrfs", "subvolume", "show", "/.snapshots"], log=log)
+        _log("Existing root configuration and snapshot subvolume verified.", log)
 
     # Write our custom snapper config
     snapper_conf = MOUNT_ROOT / "etc" / "snapper" / "configs" / "root"
@@ -117,15 +130,8 @@ def _configure_snapshot_boot_grub(
 
     # Enable grub-btrfsd — the daemon that watches for snapshot changes
     # and regenerates grub.cfg automatically.
-    try:
-        chroot_run(
-            ["systemctl", "enable", "grub-btrfsd.service"],
-            log=log,
-        )
-        _log("Enabled grub-btrfsd service.", log)
-    except subprocess.CalledProcessError:
-        _log("WARNING: Could not enable grub-btrfsd service.", log)
-        _log("You may need to install grub-btrfs and enable it manually.", log)
+    chroot_run(["systemctl", "enable", "grub-btrfsd.service"], log=log)
+    _log("Enabled grub-btrfsd service.", log)
 
 
 def _configure_snapshot_boot_limine(
@@ -152,19 +158,8 @@ def _configure_snapshot_boot_limine(
 
     # limine-snapper-sync should be pre-built in the arches-local repo
     # and installed via pacstrap. Enable its service.
-    try:
-        chroot_run(
-            [
-                "systemctl",
-                "enable",
-                "limine-snapper-sync.service",
-            ],
-            log=log,
-        )
-        _log("Enabled limine-snapper-sync service.", log)
-    except subprocess.CalledProcessError:
-        _log("WARNING: Could not enable limine-snapper-sync service.", log)
-        _log("You may need to install and enable it manually.", log)
+    chroot_run(["systemctl", "enable", "limine-snapper-sync.service"], log=log)
+    _log("Enabled limine-snapper-sync service.", log)
 
 
 def setup_snapshots(

@@ -2,8 +2,8 @@
 
 Templates define a system workload by selecting composable modules and
 setting system-level defaults (timezone, locale).  They are platform-
-independent -- disk layout, bootloader, kernel, and base packages all
-come from the platform config.
+independent. Hardware constraints come from the platform, while the provider
+selects package policy. Existing callers still use the composed platform view.
 
 Templates live in ``<project>/templates/`` (development) or
 ``/opt/arches/templates/`` (live ISO).  Install-specific templates
@@ -75,6 +75,8 @@ class InstallTemplate:
     # and packages that get merged into the install. The ARCHES_GPU
     # env var overrides this list at build time.
     gpu_stacks: list[str] = field(default_factory=list)
+    workload: str = ""
+    providers: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InstallTemplate:
@@ -106,10 +108,12 @@ class InstallTemplate:
             graphical=False,
             module_slugs=module_slugs,
             gpu_stacks=gpu_stacks,
+            workload=meta.get("workload", ""),
+            providers=meta.get("providers", []),
         )
 
 
-def resolve_and_merge_modules(template: InstallTemplate) -> InstallTemplate:
+def resolve_and_merge_modules(template: InstallTemplate, *, provider_id: str | None = None) -> InstallTemplate:
     """Resolve a template's modules and merge their contents.
 
     Loads, validates, and merges the modules declared in
@@ -145,7 +149,7 @@ def resolve_and_merge_modules(template: InstallTemplate) -> InstallTemplate:
     if not effective_slugs and not gpu.extra_packages:
         return template
 
-    resolved = resolve_modules(effective_slugs) if effective_slugs else None
+    resolved = resolve_modules(effective_slugs, provider_id=provider_id) if effective_slugs else None
 
     # 3. Build the merged install phases. Stack-provided extra packages
     #    are appended to pacstrap so they're cached and installed
@@ -200,7 +204,7 @@ def resolve_template(filename: str) -> Path:
     return path
 
 
-def discover_templates() -> list[InstallTemplate]:
+def discover_templates(*, provider_id: str | None = None) -> list[InstallTemplate]:
     """Discover all install templates (system templates only).
 
     Returns templates that define a system workload (have ``[meta]`` with a
@@ -220,8 +224,12 @@ def discover_templates() -> list[InstallTemplate]:
                 tmpl = load_template(item)
                 # Only include system templates (have a meaningful name
                 # and module selections)
-                if tmpl.name != "Unknown" and tmpl.module_slugs:
-                    tmpl = resolve_and_merge_modules(tmpl)
+                if provider_id == "arch" or (provider_id and tmpl.providers and provider_id not in tmpl.providers):
+                    continue
+                if provider_id == "omarchy" and tmpl.providers != ["omarchy"]:
+                    continue
+                if tmpl.name != "Unknown" and (tmpl.module_slugs or (tmpl.workload == "workstation" and tmpl.providers == ["omarchy"])):
+                    tmpl = resolve_and_merge_modules(tmpl, provider_id=provider_id)
                     templates.append(tmpl)
             except (KeyError, tomllib.TOMLDecodeError):
                 pass  # Skip non-template TOML files (auto-install, etc.)

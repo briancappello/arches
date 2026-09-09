@@ -12,6 +12,7 @@ from arches_installer.core.disk import PartitionMap
 from arches_installer.core.disk_layout import DiskLayout, RaidConfig
 from arches_installer.core.hardware import HardwareConfig
 from arches_installer.core.platform import PlatformConfig
+from arches_installer.core.provider import ProviderConfig, ProviderInputs, resolve_install_provider
 from arches_installer.core.template import InstallTemplate
 from arches_installer.tui.welcome import WelcomeScreen
 from arches_installer.tui.network import NetworkScreen
@@ -89,6 +90,7 @@ class ArchesApp(App):
     auto_shutdown: bool = False
     auto_reboot: bool = False
     install_success: bool = False
+    install_started: bool = False
     # What to do when an auto-install FAILS. On a headless rack box no
     # one is at the keyboard to press a button, so leaving the system
     # at an idle TUI screen is unhelpful. Options:
@@ -118,9 +120,20 @@ class ArchesApp(App):
         "progress": InstallProgressScreen,
     }
 
-    def __init__(self, *, platform: PlatformConfig, **kwargs) -> None:
+    def __init__(
+        self,
+        *,
+        platform: PlatformConfig,
+        provider: ProviderConfig | None = None,
+        inputs: ProviderInputs | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.platform = platform
+        if provider is None:
+            provider, inputs = resolve_install_provider(platform)
+        self.provider = provider
+        self.inputs = inputs
 
     def get_default_screen(self) -> Screen:
         """Start at progress screen for auto-install, welcome for interactive."""

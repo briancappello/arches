@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -110,9 +112,12 @@ class TestGenerateFirstbootScript:
         script_path.write_text(script_text)
 
         result = subprocess.run(
-            ["bash", "-n", str(script_path)],
+            ["/bin/bash", "-n", str(script_path)],
             capture_output=True,
             text=True,
+            env={"PATH": str(tmp_path), "HOME": str(tmp_path), "LANG": "C.UTF-8"},
+            timeout=10,
+            start_new_session=True,
         )
         assert result.returncode == 0, (
             f"bash -n rejected the generated firstboot.sh.\n"
@@ -143,6 +148,153 @@ class TestGenerateFirstbootScript:
 
 class TestInjectFirstbootService:
     """Tests for inject_firstboot_service side-effects."""
+
+    @pytest.mark.parametrize("ansible_rc", [0, 2])
+    def test_generated_script_reports_actual_status(
+        self,
+        mock_mount_root: Path,
+        vm_server_template: InstallTemplate,
+        ansible_rc: int,
+    ) -> None:
+        root = mock_mount_root
+        with (
+            patch("subprocess.run", side_effect=AssertionError("Unstubbed subprocess")),
+            patch(
+                "subprocess.Popen", side_effect=AssertionError("Unstubbed subprocess")
+            ),
+        ):
+            inject_firstboot_service(vm_server_template, "deploy")
+        unit = (root / "etc/systemd/system/arches-firstboot.service").read_text()
+        assert "ConditionPathExists=/opt/arches/firstboot-pending" in unit
+        assert "Restart=" not in unit
+        arches = root / "opt/arches"
+        failed = arches / "firstboot-failed"
+        failed.write_text("stale failure\n")
+        (root / "var/log").mkdir(parents=True)
+        (root / "dev").mkdir()
+        private_bin = root / "bin"
+        private_bin.mkdir()
+        # Only these stubs can resolve through PATH; none call host utilities.
+        stub = private_bin / "stub"
+        stub.write_text(
+            f"#!{sys.executable}\n"
+            + """
+import os
+import sys
+from pathlib import Path
+
+root = Path(os.environ["HOME"]).resolve()
+name = Path(sys.argv[0]).name
+args = sys.argv[1:]
+def local_path(value):
+    path = Path(value).resolve()
+    assert path.is_relative_to(root), value
+    return path
+if name == "ansible-playbook":
+    print("stub ansible output")
+    sys.exit(int(os.environ["ANSIBLE_RC"]))
+elif name == "tee":
+    assert args[0] == "-a" and len(args) == 2
+    text = sys.stdin.read()
+    with local_path(args[1]).open("a") as log:
+        log.write(text)
+    print(text, end="")
+elif name == "rm":
+    assert args[0] == "-f" and len(args) == 2
+    path = local_path(args[1])
+    assert path.name in ("firstboot-failed", "firstboot-pending")
+    path.unlink(missing_ok=True)
+elif name == "date":
+    print("2026-09-08T00:00:00Z")
+elif name == "uname":
+    print("test-server")
+elif name == "uptime":
+    print("up 1 minute")
+elif name == "ip":
+    print("2: eth0 inet 192.0.2.10/24 scope global eth0")
+elif name == "awk":
+    sys.stdin.read()
+    print("    stub network output")
+else:
+    raise AssertionError("Unstubbed command: " + name)
+"""
+        )
+        stub.chmod(0o755)
+        for command in (
+            "ansible-playbook",
+            "tee",
+            "rm",
+            "date",
+            "uname",
+            "uptime",
+            "ip",
+            "awk",
+        ):
+            (private_bin / command).symlink_to(stub)
+        script = (arches / "firstboot.sh").read_text()
+        # Redirect only the generated test copy, never the production generator.
+        script = re.sub(
+            r"/(?:usr/)?(?:s?bin)/([\w-]+)", lambda m: str(private_bin / m[1]), script
+        )
+        for prefix in ("/opt/arches", "/var/log", "/dev/console", "/dev/null"):
+            script = script.replace(prefix, str(root) + prefix)
+        test_script = root / "run-firstboot.sh"
+        test_script.write_text(script)
+        result = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", str(test_script)],
+            cwd=root,
+            env={
+                "PATH": str(private_bin),
+                "HOME": str(root),
+                "LANG": "C.UTF-8",
+                "ANSIBLE_RC": str(ansible_rc),
+            },
+            capture_output=True,
+            text=True,
+            timeout=10,
+            start_new_session=True,
+        )
+        assert result.stderr == ""
+        assert not (arches / "firstboot-pending").exists()
+        assert (
+            root / "var/log/arches-firstboot.log"
+        ).read_text() == "stub ansible output\n"
+        banners = [
+            (root / path).read_text()
+            for path in ("var/log/arches-ready.log", "dev/console")
+        ]
+        for banner in banners:
+            assert "command not found" not in banner
+            assert "Traceback" not in banner
+            assert "hostname: test-server" in banner
+        assert {
+            "exit": result.returncode,
+            "failed_banners": ["FAILED" in banner for banner in banners],
+            "escaped_retry": failed.exists() and "\\&" in failed.read_text(),
+        } == {
+            "exit": ansible_rc,
+            "failed_banners": [bool(ansible_rc)] * 2,
+            "escaped_retry": False,
+        }
+        if ansible_rc:
+            marker = failed.read_text()
+            assert "exit code: 2" in marker
+            assert "2026-09-08T00:00:00Z" in marker
+            assert "stale failure" not in marker
+            assert f"log:       {root}/var/log/arches-firstboot.log" in marker
+            assert "FAILED (ansible rc=2)" in result.stdout
+            assert "&& sudo systemctl start arches-firstboot.service" in marker
+            assert "\\&" not in marker
+            for banner in banners:
+                assert "FAILED" in banner
+                assert "System ready" not in banner
+        else:
+            assert not failed.exists()
+            assert "First-boot setup complete" in result.stdout
+            for banner in banners:
+                assert "System ready" in banner
+                assert "FAILED" not in banner
+        assert result.returncode == ansible_rc
 
     def test_writes_service_unit_script_and_sentinel(
         self,

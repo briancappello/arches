@@ -13,7 +13,19 @@ from arches_installer.core.module import (
     discover_modules,
     load_module,
     resolve_modules,
+    Module,
 )
+
+
+def test_modules_require_explicit_alternative_provider_approval():
+    module = Module.from_dict("test", {"meta": {"providers": ["arch"]}}, has_ansible=False)
+    assert resolve_modules(["test"], [module], provider_id="arch").modules == [module]
+    with pytest.raises(ModuleError, match="provider"):
+        resolve_modules(["test"], [module], provider_id="omarchy")
+    legacy = Module.from_dict("legacy", {}, has_ansible=False)
+    assert resolve_modules(["legacy"], [legacy], provider_id="cachyos").modules == [legacy]
+    with pytest.raises(ModuleError, match="provider"):
+        resolve_modules(["legacy"], [legacy], provider_id="arch")
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +243,7 @@ category = "invalid_category"
         with pytest.raises(ModuleError, match="invalid category"):
             load_module(mod_dir)
 
-    def test_detect_ansible_via_iso_roles_path(self, tmp_path: Path) -> None:
+    def test_detect_ansible_via_iso_roles_path(self, tmp_path: Path, monkeypatch) -> None:
         """Ansible role detection should fall back to the ISO staged path."""
         # Create a module with no colocated ansible/
         mod_dir = tmp_path / "mymod"
@@ -246,23 +258,18 @@ category = "base"
         mod = load_module(mod_dir)
         assert mod.has_ansible_role is False
 
-        # Create the ISO-layout role path
-        iso_role = Path("/opt/arches/ansible/roles/mymod/tasks")
-        try:
-            iso_role.mkdir(parents=True, exist_ok=True)
-            (iso_role / "main.yml").write_text("---\n")
-            mod = load_module(mod_dir)
-            assert mod.has_ansible_role is True
-        except PermissionError:
-            pytest.skip("Cannot write to /opt/arches (not running as root)")
-        finally:
-            # Clean up
-            try:
-                import shutil
+        # Relocate only the ISO lookup, never create or remove host /opt paths.
+        from arches_installer.core import module
 
-                shutil.rmtree("/opt/arches/ansible/roles/mymod")
-            except (PermissionError, FileNotFoundError):
-                pass
+        iso_roles = tmp_path / "iso-roles"
+        monkeypatch.setattr(
+            module, "Path",
+            lambda value: iso_roles if value == "/opt/arches/ansible/roles" else Path(value),
+        )
+        iso_role = iso_roles / "mymod/tasks"
+        iso_role.mkdir(parents=True)
+        (iso_role / "main.yml").write_text("---\n")
+        assert load_module(mod_dir).has_ansible_role is True
 
 
 # ---------------------------------------------------------------------------

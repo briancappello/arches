@@ -80,6 +80,7 @@ class AutoInstallConfig:
     # or table). When present, these win over layout/machine specs for
     # matching role names (CSS-like specificity: layout < machine < auto).
     disks: list[DiskRole] = field(default_factory=list)
+    provider_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AutoInstallConfig:
@@ -183,6 +184,7 @@ class AutoInstallConfig:
             wired=wired,
             ansible_vars=ansible_vars,
             disks=disks,
+            provider_id=install.get("provider"),
         )
 
     @classmethod

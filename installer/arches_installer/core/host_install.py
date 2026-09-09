@@ -36,6 +36,7 @@ from arches_installer.core.disk import (
 from arches_installer.core.firstboot import inject_firstboot_service
 from arches_installer.core.install import install_system
 from arches_installer.core.platform import PlatformConfig
+from arches_installer.core.provider import ProviderConfig, ProviderInputs
 from arches_installer.core.snapper import setup_snapshots
 from arches_installer.core.template import (
     InstallTemplate,
@@ -77,6 +78,9 @@ class HostInstallConfig:
     # In alongside mode this is typically False (host GRUB is used).
     # In replace mode this is typically True.
     install_bootloader: bool
+    provider_id: str | None = None
+    provider: ProviderConfig | None = None
+    inputs: ProviderInputs | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HostInstallConfig:
@@ -122,6 +126,7 @@ class HostInstallConfig:
             subvol_prefix=install.get("subvol_prefix", "@arches"),
             add_grub_entry=install.get("add_grub_entry", mode == "alongside"),
             install_bootloader=install.get("install_bootloader", mode == "replace"),
+            provider_id=install.get("provider"),
         )
 
     @classmethod
@@ -273,6 +278,36 @@ def log_stdout(msg: str) -> None:
 def run_host_install(platform: PlatformConfig, config: HostInstallConfig) -> int:
     """Run the host-install pipeline. Returns exit code."""
     log = log_stdout
+    from arches_installer.core.pipeline import (
+        InstallParams,
+        preflight_provider,
+        install_identity,
+    )
+    from arches_installer.core.provider import write_provider_identity
+
+    params = InstallParams(
+        platform,
+        config.template,
+        _device_from_partition(config.partition),
+        config.hostname,
+        config.username,
+        config.password,
+        provider=config.provider,
+        inputs=config.inputs,
+        install_mode=config.mode,
+    )
+    try:
+        if params.provider is None:
+            from arches_installer.core.provider import resolve_install_provider
+
+            params.provider, params.inputs = resolve_install_provider(
+                platform, configured=config.provider_id
+            )
+        preflight_provider(params)
+    except Exception as exc:
+        log(f"INSTALL FAILED: {exc}")
+        return 1
+    identity_started = False
 
     log("== Arches Host Install ==")
     log(f"  Platform:    {platform.name} ({platform.arch})")
@@ -304,6 +339,8 @@ def run_host_install(platform: PlatformConfig, config: HostInstallConfig) -> int
             subvol_prefix=config.subvol_prefix,
         )
         log(f"Subvolumes prepared ({config.mode} mode).")
+        write_provider_identity(MOUNT_ROOT, install_identity(params), "installing")
+        identity_started = True
 
         # Phase 2: System install
         log("-- Phase 2: System Install --")
@@ -314,6 +351,8 @@ def run_host_install(platform: PlatformConfig, config: HostInstallConfig) -> int
             config.username,
             config.password,
             log=log,
+            provider=params.provider,
+            inputs=params.inputs,
         )
         log("System installed successfully.")
 
@@ -352,7 +391,7 @@ def run_host_install(platform: PlatformConfig, config: HostInstallConfig) -> int
 
         # Phase 4: Snapshots (if btrfs platform with snapshot support)
         if (
-            platform.disk_layout.filesystem == "btrfs"
+            parts.root_filesystem == "btrfs"
             and platform.bootloader.snapshot_boot
         ):
             log("-- Phase 4: Snapshots --")
@@ -386,6 +425,7 @@ def run_host_install(platform: PlatformConfig, config: HostInstallConfig) -> int
             log("host-install.sh will apply it to the host GRUB after container exits.")
 
         log("")
+        write_provider_identity(MOUNT_ROOT, install_identity(params), "complete")
         log("== Host install complete ==")
         if config.mode == "alongside":
             log("")
@@ -396,6 +436,8 @@ def run_host_install(platform: PlatformConfig, config: HostInstallConfig) -> int
         return 0
 
     except Exception as e:
+        if identity_started:
+            write_provider_identity(MOUNT_ROOT, install_identity(params), "failed")
         log(f"\nINSTALL FAILED: {e}")
         traceback.print_exc(file=sys.stderr)
         return 1

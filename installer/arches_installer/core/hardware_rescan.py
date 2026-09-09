@@ -48,7 +48,6 @@ from pathlib import Path
 # module and have it take effect here.
 from arches_installer.core import hardware as _hw
 from arches_installer.core.hardware import (
-    HardwareConfig,
     is_managed_file,
 )
 # Disk-role validation: ensure the disks recorded at install time are
@@ -273,6 +272,14 @@ def run_rescan(
     skip_mkinitcpio: bool = False,
 ) -> int:
     """The main reconcile pass. Returns a process exit code."""
+    from arches_installer.core.provider import read_provider_identity
+    identity = read_provider_identity(target_root)
+    if identity is not None:
+        if identity["status"] != "complete":
+            raise ValueError("Incomplete provider installation; hardware reconciliation refused")
+        if identity["provider"] == "omarchy":
+            log.info("Omarchy owns target hardware policy; skipping Arches reconciliation")
+            return 0
     # --- Snapshot current hardware ---
     pci_ids = _hw.detect_pci_ids()
     dmi = _hw.get_dmi_info()
