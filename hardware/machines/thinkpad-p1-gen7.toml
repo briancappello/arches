@@ -37,3 +37,24 @@ enable = [
 
 [ansible]
 firstboot_roles = ["power"]
+
+[udev]
+# Lid transitions must not wake the machine.
+#
+# Meteor Lake exposes no ACPI S3 on this platform — /sys/power/mem_sleep
+# offers only [s2idle], with no "deep" option and no firmware toggle to
+# bring one back.  The ACPI lid device fires its wake GPE on ANY lid
+# transition, not just open, so closing the lid after the machine has
+# already suspended wakes it straight back up.  logind then refuses to
+# re-suspend for HoldoffTimeoutSec (30s), leaving the machine running
+# with the lid shut.
+#
+# Consequence: the power button (SLPB, left enabled) becomes the only
+# wake source.  Lid-close still suspends — that is logind's
+# HandleLidSwitch, a separate userspace path this rule does not touch.
+#
+# ATTR is a set, not a toggle, so this is idempotent — unlike writing
+# the device name to /proc/acpi/wakeup, which flips state on each write.
+"81-lid-no-wakeup.rules" = """\
+SUBSYSTEM=="platform", KERNEL=="PNP0C0D:*", ATTR{power/wakeup}="disabled"\
+"""
