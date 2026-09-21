@@ -16,6 +16,39 @@ OUT_DIR     := $(PROJECT_DIR)/out
 OFFLINE     ?= 1
 ISO_MODE    ?= graphical
 
+# ─── Output retention ─────────────────────────────────
+# Every `make iso` writes a new dated tree into out/ and nothing ever prunes
+# it, so the directory grows without bound — it reached 87G before anyone
+# noticed. KEEP is how many of the newest entries `clean-out` preserves.
+# KEEP=0 removes everything.
+KEEP        ?= 2
+
+# mkarchiso builds airootfs trees that contain read-only directories
+# (mode r-xr-xr-x) and, for steps that ran privileged, directories owned by
+# root. A plain `rm -rf` fails partway through both cases and leaves most of
+# the output on disk — which is exactly how out/ was allowed to grow.
+# Restore write permission first, then escalate only for what is left.
+#
+# $(1) = space-separated paths
+define safe_rm
+	@for p in $(1); do \
+		[ -e "$$p" ] || continue; \
+		chmod -R u+w "$$p" 2>/dev/null || true; \
+		if rm -rf "$$p" 2>/dev/null && [ ! -e "$$p" ]; then \
+			continue; \
+		fi; \
+		if sudo -n true 2>/dev/null; then \
+			sudo -n rm -rf "$$p"; \
+		else \
+			echo "  Root-owned leftovers in $$p — needs elevation:"; \
+			sudo rm -rf "$$p" || { \
+				echo "  ERROR: could not remove $$p"; \
+				exit 1; \
+			}; \
+		fi; \
+	done
+endef
+
 # Optional template filter. When set, restricts the ISO build to a
 # single template from iso.toml's [install].templates. Accepts either
 # "llm-inference" or "llm-inference.toml". Exported as ARCHES_TEMPLATE
@@ -33,7 +66,7 @@ export ARCHES_TEMPLATE
         sv-install sv-dry-run sv-uninstall \
         fmt test test-unit test-template dry-run \
         qemu-install qemu-install-llm qemu-boot qemu-raid qemu-disk qemu-ansible \
-        clean clean-caches clean-all \
+        clean clean-caches clean-out clean-all \
         _iso _aur-repo \
         _stage-installer _stage-modules _stage-ansible _stage-hardware _stage-platform _stage-bootconfig \
         _assemble-packages _stage-graphical _cache-packages _stage-offline-cache \
@@ -268,9 +301,57 @@ clean-caches: ## Remove AUR repo, pacman cache, and offline package cache
 	rm -rf .pkg-cache
 	rm -rf .offline-cache
 
+# Retention is by modification time, newest first, and the set is snapshotted
+# ONCE before anything is deleted. Listing twice would be a correctness bug:
+# removing an entry updates out/'s mtime, and a partially-failed removal
+# updates that entry's own mtime, so a second `ls -t` can return a different
+# set and silently spare something it already reported as removed.
+clean-out: ## Remove build output, keeping the newest KEEP runs (KEEP=2; KEEP=0 removes all)
+	@echo "══ Cleaning output (keeping newest $(KEEP)) ══"
+	@case "$(KEEP)" in \
+		''|*[!0-9]*) echo "  ERROR: KEEP must be a non-negative integer, got '$(KEEP)'"; exit 1;; \
+	esac; \
+	if [ ! -d "$(OUT_DIR)" ]; then \
+		echo "  No $(OUT_DIR) — nothing to do"; \
+		exit 0; \
+	fi; \
+	reap=$$(mktemp); \
+	trap 'rm -f "$$reap"' EXIT; \
+	( cd "$(OUT_DIR)" && ls -1dt -- * 2>/dev/null ) | tail -n +$$(( $(KEEP) + 1 )) > "$$reap" || true; \
+	if [ ! -s "$$reap" ]; then \
+		echo "  Nothing older than the newest $(KEEP) — nothing to do"; \
+		exit 0; \
+	fi; \
+	failed=0; \
+	while IFS= read -r entry; do \
+		[ -n "$$entry" ] || continue; \
+		path="$(OUT_DIR)/$$entry"; \
+		size=$$(du -sh "$$path" 2>/dev/null | cut -f1); \
+		echo "  Removing: $$entry ($${size:-unreadable})"; \
+		chmod -R u+w "$$path" 2>/dev/null || true; \
+		rm -rf "$$path" 2>/dev/null || true; \
+		if [ -e "$$path" ]; then \
+			echo "    root-owned leftovers — escalating"; \
+			if sudo -n true 2>/dev/null; then \
+				sudo -n rm -rf "$$path" 2>/dev/null || true; \
+			else \
+				sudo rm -rf "$$path" 2>/dev/null || true; \
+			fi; \
+		fi; \
+		if [ -e "$$path" ]; then \
+			echo "    FAILED: $$path still present (needs: sudo rm -rf '$$path')"; \
+			failed=$$(( failed + 1 )); \
+		fi; \
+	done < "$$reap"; \
+	echo "  Remaining in out/: $$(ls -1 "$(OUT_DIR)" 2>/dev/null | wc -l) entries, $$(du -sh "$(OUT_DIR)" 2>/dev/null | cut -f1)"; \
+	if [ "$$failed" -gt 0 ]; then \
+		echo "  ERROR: $$failed entr(y|ies) could not be removed"; \
+		exit 1; \
+	fi
+
 clean-all: clean clean-caches ## Remove all build artifacts (incl. builder container + image)
 	@echo "══ Cleaning output ══"
-	rm -rf $(OUT_DIR)
+	$(call safe_rm,$(OUT_DIR))
 	rm -f /tmp/arches-test-disk.qcow2
 	rm -f /tmp/arches-test-disk-*.qcow2
 	rm -f /tmp/arches-efi-vars.raw
