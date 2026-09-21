@@ -567,6 +567,9 @@
     src: "{{ kde_dotfiles_dir }}/env.sh"
     dest: "{{ kde_config }}/plasma-workspace/env/env.sh"
     state: link
+    # Replace a stray regular file (e.g. a resolved copy + .bak left by some
+    # tool) with the symlink — keeps the autoload pointing at ~/dotfiles/env.sh.
+    force: yes
     owner: "{{ kde_user }}"
     group: "{{ kde_user }}"
 
