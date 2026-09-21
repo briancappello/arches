@@ -1,18 +1,20 @@
 [meta]
 name = "llama.cpp (Vulkan)"
-description = "llama.cpp inference server built from mainline git with Vulkan GPU backend"
+description = "llama.cpp build tooling — dependencies installed, binary not shipped"
 category = "service"
 
 [install.pacstrap]
 packages = [
-    # Custom-built package from modules/llama-cpp/build.sh
-    "llama.cpp-vulkan-arches",
-    # Vulkan loader + AMD ICD (also pulled by chwd, listed for clarity)
+    # We no longer ship a pre-built llama.cpp binary. Instead we install
+    # the build dependencies so the user can build from source on the
+    # installed system using the /usr/local/bin/llama-cpp-update helper.
+    #
+    "base-devel",
+    "python",
+    # Vulkan runtime (also pulled by chwd, listed for clarity)
     "vulkan-icd-loader",
     "vulkan-radeon",
-    # Tooling required by the /usr/local/bin/llama-cpp-update helper
-    # for rebuilding from upstream master in place. Keep this set in
-    # sync with the makedepends in modules/llama-cpp/build.sh.
+    # Build tooling for /usr/local/bin/llama-cpp-update
     "git",
     "cmake",
     "ninja",

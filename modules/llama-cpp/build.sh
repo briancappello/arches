@@ -37,6 +37,13 @@
 #
 set -euo pipefail
 
+# FIXME: everything below this exit is unreachable. Either delete the dead
+# build logic once shipping deps-only is settled, or drop this early exit and
+# gate the build properly. Leaving both means the file reads as if it still
+# builds a package.
+echo "── llama.cpp: build skipped — dependencies installed via module.toml pacstrap ──"
+exit 0
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
