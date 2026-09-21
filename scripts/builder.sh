@@ -198,6 +198,11 @@ cmd_start() {
     echo ""
     echo "Builder started. Run builds with:"
     echo "  ./scripts/builder.sh build"
+
+    # Refresh package databases — the image may be old and mirrors may
+    # have removed package versions that the cached DB still lists.
+    echo "══ Refreshing package databases ══"
+    _podman exec "$CONTAINER_NAME" pacman -Sy
 }
 
 cmd_stop() {
