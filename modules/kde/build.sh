@@ -50,7 +50,7 @@ declare -A CUSTOM_EXTRA_DEPS=(
 # Each entry: local_dir|package_name|upstream_repo|upstream_tag
 # (pipe-delimited because URLs contain colons)
 PATCHED_DISTRO_PACKAGES=(
-    "$PROJECT_ROOT/../kwin-gestures|arches-kwin-patched|https://invent.kde.org/plasma/kwin|v6.6.4"
+    "$PROJECT_ROOT/../kde-kwin|arches-kwin-patched|https://invent.kde.org/plasma/kwin|v6.6.4"
 )
 
 # --------------------------------------------------------------------------

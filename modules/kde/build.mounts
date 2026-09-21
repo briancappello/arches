@@ -2,4 +2,4 @@
 # Paths are relative to the project root directory.
 # Each line is mounted read-only into the build container.
 ../kde-task-manager
-../kwin-gestures
+../kde-kwin

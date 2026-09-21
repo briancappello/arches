@@ -40,7 +40,7 @@ kde_extra_packages:
 # ==========================================================================
 kde_custom_plasmoid_packages:
   - arches-taskmanager-patched   # local repo pkg built from ../kde-task-manager
-  - arches-kwin-patched          # local repo pkg built from ../kwin-gestures (3-finger Overview)
+  - arches-kwin-patched          # local repo pkg built from ../kde-kwin (3-finger Overview)
 
 # ==========================================================================
 # KWin — Window Manager
