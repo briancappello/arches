@@ -28,6 +28,8 @@ BAT_STOP_THRESH="/sys/class/power_supply/BAT0/charge_stop_threshold"
 BAT_HEALTH="/sys/class/power_supply/BAT0/health"
 BAT_ENERGY_FULL="/sys/class/power_supply/BAT0/energy_full"
 BAT_ENERGY_FULL_DESIGN="/sys/class/power_supply/BAT0/energy_full_design"
+BAT_ENERGY_NOW="/sys/class/power_supply/BAT0/energy_now"
+BAT_POWER_NOW="/sys/class/power_supply/BAT0/power_now"
 
 CHARGE_MONITOR_PID="/tmp/power-charge-monitor.pid"
 THRESHOLD_HELPER="/usr/local/lib/power/set-charge-thresholds"
@@ -211,6 +213,60 @@ battery_health_pct() {
     fi
 }
 
+# Instantaneous battery power in watts (one decimal place).
+# power_now is reported in microwatts. Returns "N/A" if unavailable.
+battery_power_w() {
+    local power_uw
+    power_uw=$(read_sysfs "$BAT_POWER_NOW")
+    if [[ "$power_uw" =~ ^[0-9]+$ && "$power_uw" -gt 0 ]]; then
+        # Round to one decimal: (uW / 100000 + 5) / 10 -> tenths of a watt
+        printf '%d.%d' $(( power_uw / 1000000 )) $(( (power_uw % 1000000) / 100000 ))
+    else
+        echo "N/A"
+    fi
+}
+
+# Estimate time to reach the active charge target, given the stop threshold.
+# Prints a human-readable "Hh Mm" string, or "N/A" if it can't be computed.
+#   $1 = stop threshold percentage (e.g. 80 or 100)
+time_to_full() {
+    local stop="$1"
+    local energy_now energy_full power_uw
+
+    energy_now=$(read_sysfs "$BAT_ENERGY_NOW")
+    energy_full=$(read_sysfs "$BAT_ENERGY_FULL")
+    power_uw=$(read_sysfs "$BAT_POWER_NOW")
+
+    [[ "$energy_now" =~ ^[0-9]+$ ]]  || { echo "N/A"; return; }
+    [[ "$energy_full" =~ ^[0-9]+$ ]] || { echo "N/A"; return; }
+    [[ "$power_uw" =~ ^[0-9]+$ && "$power_uw" -gt 0 ]] || { echo "N/A"; return; }
+
+    # Target energy = energy_full scaled by the stop threshold percentage.
+    local target_energy
+    if [[ "$stop" =~ ^[0-9]+$ && "$stop" -gt 0 && "$stop" -lt 100 ]]; then
+        target_energy=$(( energy_full * stop / 100 ))
+    else
+        target_energy="$energy_full"
+    fi
+
+    local delta=$(( target_energy - energy_now ))
+    if [[ "$delta" -le 0 ]]; then
+        echo "at target"
+        return
+    fi
+
+    # hours = delta(uWh) / power(uW); compute total minutes via integer math.
+    local total_min=$(( delta * 60 / power_uw ))
+    local hours=$(( total_min / 60 ))
+    local mins=$(( total_min % 60 ))
+
+    if [[ "$hours" -gt 0 ]]; then
+        printf '%dh %02dm' "$hours" "$mins"
+    else
+        printf '%dm' "$mins"
+    fi
+}
+
 print_charge_status() {
     local capacity status start stop health
     capacity=$(read_sysfs "$BAT_CAPACITY")
@@ -223,6 +279,24 @@ print_charge_status() {
     echo "──────────────────────────────────"
     echo -e "  Charge:    ${capacity}% (${status})"
     echo -e "  Health:    ${health}%"
+
+    local power_w
+    power_w=$(battery_power_w)
+    if [[ "$power_w" != "N/A" ]]; then
+        case "$status" in
+            Charging)
+                echo -e "  Charging:  ${GREEN}${power_w} W${RESET}"
+                local eta
+                eta=$(time_to_full "$stop")
+                if [[ "$eta" != "N/A" ]]; then
+                    echo -e "  Time full: ${eta}"
+                fi
+                ;;
+            Discharging)
+                echo -e "  Draining:  ${YELLOW}${power_w} W${RESET}"
+                ;;
+        esac
+    fi
 
     if [[ "$stop" -ge 100 ]]; then
         echo -e "  Thresholds: start=${start}, stop=${stop} ${YELLOW}(charging to full)${RESET}"
