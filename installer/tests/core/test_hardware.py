@@ -72,6 +72,30 @@ class TestLoadMachine:
         assert "power" in m.ansible_firstboot_roles
         assert not m.is_generic
 
+    def test_thinkpad_p1_fan_control(self, hw_dir: Path) -> None:
+        """thinkfan is installed from arches-local, configured by the power role.
+
+        thinkfan is AUR-only, so pacstrap can only install it if the platform
+        pre-builds it.  The profile must NOT enable the service: its config
+        (/etc/thinkfan.yaml) is deployed by the power role at first boot, and
+        that role enables thinkfan once the config exists.
+        """
+        import tomllib
+
+        m = load_machine(hw_dir / "machines" / "thinkpad-p1-gen7.toml")
+        assert "thinkfan" in m.packages
+        assert "thinkfan" not in m.services
+
+        platform_toml = hw_dir.parent / "platforms" / m.platform / "platform.toml"
+        aur = tomllib.loads(platform_toml.read_text())["aur_packages"]["build"]
+        assert "thinkfan" in aur
+
+        role = hw_dir.parent / "ansible" / "roles" / "power"
+        assert (role / "files" / "thinkfan.yaml").is_file()
+        tasks = (role / "tasks" / "main.yml").read_text()
+        assert "/etc/thinkfan.yaml" in tasks
+        assert "thinkfan.service" in tasks
+
     def test_load_generic_laptop(self, hw_dir: Path) -> None:
         m = load_machine(hw_dir / "machines" / "generic-laptop.toml")
         assert m.is_generic

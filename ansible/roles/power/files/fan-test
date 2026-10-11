@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Measure ThinkPad fan behavior per level, to evaluate a custom fan curve.
+#
+# Deployed by the power role as /usr/local/lib/power/fan-test.
+#
+# Usage (as root, with thinkfan stopped: sudo systemctl stop thinkfan):
+#   fan-test sweep              # each level 0..7 for 25 s, logs RPM + temps
+#   fan-test hold LEVEL MINUTES # hold one level, log temps every 10 s
+#
+# Use the results to tune /etc/thinkfan.yaml (source of truth:
+# ansible/roles/power/files/thinkfan.yaml in the arches repo).
+#
+# Safety:
+#   - The EC watchdog reverts the fan to "auto" if no command arrives in 20 s
+#     (covers kill -9, crashes, and lost power to this script).
+#   - An EXIT/INT/TERM trap sets "level auto" on any normal exit.
+#   - Aborts to "auto" if the EC CPU temperature (smoothed by firmware) reaches
+#     ABORT_EC_C, or the instantaneous package temperature reaches ABORT_PKG_C.
+#     The package sensor spikes ~20C on short bursts, so it only guards
+#     against runaway heat, not steady-state trends.
+set -euo pipefail
+
+FAN=/proc/acpi/ibm/fan
+LOG=/tmp/fan-test.log
+ABORT_EC_C=80
+ABORT_PKG_C=98
+MODCONF=/etc/modprobe.d/thinkpad_acpi-fan-control.conf
+
+die() { echo "error: $*" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || die "run with sudo"
+# Two controllers writing /proc/acpi/ibm/fan would fight each other.
+if systemctl is-active --quiet thinkfan.service; then
+    die "thinkfan is running; stop it first: sudo systemctl stop thinkfan"
+fi
+
+pkg_hwmon() {
+    local h
+    for h in /sys/class/hwmon/hwmon*; do
+        [[ $(cat "$h/name") == coretemp ]] && { echo "$h"; return; }
+    done
+    die "coretemp hwmon not found"
+}
+
+enable_fan_control() {
+    if [[ $(cat /sys/module/thinkpad_acpi/parameters/fan_control) != Y ]]; then
+        echo "options thinkpad_acpi fan_control=1" > "$MODCONF"
+        echo "Reloading thinkpad_acpi with fan_control=1 ..."
+        modprobe -r thinkpad_acpi
+        modprobe thinkpad_acpi
+    fi
+    [[ $(cat /sys/module/thinkpad_acpi/parameters/fan_control) == Y ]] \
+        || die "fan_control still disabled after reload"
+    grep -q '^commands:.*level' "$FAN" || die "EC does not accept level commands"
+}
+
+restore_auto() {
+    echo "level auto" > "$FAN" 2>/dev/null || true
+    echo "watchdog 0" > "$FAN" 2>/dev/null || true
+    echo "Fan restored to: $(awk '/^level/{print $2}' "$FAN")" | tee -a "$LOG"
+}
+
+sample() {  # one log line: label, level, rpm1, rpm2, package temp, EC CPU temp
+    local label=$1 lvl rpm1 rpm2 pkg ec
+    lvl=$(awk '/^level/{print $2}' "$FAN")
+    rpm1=$(cat "$TP_HWMON/fan1_input")
+    rpm2=$(cat "$TP_HWMON/fan2_input" 2>/dev/null || echo -)
+    pkg=$(( $(cat "$PKG_HWMON/temp1_input") / 1000 ))
+    ec=$(awk '{print $2}' /proc/acpi/ibm/thermal)
+    printf '%s %-10s level=%-5s fan1=%-5s fan2=%-5s pkg=%sC ec_cpu=%sC\n' \
+        "$(date +%T)" "$label" "$lvl" "$rpm1" "$rpm2" "$pkg" "$ec" | tee -a "$LOG"
+    if (( ec >= ABORT_EC_C )); then
+        echo "ABORT: EC CPU ${ec}C >= ${ABORT_EC_C}C" | tee -a "$LOG"
+        exit 2
+    fi
+    if (( pkg >= ABORT_PKG_C )); then
+        echo "ABORT: package ${pkg}C >= ${ABORT_PKG_C}C" | tee -a "$LOG"
+        exit 2
+    fi
+}
+
+hold_level() {  # level, seconds, label; re-sends the level every 5 s (feeds watchdog)
+    local level=$1 secs=$2 label=$3 t=0
+    while (( t < secs )); do
+        echo "level $level" > "$FAN"
+        sleep 5; t=$(( t + 5 ))
+        if (( t % 10 == 0 || t >= secs )); then
+            sample "$label"
+        fi
+    done
+}
+
+main() {
+    local mode=${1:-}
+    [[ $mode == sweep || $mode == hold ]] || die "usage: $0 sweep | hold LEVEL MINUTES"
+
+    enable_fan_control
+    PKG_HWMON=$(pkg_hwmon)
+    TP_HWMON=$(echo /sys/devices/platform/thinkpad_hwmon/hwmon/hwmon*)
+
+    mkdir -p "$(dirname "$LOG")"
+    : > "$LOG"; chmod 644 "$LOG"
+    trap restore_auto EXIT
+    trap 'exit 130' INT TERM
+    echo "watchdog 20" > "$FAN"
+
+    echo "== $mode $* ($(date -Is))" | tee -a "$LOG"
+    sample baseline-auto
+
+    if [[ $mode == sweep ]]; then
+        local l
+        for l in 0 1 2 3 4 5 6 7; do
+            hold_level "$l" 25 "sweep-L$l"
+        done
+    else
+        local level=${2:-} minutes=${3:-}
+        [[ $level =~ ^[0-7]$ ]] || die "LEVEL must be 0-7"
+        [[ $minutes =~ ^[0-9]+$ ]] && (( minutes >= 1 && minutes <= 30 )) \
+            || die "MINUTES must be 1-30"
+        hold_level "$level" $(( minutes * 60 )) "hold-L$level"
+    fi
+}
+
+main "$@"

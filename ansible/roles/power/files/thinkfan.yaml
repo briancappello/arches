@@ -1,0 +1,53 @@
+# thinkfan config for ThinkPad P1 Gen 7 (BIOS N48ET34W, EC 1.15)
+#
+# Goal: quieter than the factory curve, which holds the CPU at ~55C with
+# ~3,300 RPM. This curve lets the CPU settle around 60-70C at ~2,300-2,800 RPM.
+#
+# Measured RPM per level (both fans): 1=~2,300  2=~2,550  3=~2,800  4=~3,650
+#                                     5=~4,050  6=~4,700  7=~5,200  (0 = off)
+#
+# Level logic (thinkfan 2.0 detailed mode):
+#   - step UP   when ANY sensor reaches its upper_limit
+#   - step DOWN when ALL sensors are below their lower_limit
+#   - each lower_limit must be <= the previous level's upper_limit, so "_"
+#     cannot be used in lower limits (thinkfan rejects it as non-overlapping)
+#
+# Sensor 1 (EC CPU) drives the curve: the firmware smooths it, so it tracks
+# heat-pipe temperature without reacting to short bursts.
+# Sensor 2 (coretemp package) spikes ~20C on bursts; it only forces a step up
+# at 95C+ (runaway guard); its lower limit of 94 never blocks stepping down.
+#
+# Above EC 80C, control goes back to the firmware ("level auto").
+# If thinkfan dies, the EC watchdog restores "auto" within 120 s.
+
+sensors:
+  - hwmon: /sys/class/hwmon
+    name: thinkpad
+    indices: [1]        # temp1 = "CPU" (EC)
+  - hwmon: /sys/class/hwmon
+    name: coretemp
+    indices: [1]        # temp1 = "Package id 0"
+
+fans:
+  - tpacpi: /proc/acpi/ibm/fan
+
+levels:
+  - speed: 1
+    upper_limit: [64, 95]
+  - speed: 2
+    lower_limit: [60, 94]
+    upper_limit: [68, 95]
+  - speed: 3
+    lower_limit: [65, 94]
+    upper_limit: [72, 95]
+  - speed: 4
+    lower_limit: [69, 94]
+    upper_limit: [76, 97]
+  - speed: 5
+    lower_limit: [73, 94]
+    upper_limit: [79, 99]
+  - speed: 7
+    lower_limit: [76, 94]
+    upper_limit: [83, 100]
+  - speed: "level auto"
+    lower_limit: [80, 94]

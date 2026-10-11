@@ -26,6 +26,9 @@ install = [
     "tuned",             # Power profile daemon
     "tuned-ppd",         # power-profiles-daemon compatibility layer
     "thermald",          # Intel thermal management daemon
+    "thinkfan",          # Custom fan curve (AUR, pre-built into arches-local).
+                         # Not enabled here: the power role deploys
+                         # /etc/thinkfan.yaml, then enables the service.
 ]
 
 [services]

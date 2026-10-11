@@ -82,6 +82,8 @@ power                Unified CLI for GPU and battery management
     |
     +-- power gpu    Ollama + Open WebUI + NVIDIA RTD3
     +-- power charge Battery charge threshold control
+
+thinkfan             Custom fan curve (replaces the EC factory curve)
 ```
 
 ---
@@ -229,6 +231,62 @@ fuser /dev/nvidia*
 
 ---
 
+## Fan Control
+
+The EC's factory fan curve holds the CPU at ~55C with both fans at
+~3,300 RPM, even under light background load. That is far below the
+CPU limit (110C); the curve appears tuned for skin temperature.
+`thinkfan` replaces it with a quieter curve that lets the CPU settle at
+~60-70C with the fans at ~2,300-2,800 RPM.
+
+Measured fan speeds (both fans follow the same level):
+
+| Level | RPM    | Level | RPM    |
+|-------|--------|-------|--------|
+| 0     | off    | 4     | ~3,650 |
+| 1     | ~2,300 | 5     | ~4,050 |
+| 2     | ~2,550 | 6     | ~4,700 |
+| 3     | ~2,800 | 7     | ~5,200 |
+
+Level 0 (fans off) is not usable: under ~1.5 cores of background load
+the CPU went from 50C to 76C in two minutes.
+
+The curve follows the EC CPU sensor, which the firmware smooths. The
+package sensor jumps ~20C on short bursts, so it only forces a step up
+at 95C+. Above 80C (EC), control goes back to the firmware.
+
+Safety:
+
+- If thinkfan crashes, systemd restarts it after 5 s.
+- If thinkfan hangs, the EC watchdog returns the fan to firmware control
+  within 120 s.
+- On stop, thinkfan restores firmware control.
+- Around suspend, `thinkfan-sleep`/`thinkfan-wakeup` hand the fan back
+  to the firmware.
+
+Watch it work:
+
+```
+journalctl -fu thinkfan        # "Temperatures(bias): 65(0), 64(0) -> Fans: level 2"
+cat /proc/acpi/ibm/fan         # current level and RPM
+```
+
+To re-tune, stop thinkfan and measure. The tool restores firmware control
+on exit and aborts at 80C (EC) or 98C (package):
+
+```
+sudo systemctl stop thinkfan
+sudo /usr/local/lib/power/fan-test sweep        # RPM per level, ~3.5 min
+sudo /usr/local/lib/power/fan-test hold 1 10    # temps at one level, 10 min
+sudo systemctl start thinkfan
+```
+
+Then edit `ansible/roles/power/files/thinkfan.yaml` in this repo and
+re-run the role. Do not edit `/etc/thinkfan.yaml` directly: the role
+overwrites it.
+
+---
+
 ## File Locations
 
 | File                                            | Purpose                                       |
@@ -244,6 +302,9 @@ fuser /dev/nvidia*
 | `/usr/local/bin/power`                          | Unified power management CLI                  |
 | `/usr/local/lib/power/set-charge-thresholds`    | Privileged helper for charge threshold writes |
 | `/etc/sudoers.d/power`                          | Passwordless sudo for power script helpers    |
+| `/etc/thinkfan.yaml`                            | Fan curve                                     |
+| `/etc/systemd/system/thinkfan.service.d/restart.conf` | Restart thinkfan after a crash          |
+| `/usr/local/lib/power/fan-test`                 | Fan level measurement tool                    |
 
 Ansible role: `ansible/roles/power/`
 
@@ -268,6 +329,23 @@ systemctl status tuned-ppd.service
 ```
 power gpu status        # check for warnings about holders
 lsof /dev/nvidia*       # find the culprit process
+```
+
+**Fans loud again / thinkfan not controlling the fan:**
+```
+systemctl status thinkfan.service
+cat /sys/module/thinkpad_acpi/parameters/fan_control   # must be Y
+grep level /proc/acpi/ibm/fan                          # "auto" = firmware curve
+```
+If `fan_control` is `N`, reload the module:
+`sudo modprobe -r thinkpad_acpi && sudo modprobe thinkpad_acpi`.
+
+**Checking GPU power state without waking it:**
+`lspci` and `nvidia-smi` both wake a suspended dGPU. Use the runtime-PM
+counters instead:
+```
+cat /sys/bus/pci/devices/0000:01:00.0/power/runtime_status
+cat /sys/bus/pci/devices/0000:01:00.0/power/runtime_{active,suspended}_time
 ```
 
 **GPU wakes briefly then re-suspends:**

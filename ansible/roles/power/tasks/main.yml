@@ -13,6 +13,12 @@
 #
 # GPU + Ollama and battery charge thresholds are managed via the
 # `power` CLI tool.
+#
+# Fan control: thinkfan replaces the EC's factory fan curve, which holds
+# the CPU at ~55C with ~3,300 RPM. The custom curve lets it settle at
+# ~60-70C with ~2,300-2,800 RPM. See files/thinkfan.yaml for the curve
+# and the measurements behind it; re-measure with
+# /usr/local/lib/power/fan-test.
 # ============================================================================
 
 # --------------------------------------------------------------------------
@@ -79,6 +85,53 @@
     mode: "0644"
 
 # --------------------------------------------------------------------------
+# 5b. Fan control (thinkfan)
+# --------------------------------------------------------------------------
+# thinkfan is AUR-only. Fresh installs get it from the arches-local repo
+# (platforms/x86-64/platform.toml [aur_packages]). The package also ships
+# /usr/lib/modprobe.d/thinkpad_acpi.conf (fan_control=1), which takes
+# effect at the next boot / thinkpad_acpi reload.
+- name: "Power: install thinkfan"
+  pacman:
+    name: thinkfan
+    state: present
+
+# On a running system that just got thinkfan, the modprobe option is not
+# active yet. fan_control is read-only (0444), so reload the module.
+# Nothing depends on thinkpad_acpi, so this is safe while running.
+- name: "Power: read thinkpad_acpi fan_control state"
+  slurp:
+    src: /sys/module/thinkpad_acpi/parameters/fan_control
+  register: power_fan_control
+  failed_when: false
+
+- name: "Power: reload thinkpad_acpi to enable fan_control"
+  shell: modprobe -r thinkpad_acpi && modprobe thinkpad_acpi
+  when:
+    - power_fan_control.content is defined
+    - (power_fan_control.content | b64decode | trim) != "Y"
+
+- name: "Power: deploy thinkfan fan curve"
+  copy:
+    src: thinkfan.yaml
+    dest: /etc/thinkfan.yaml
+    mode: "0644"
+  register: power_thinkfan_conf
+
+- name: "Power: create thinkfan drop-in directory"
+  file:
+    path: /etc/systemd/system/thinkfan.service.d
+    state: directory
+    mode: "0755"
+
+- name: "Power: deploy thinkfan restart-on-failure drop-in"
+  copy:
+    src: thinkfan-restart.conf
+    dest: /etc/systemd/system/thinkfan.service.d/restart.conf
+    mode: "0644"
+  register: power_thinkfan_dropin
+
+# --------------------------------------------------------------------------
 # 6. `power` CLI tool
 # --------------------------------------------------------------------------
 - name: "Power: deploy power CLI script"
@@ -97,6 +150,12 @@
   copy:
     src: set-charge-thresholds
     dest: /usr/local/lib/power/set-charge-thresholds
+    mode: "0755"
+
+- name: "Power: deploy fan curve measurement tool"
+  copy:
+    src: fan-test
+    dest: /usr/local/lib/power/fan-test
     mode: "0755"
 
 - name: "Power: deploy sudoers rules"
@@ -133,6 +192,21 @@
     name: tuned-ppd.service
     enabled: yes
     state: started
+
+# Enabling thinkfan.service also enables thinkfan-sleep/-wakeup (Also=),
+# which hand the fan back to the EC around suspend.
+- name: "Power: enable thinkfan"
+  systemd:
+    name: thinkfan.service
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: "Power: restart thinkfan after config changes"
+  systemd:
+    name: thinkfan.service
+    state: restarted
+  when: power_thinkfan_conf.changed or power_thinkfan_dropin.changed
 
 # --------------------------------------------------------------------------
 # 9. Disable ollama and open-webui auto-start (managed by `power` script)
