@@ -97,9 +97,12 @@ class TestLoadMachine:
         assert "thinkfan.service" in tasks
 
     def test_thinkpad_p1_tuned_profiles(self, hw_dir: Path) -> None:
-        """The power role ships exactly the P1 tuned profiles, complete.
+        """The power role's tuned profiles stay verifiable and complete.
 
-        A profile that declares a ``[script]`` section must ship that script.
+        intel_pstate exposes no cpufreq boost knob: tuned applies ``boost``
+        via no_turbo, but ``tuned-adm verify`` then fails on every CPU.
+        Profiles must use ``no_turbo`` instead.  A profile that declares
+        a ``[script]`` section must ship that script.
         """
         import configparser
 
@@ -113,6 +116,8 @@ class TestLoadMachine:
         for profile in profiles:
             cfg = configparser.ConfigParser(interpolation=None)
             cfg.read(profile / "tuned.conf")
+            if cfg.has_section("cpu"):
+                assert "boost" not in cfg["cpu"], f"{profile.name}: use no_turbo"
             has_script = cfg.has_section("script")
             assert (profile / "script.sh").is_file() == has_script, profile.name
 
