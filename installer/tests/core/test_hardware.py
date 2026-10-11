@@ -96,6 +96,26 @@ class TestLoadMachine:
         assert "/etc/thinkfan.yaml" in tasks
         assert "thinkfan.service" in tasks
 
+    def test_thinkpad_p1_tuned_profiles(self, hw_dir: Path) -> None:
+        """The power role ships exactly the P1 tuned profiles, complete.
+
+        A profile that declares a ``[script]`` section must ship that script.
+        """
+        import configparser
+
+        tuned = hw_dir.parent / "ansible" / "roles" / "power" / "files" / "tuned"
+        profiles = sorted(tuned.iterdir())
+        assert [p.name for p in profiles] == [
+            "p1-balanced",
+            "p1-performance",
+            "p1-powersave",
+        ]
+        for profile in profiles:
+            cfg = configparser.ConfigParser(interpolation=None)
+            cfg.read(profile / "tuned.conf")
+            has_script = cfg.has_section("script")
+            assert (profile / "script.sh").is_file() == has_script, profile.name
+
     def test_load_generic_laptop(self, hw_dir: Path) -> None:
         m = load_machine(hw_dir / "machines" / "generic-laptop.toml")
         assert m.is_generic

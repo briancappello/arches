@@ -17,8 +17,8 @@ tuned-adm profile p1-balanced
 | Profile          | KDE Panel Name | Best For                                                                                                                     |
 |------------------|----------------|------------------------------------------------------------------------------------------------------------------------------|
 | `p1-powersave`   | Power Saver    | Max battery life. Turbo off, CPU biased to E-cores, firmware power limits minimized, WiFi power save on, USB autosuspend on. |
-| `p1-balanced`    | Balanced       | Daily driver. Kernel-driven frequency scaling, turbo available for bursts, moderate firmware envelope, WiFi power save on.   |
-| `p1-performance` | Performance    | Full send. CPU locked to max frequency, turbo on, firmware uncapped, all power savings off.                                  |
+| `p1-balanced`    | Balanced       | Daily driver, and the right choice for sustained background load. Same as Performance, but EPP `balance_performance`: bursts still boost, background threads stop demanding peak turbo. |
+| `p1-performance` | Performance    | Bursty interactive work. EPP/EPB `performance`, turbo on, power savings off. Firmware envelope stays `balanced` (PL1 below PL2), so sustained load stays quieter than `platform_profile=performance`. |
 
 Your selected profile **persists across reboots**. The system boots into
 whatever you last chose.
@@ -90,8 +90,12 @@ thinkfan             Custom fan curve (replaces the EC factory curve)
 
 ## Tunable Knobs Reference
 
-All profiles live in `/etc/tuned/profiles/p1-*/tuned.conf`. Edit them
-directly, then reload with `sudo systemctl restart tuned.service`.
+All profiles live in `/etc/tuned/profiles/p1-*/tuned.conf`, but the
+source of truth is `ansible/roles/power/files/tuned/` in this repo. The
+power role overwrites `/etc` copies, so edits made only there are lost
+the next time the role runs. To experiment, edit `/etc` and reload with
+`sudo systemctl restart tuned.service`; then copy the result back into
+the repo.
 
 ### CPU — `[cpu]` section
 
@@ -140,8 +144,9 @@ link to sleep but uses Device Initiated Power Management for faster wake.
 | USB autosuspend | `enable_usb_autosuspend` / `disable_usb_autosuspend` in `script.sh` | Suspends idle USB devices after timeout. Saves power but can cause issues with some peripherals (mice, keyboards). |
 
 These are managed by helper functions from `/usr/lib/tuned/functions`
-and called from the profile's `script.sh`. Edit the script directly to
-change behavior.
+and called from the profile's `script.sh`. Only `p1-powersave` has one.
+`p1-balanced` and `p1-performance` do not manage these knobs; switching
+away from `p1-powersave` runs its `stop()`, which turns both off.
 
 ### Display — `[video]` section
 
@@ -294,7 +299,6 @@ overwrites it.
 | `/etc/tuned/profiles/p1-powersave/tuned.conf`   | Powersave profile config                      |
 | `/etc/tuned/profiles/p1-powersave/script.sh`    | Powersave WiFi/USB script                     |
 | `/etc/tuned/profiles/p1-balanced/tuned.conf`    | Balanced profile config                       |
-| `/etc/tuned/profiles/p1-balanced/script.sh`     | Balanced WiFi script                          |
 | `/etc/tuned/profiles/p1-performance/tuned.conf` | Performance profile config                    |
 | `/etc/tuned/ppd.conf`                           | Maps KDE panel tiers to tuned profiles        |
 | `/etc/modprobe.d/nvidia-power.conf`             | NVIDIA RTD3 driver parameter                  |
