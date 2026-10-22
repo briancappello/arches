@@ -135,20 +135,35 @@ def _run_chwd(dry_run: bool) -> bool:
     return True
 
 
+def _initramfs_command() -> list[str] | None:
+    """Return the command that regenerates every installed initramfs.
+
+    limine-mkinitcpio-hook replaces mkinitcpio's preset-creating pacman
+    hook, so Limine systems have no presets and ``mkinitcpio -P`` dies
+    with "No presets found". Use its wrapper there.
+    """
+    if shutil.which("limine-mkinitcpio"):
+        return ["limine-mkinitcpio"]
+    if shutil.which("mkinitcpio"):
+        return ["mkinitcpio", "-P"]
+    return None
+
+
 def _run_mkinitcpio(dry_run: bool) -> bool:
-    """Regenerate all initramfs presets."""
-    if shutil.which("mkinitcpio") is None:
+    """Regenerate all initramfs images."""
+    cmd = _initramfs_command()
+    if cmd is None:
         log.warning("mkinitcpio not installed — skipping initramfs rebuild")
         return False
 
     if dry_run:
-        log.info("[dry-run] would run: mkinitcpio -P")
+        log.info("[dry-run] would run: %s", " ".join(cmd))
         return True
 
-    log.info("regenerating initramfs (mkinitcpio -P)")
+    log.info("regenerating initramfs (%s)", " ".join(cmd))
     try:
         result = subprocess.run(
-            ["mkinitcpio", "-P"],
+            cmd,
             capture_output=True,
             text=True,
             check=False,
