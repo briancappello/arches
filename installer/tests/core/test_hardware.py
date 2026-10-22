@@ -100,6 +100,28 @@ class TestLoadMachine:
         # fan_control option is lost on reboot and thinkfan crash-loops.
         assert "limine-mkinitcpio" in tasks
 
+    def test_thinkpad_p1_fan_curve_covers_gpu(self, hw_dir: Path) -> None:
+        """The curve watches the dGPU through the EC, never through NVML.
+
+        With thinkfan in control the EC no longer reacts to GPU heat, so
+        the GPU needs a column of its own.  An nvml sensor would wake the
+        dGPU from runtime suspend on every poll and keep it at ~16 W.
+        thinkfan needs one limit per sensor on every level.
+        """
+        conf = hw_dir.parent / "ansible" / "roles" / "power" / "files" / "thinkfan.yaml"
+        lines = [ln.split("#", 1)[0] for ln in conf.read_text().splitlines()]
+        body = "\n".join(lines)
+        assert "nvml" not in body
+        assert re.search(r"tpacpi: /proc/acpi/ibm/thermal\s+indices: \[1\]", body)
+
+        block = body.split("\nsensors:", 1)[1].split("\nfans:", 1)[0]
+        sensors = len(re.findall(r"^\s+- (?:hwmon|tpacpi|nvml):", block, re.M))
+        assert sensors == 3
+        limits = re.findall(r"(?:lower|upper)_limit: \[([^\]]*)\]", body)
+        assert limits
+        for lim in limits:
+            assert len(lim.split(",")) == sensors, lim
+
     def test_thinkpad_p1_tuned_profiles(self, hw_dir: Path) -> None:
         """The power role's tuned profiles stay verifiable and complete.
 

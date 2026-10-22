@@ -27,27 +27,38 @@ sensors:
   - hwmon: /sys/class/hwmon
     name: coretemp
     indices: [1]        # temp1 = "Package id 0"
+  # Sensor 3 (EC GPU): the dGPU temperature as the EC sees it.
+  # Do NOT use an nvml sensor here: polling NVML wakes the dGPU from
+  # runtime suspend (D3) every cycle and keeps it at ~16 W, max clocks.
+  # The EC reading does not wake the GPU. While the dGPU sleeps, slot 1
+  # of /proc/acpi/ibm/thermal reads -128, which is below every limit, so
+  # the GPU column has no effect until the dGPU is awake.
+  # tpacpi indices are 0-based: 0 = CPU, 1 = GPU.
+  - tpacpi: /proc/acpi/ibm/thermal
+    indices: [1]
+    optional: true
 
 fans:
   - tpacpi: /proc/acpi/ibm/fan
 
+# Limits: [EC CPU, coretemp package, EC GPU]
 levels:
   - speed: 1
-    upper_limit: [64, 95]
+    upper_limit: [64, 95, 65]
   - speed: 2
-    lower_limit: [60, 94]
-    upper_limit: [68, 95]
+    lower_limit: [60, 94, 60]
+    upper_limit: [68, 95, 70]
   - speed: 3
-    lower_limit: [65, 94]
-    upper_limit: [72, 95]
+    lower_limit: [65, 94, 65]
+    upper_limit: [72, 95, 75]
   - speed: 4
-    lower_limit: [69, 94]
-    upper_limit: [76, 97]
+    lower_limit: [69, 94, 70]
+    upper_limit: [76, 97, 78]
   - speed: 5
-    lower_limit: [73, 94]
-    upper_limit: [79, 99]
+    lower_limit: [73, 94, 74]
+    upper_limit: [79, 99, 81]
   - speed: 7
-    lower_limit: [76, 94]
-    upper_limit: [83, 100]
+    lower_limit: [76, 94, 77]
+    upper_limit: [83, 100, 85]
   - speed: "level auto"
-    lower_limit: [80, 94]
+    lower_limit: [80, 94, 82]
