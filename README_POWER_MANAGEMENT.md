@@ -260,6 +260,13 @@ The curve follows the EC CPU sensor, which the firmware smooths. The
 package sensor jumps ~20C on short bursts, so it only forces a step up
 at 95C+. Above 80C (EC), control goes back to the firmware.
 
+The dGPU has its own column, read from the EC (`/proc/acpi/ibm/thermal`
+slot 1). With thinkfan in control the EC no longer reacts to GPU heat,
+so without it a busy GPU would get no extra cooling. It steps up from 65C
+and hands back to the firmware above 85C. While the dGPU sleeps the slot
+reads -128 and has no effect. Do not switch it to an `nvml` sensor:
+polling NVML wakes the dGPU on every cycle and keeps it at ~16 W.
+
 Safety:
 
 - If thinkfan crashes, systemd restarts it after 5 s.
@@ -341,8 +348,14 @@ systemctl status thinkfan.service
 cat /sys/module/thinkpad_acpi/parameters/fan_control   # must be Y
 grep level /proc/acpi/ibm/fan                          # "auto" = firmware curve
 ```
-If `fan_control` is `N`, reload the module:
-`sudo modprobe -r thinkpad_acpi && sudo modprobe thinkpad_acpi`.
+If `fan_control` is `N`, thinkfan exits at every start and the EC curve
+runs the fans at ~3,300 RPM. `thinkpad_acpi` loads from the initramfs,
+so a module reload only lasts until the next reboot. Fix both:
+```
+sudo modprobe -r thinkpad_acpi && sudo modprobe thinkpad_acpi
+sudo limine-mkinitcpio      # bakes fan_control=1 into the initramfs
+```
+Re-running the power role does both.
 
 **Checking GPU power state without waking it:**
 `lspci` and `nvidia-smi` both wake a suspended dGPU. Use the runtime-PM
