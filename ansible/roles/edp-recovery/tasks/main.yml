@@ -1,0 +1,89 @@
+---
+# ============================================================================
+# eDP panel recovery — ThinkPad P1 Gen 7
+# ============================================================================
+#
+# The internal panel (Meteor Lake i915) can stay black after resume,
+# lid-open, or a DisplayLink dock hotplug. The kernel logs one of:
+#   *ERROR* Timeout waiting for DDI BUF A to get active
+#   PSR wait timed out, atomic update may fail
+#
+# The main fix is the i915 modprobe drop in the machine profile
+# (hardware/machines/thinkpad-p1-gen7.toml). This role adds the safety net:
+#
+#   edp-watchdog  systemd user service, enabled globally. Retrains the eDP
+#                 link on the kernel errors above, and re-enables the panel
+#                 when KWin drops it shortly after a resume or hotplug.
+#   edp-recover   manual retrain, bound to the Display key in KDE.
+#
+# Both reach KWin through kscreen-doctor. They resolve the live Wayland
+# socket on every call: the name (wayland-0, wayland-1, ...) changes between
+# sessions, and with a wrong one kscreen-doctor aborts and dumps core.
+# ============================================================================
+
+- name: "eDP recovery: create helper directory"
+  file:
+    path: /usr/local/lib/edp-recovery
+    state: directory
+    mode: "0755"
+
+- name: "eDP recovery: deploy kscreen-doctor helper"
+  copy:
+    src: kscreen.sh
+    dest: /usr/local/lib/edp-recovery/kscreen.sh
+    mode: "0644"
+
+- name: "eDP recovery: deploy scripts"
+  copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - edp-watchdog
+    - edp-recover
+
+- name: "eDP recovery: deploy watchdog user unit"
+  copy:
+    src: edp-watchdog.service
+    dest: /etc/systemd/user/edp-watchdog.service
+    mode: "0644"
+
+- name: "eDP recovery: enable watchdog for all users"
+  systemd:
+    name: edp-watchdog.service
+    scope: global
+    enabled: true
+
+- name: "eDP recovery: create applications directory"
+  file:
+    path: /usr/local/share/applications
+    state: directory
+    mode: "0755"
+
+- name: "eDP recovery: deploy recover launcher"
+  copy:
+    src: edp-recover.desktop
+    dest: /usr/local/share/applications/edp-recover.desktop
+    mode: "0644"
+
+# Runs after the kde role (hardware-injected roles come last in the
+# playbook), so the kglobalshortcutsrc template does not overwrite it.
+- name: "eDP recovery: check for KDE shortcut config"
+  stat:
+    path: "/home/{{ install_user }}/.config/kglobalshortcutsrc"
+  register: edp_kglobalshortcutsrc
+  when: install_user is defined
+
+- name: "eDP recovery: bind recover launcher to the Display key"
+  ini_file:
+    path: "/home/{{ install_user }}/.config/kglobalshortcutsrc"
+    section: "services][edp-recover.desktop"
+    option: _launch
+    value: Display
+    no_extra_spaces: true
+    owner: "{{ install_user }}"
+    group: "{{ install_user }}"
+    mode: "0600"
+  when:
+    - install_user is defined
+    - edp_kglobalshortcutsrc.stat.exists | default(false)

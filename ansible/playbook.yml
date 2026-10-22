@@ -6,7 +6,7 @@
 # installation.
 #
 # Module roles are staged from modules/*/ansible/ into ansible/roles/
-# at ISO build time. Hardware-injected roles (power) live here permanently.
+# at ISO build time. Hardware-injected roles (power, edp-recovery) live here permanently.
 #
 # Roles are ordered by category:
 #   base -> networking -> desktop -> dev-toolchain -> topic -> service
@@ -47,3 +47,4 @@
 
     # ── hardware-injected (not user-selectable modules) ───
     - { role: power, tags: ['power'] }
+    - { role: edp-recovery, tags: ['edp-recovery'] }

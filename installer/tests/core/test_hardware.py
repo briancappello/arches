@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -120,6 +121,36 @@ class TestLoadMachine:
                 assert "boost" not in cfg["cpu"], f"{profile.name}: use no_turbo"
             has_script = cfg.has_section("script")
             assert (profile / "script.sh").is_file() == has_script, profile.name
+
+    def test_thinkpad_p1_edp_panel_workaround(self, hw_dir: Path) -> None:
+        """The internal panel fix: i915 power features off, plus a watchdog.
+
+        The modprobe drop must disable PSR, Panel Replay and DC5/DC6
+        together; any one left on brings back the black-panel failure.
+        The edp-recovery role must be in the playbook, or first boot
+        skips it silently.  Its scripts must never hardcode a Wayland
+        socket name: it changes between sessions, and kscreen-doctor
+        dumps core on a wrong one.
+        """
+        m = load_machine(hw_dir / "machines" / "thinkpad-p1-gen7.toml")
+        options = m.modprobe["arches-i915-psr.conf"]
+        for opt in ("enable_psr=0", "enable_panel_replay=0", "enable_dc=0"):
+            assert opt in options
+
+        assert "edp-recovery" in m.ansible_firstboot_roles
+        ansible = hw_dir.parent / "ansible"
+        assert "role: edp-recovery" in (ansible / "playbook.yml").read_text()
+
+        files = ansible / "roles" / "edp-recovery" / "files"
+        for script in ("edp-watchdog", "edp-recover"):
+            text = (files / script).read_text()
+            assert "source /usr/local/lib/edp-recovery/kscreen.sh" in text
+            assert "WAYLAND_DISPLAY" not in text, script
+            # Direct calls bypass the socket lookup in kdoc.
+            direct = re.search(r"^\s*kscreen-doctor\b|\$\(kscreen-doctor\b", text, re.M)
+            assert direct is None, script
+        unit = (files / "edp-watchdog.service").read_text()
+        assert "WantedBy=graphical-session.target" in unit
 
     def test_load_generic_laptop(self, hw_dir: Path) -> None:
         m = load_machine(hw_dir / "machines" / "generic-laptop.toml")

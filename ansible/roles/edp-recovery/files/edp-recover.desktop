@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Recover internal display
+Exec=/usr/local/bin/edp-recover
+NoDisplay=true
+StartupNotify=false
+X-KDE-GlobalAccel-CommandShortcut=true

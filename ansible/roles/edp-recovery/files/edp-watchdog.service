@@ -1,0 +1,15 @@
+[Unit]
+Description=Auto-recover eDP panel after i915 link-training failure
+# Needs the KWin Wayland session; start and stop with it.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/edp-watchdog
+Restart=on-failure
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=graphical-session.target

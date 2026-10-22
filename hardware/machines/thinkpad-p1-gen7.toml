@@ -39,7 +39,23 @@ enable = [
 ]
 
 [ansible]
-firstboot_roles = ["power"]
+firstboot_roles = ["power", "edp-recovery"]
+
+[modprobe]
+# Internal panel stays black after resume / lid-open. Kernel logs:
+#   *ERROR* Timeout waiting for DDI BUF A to get active   (link power-up race)
+#   PSR wait timed out, atomic update may fail            (PSR engine wedge)
+#
+# enable_psr=0 enable_panel_replay=0 : PSR wedges become impossible.
+# enable_dc=0 : no DC5/DC6 display power gating, so DDI power-up cannot
+#               race the DMC firmware.
+#
+# Costs ~1 W at idle. Revisit after BIOS/kernel updates: drop this entry,
+# rescan, reboot, and watch the kernel log. The edp-recovery role stays as
+# a safety net either way.
+"arches-i915-psr.conf" = """\
+options i915 enable_psr=0 enable_panel_replay=0 enable_dc=0\
+"""
 
 [udev]
 # Lid transitions must not wake the machine.
