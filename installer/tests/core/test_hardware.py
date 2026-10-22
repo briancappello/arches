@@ -96,6 +96,9 @@ class TestLoadMachine:
         tasks = (role / "tasks" / "main.yml").read_text()
         assert "/etc/thinkfan.yaml" in tasks
         assert "thinkfan.service" in tasks
+        # thinkpad_acpi loads from the initramfs; without a rebuild the
+        # fan_control option is lost on reboot and thinkfan crash-loops.
+        assert "limine-mkinitcpio" in tasks
 
     def test_thinkpad_p1_tuned_profiles(self, hw_dir: Path) -> None:
         """The power role's tuned profiles stay verifiable and complete.

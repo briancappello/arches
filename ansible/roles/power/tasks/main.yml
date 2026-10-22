@@ -110,6 +110,12 @@
 # On a running system that just got thinkfan, the modprobe option is not
 # active yet. fan_control is read-only (0444), so reload the module.
 # Nothing depends on thinkpad_acpi, so this is safe while running.
+#
+# thinkpad_acpi loads from the initramfs, which only sees the modprobe.d
+# files present when it was built. If fan_control is off at this point,
+# the initramfs predates the option: without a rebuild, every reboot
+# brings fan_control=N back and thinkfan crash-loops while the EC curve
+# runs the fans at ~3,300 RPM.
 - name: "Power: read thinkpad_acpi fan_control state"
   slurp:
     src: /sys/module/thinkpad_acpi/parameters/fan_control
@@ -118,6 +124,18 @@
 
 - name: "Power: reload thinkpad_acpi to enable fan_control"
   shell: modprobe -r thinkpad_acpi && modprobe thinkpad_acpi
+  when:
+    - power_fan_control.content is defined
+    - (power_fan_control.content | b64decode | trim) != "Y"
+
+# limine-mkinitcpio on Limine systems: they have no mkinitcpio presets.
+- name: "Power: rebuild initramfs so fan_control survives reboots"
+  shell: |
+    if command -v limine-mkinitcpio >/dev/null; then
+        limine-mkinitcpio
+    else
+        mkinitcpio -P
+    fi
   when:
     - power_fan_control.content is defined
     - (power_fan_control.content | b64decode | trim) != "Y"
