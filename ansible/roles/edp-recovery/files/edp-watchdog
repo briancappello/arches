@@ -9,7 +9,7 @@
 #   A) Kernel eDP link-training failure
 #      "*ERROR* Timeout waiting for DDI BUF A to get active" / "PSR wait
 #      timed out" -> panel black, kernel believes it is on.
-#      Repair: full disable -> enable modeset (retrains the link).
+#      Repair: DPMS off -> on, a full modeset that retrains the link.
 #
 #   B) Compositor leaves the panel disabled
 #      Connector reads "connected" but "enabled=disabled", no kernel error.
@@ -78,10 +78,11 @@ retrain() {
     out=$(find_edp)
     [[ -z $out ]] && { log "link failure seen but no eDP output found"; return 0; }
     log "link-training failure detected; retraining $out"
-    kdoc "output.$out.disable"
-    sleep 3
-    kdoc "output.$out.enable"
-    log "retrain of $out complete"
+    if edp_retrain 3; then
+        log "retrain of $out complete"
+    else
+        log "retrain of $out failed: DPMS off/on cycle did not complete"
+    fi
     trip    # also supervise afterwards, in case KWin drops it again
 }
 

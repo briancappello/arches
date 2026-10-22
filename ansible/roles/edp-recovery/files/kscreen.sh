@@ -22,6 +22,24 @@ kdoc() {
     WAYLAND_DISPLAY=$s kscreen-doctor "$@"
 }
 
+# Retrain the eDP link with a full modeset: DPMS off takes the pipe and DDI
+# down, DPMS on powers them back up and retrains the link. Disabling the
+# output would do the same, but KWin refuses to disable the last enabled
+# output (and still exits 0), so that fails on a laptop with no external
+# monitor. Blanks every output for $1 seconds (default 3). Returns 1 if the
+# kernel does not report the panel on again.
+edp_retrain() {
+    local hold=${1:-3} f
+    kdoc --dpms off >/dev/null 2>&1 || return 1
+    sleep "$hold"
+    kdoc --dpms on >/dev/null 2>&1 || return 1
+    sleep 1
+    for f in /sys/class/drm/card*-eDP-*/dpms; do
+        [[ -r $f && $(cat "$f") == On ]] && return 0
+    done
+    return 1
+}
+
 # Name of the internal panel output, e.g. eDP-1.
 find_edp() {
     kdoc -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' \

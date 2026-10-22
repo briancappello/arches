@@ -2,10 +2,11 @@
 #
 # edp-recover -- revive a dead laptop panel (eDP link retrain)
 #
-# When the internal display fails to power up (black panel, external
-# monitors fine, dmesg shows "Timeout waiting for DDI BUF A to get active"),
-# the kernel is NOT hung: forcing a full disable->enable modeset on the eDP
-# output retrains the link and recovers the panel without a reboot.
+# When the internal display fails to power up (black panel, dmesg shows
+# "Timeout waiting for DDI BUF A to get active"), the kernel is NOT hung:
+# a DPMS off -> on cycle forces a full modeset, which retrains the eDP link
+# and recovers the panel without a reboot. Works with or without external
+# monitors; all screens go dark for a few seconds.
 #
 # Usage: press the Display key (bound by the edp-recovery role), or run it
 #        from a terminal on an external monitor or over SSH. No sudo needed.
@@ -20,17 +21,15 @@ if [[ -z ${OUT:-} ]]; then
     exit 1
 fi
 
-echo "Retraining $OUT (disable -> 3s -> enable)..."
-kdoc "output.$OUT.disable"
-sleep 3
-kdoc "output.$OUT.enable"
-sleep 2
+echo "Retraining $OUT (all screens off for 3s)..."
+if ! edp_retrain 3; then
+    echo "ERROR: DPMS off/on cycle failed" >&2
+    exit 1
+fi
 
 if journalctl -k --since "10 seconds ago" --no-pager 2>/dev/null | grep -q 'DDI BUF A'; then
     echo "Link training failed again -- retrying once..."
-    kdoc "output.$OUT.disable"
-    sleep 5
-    kdoc "output.$OUT.enable"
+    edp_retrain 5 || { echo "ERROR: DPMS off/on cycle failed" >&2; exit 1; }
 fi
 echo "Done. If the panel is still black, run this again, or as a last resort:"
 echo "  systemctl reboot   (the system is alive; no need for the power button)"

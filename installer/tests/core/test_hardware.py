@@ -174,6 +174,11 @@ class TestLoadMachine:
             # Direct calls bypass the socket lookup in kdoc.
             direct = re.search(r"^\s*kscreen-doctor\b|\$\(kscreen-doctor\b", text, re.M)
             assert direct is None, script
+            # KWin refuses to disable the last enabled output (and exits 0),
+            # so a disable/enable retrain does nothing on a bare laptop.
+            assert not re.search(r"output\.\S+\.disable", text), script
+            assert "edp_retrain" in text, script
+        assert "kdoc --dpms off" in (files / "kscreen.sh").read_text()
         unit = (files / "edp-watchdog.service").read_text()
         assert "WantedBy=graphical-session.target" in unit
 
