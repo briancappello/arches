@@ -112,7 +112,7 @@ def test_sshd_off_on_workstations_and_keys_only_everywhere(tmp_path: Path) -> No
     (tmp_path / "usr/bin/firewall-offline-cmd").touch()
     mod = "arches_installer.core.install"
     for tmpl_name, action in [
-        ("kde-workstation.toml", "--remove-service=ssh"),
+        ("kde-workstation.toml", "--remove-service-from-zone=ssh"),
         ("vm-server.toml", "--add-service=ssh"),
     ]:
         tmpl = load_template(templates / tmpl_name)

@@ -933,8 +933,12 @@ def configure_ssh(
         (conf_d / "10-arches.conf").write_text(SSHD_HARDENING)
         _log("sshd: keys only, no root login (sshd_config.d/10-arches.conf).", log)
     if (MOUNT_ROOT / "usr" / "bin" / "firewall-offline-cmd").exists():
+        # Not --remove-service: that is a lokkit option, which
+        # firewall-offline-cmd refuses next to --zone.
         action = (
-            "--add-service=ssh" if template.ssh.open_firewall else "--remove-service=ssh"
+            "--add-service=ssh"
+            if template.ssh.open_firewall
+            else "--remove-service-from-zone=ssh"
         )
         chroot_run(["firewall-offline-cmd", "--zone=public", action], log=log)
 
