@@ -1,8 +1,11 @@
 ---
 # PostgreSQL — localhost-only, trust local connections (dev default)
 
+# runuser, not su: systemd 262's sysusers creates the postgres account
+# already expired (shadow field 8 = 1), and su's PAM account check
+# refuses it ("User account has expired"). runuser has no account stack.
 - name: "PostgreSQL: initialize data directory"
-  command: su - postgres -c "initdb -D /var/lib/postgres/data"
+  command: runuser -u postgres -- initdb -D /var/lib/postgres/data
   args:
     creates: /var/lib/postgres/data/PG_VERSION
 

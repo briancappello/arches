@@ -227,3 +227,23 @@ class TestModuleCategoriesValid:
             f"{networking_modules}. If you're adding a new networking "
             f"variant, audit avahi/nss-mdns/nsswitch placement first."
         )
+
+
+def test_roles_do_not_su_into_system_accounts() -> None:
+    """systemd 262 creates system accounts expired; su refuses them.
+
+    Roles switch user with runuser (no PAM account check) instead.
+    """
+    offenders = []
+    for path in sorted(_MODULES_DIR.glob("*/ansible/tasks/*.yml")):
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if "su - " in line or "su -c" in line:
+                offenders.append(f"{path.relative_to(_REPO_ROOT)}:{n}: {line.strip()}")
+    assert offenders == []
+
+
+def test_postgres_initdb_uses_runuser() -> None:
+    text = (_MODULES_DIR / "postgresql/ansible/tasks/main.yml").read_text()
+    assert "runuser -u postgres -- initdb -D /var/lib/postgres/data" in text
