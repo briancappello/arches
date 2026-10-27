@@ -224,3 +224,52 @@ def test_install_refuses_without_the_repo_key(tmp_path: Path) -> None:
         assert (
             mnt / "usr/share/pacman/keyrings/arches-trusted"
         ).read_text() == f"{fpr}:4:\n"
+
+
+def test_test_only_iso_installs_only_in_qemu(tmp_path: Path) -> None:
+    import arches_installer.__main__ as main
+
+    marker = tmp_path / "TEST-BUILD"
+    with patch.object(main, "TEST_BUILD_MARKER", marker):
+        assert main.refuse_test_build_on_hardware() is None  # normal ISO
+        marker.write_text("TEST-ONLY")
+        for vm, verdict in [(True, None), (False, "TEST-ONLY")]:
+            with patch.object(main, "_is_qemu_vm", return_value=vm):
+                refusal = main.refuse_test_build_on_hardware()
+                assert (refusal is None) if verdict is None else verdict in refusal
+
+        with (
+            patch.object(main, "_is_qemu_vm", return_value=False),
+            patch("os.geteuid", return_value=0),
+            patch("sys.argv", ["arches-install"]),
+            patch.object(main, "_run_tui") as tui,
+        ):
+            assert main.main() == 1
+        tui.assert_not_called()
+
+
+def test_qemu_detection_needs_both_virt_and_dmi(tmp_path: Path) -> None:
+    import arches_installer.__main__ as main
+
+    def detect(virt: str, vendor: str) -> bool:
+        real_read = Path.read_text
+
+        def read_text(self, *a, **k):
+            if str(self) == "/sys/class/dmi/id/sys_vendor":
+                return vendor + "\n"
+            return real_read(self, *a, **k)
+
+        with (
+            patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, virt + "\n", ""),
+            ),
+            patch.object(Path, "read_text", read_text),
+        ):
+            return main._is_qemu_vm()
+
+    assert detect("kvm", "QEMU")
+    assert detect("qemu", "QEMU")
+    assert not detect("none", "LENOVO")
+    assert not detect("kvm", "LENOVO")  # DMI must say QEMU as well
+    assert not detect("none", "QEMU")

@@ -244,3 +244,58 @@ def test_iso_build_refuses_without_a_key(setup) -> None:
     r = _stage(setup, setup["repo"].parent / "profile")
     assert r.returncode == 1
     assert "keys/README.md" in r.stderr
+
+
+def test_test_only_build_signs_with_a_throwaway_key(setup) -> None:
+    (setup["keys"] / "arches-local.fpr").unlink()  # no YubiKey key at all
+    profile = setup["repo"].parent / "profile"
+    env = {k: v for k, v in setup["env"].items() if k != "GNUPGHOME"}
+    r = subprocess.run(
+        ["bash", str(STAGE), str(profile)],
+        env=dict(
+            env,
+            ARCHES_REPO_DIR=str(setup["repo"]),
+            ARCHES_SKIP_BUILD_KEYRING="1",
+            ARCHES_TEST_BUILD="1",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert r.returncode == 0, r.stderr
+    root = profile / "airootfs"
+    marker = (root / "opt/arches/TEST-BUILD").read_text()
+    fpr = (root / "opt/arches/platform/arches-local.fpr").read_text().strip()
+    assert fpr in marker and fpr != setup["fpr"]
+    assert "TEST-ONLY" in (root / "etc/issue.d/arches-test-build.issue").read_text()
+
+    # The packages verify against the staged throwaway key only.
+    home = Path(tempfile.mkdtemp(prefix="gpg-"))
+    try:
+        _gpg(home, "--import", str(root / "opt/arches/platform/arches-local.asc"))
+        out = _gpg(
+            home,
+            "--status-fd",
+            "1",
+            "--verify",
+            f"{setup['pkgs'][0]}.sig",
+            str(setup["pkgs"][0]),
+        ).stdout
+        assert any(
+            ln.split()[1] == "VALIDSIG" and ln.split()[-1] == fpr
+            for ln in out.splitlines()
+            if ln.startswith("[GNUPG:]")
+        )
+    finally:
+        subprocess.run(
+            ["gpgconf", "--homedir", str(home), "--kill", "all"], check=False
+        )
+        shutil.rmtree(home, ignore_errors=True)
+
+    # A normal build of the same tree: still refuses without the YubiKey
+    # key, and leaves no TEST marker behind.
+    r = _stage(setup, profile)
+    assert r.returncode == 1
+    assert "keys/README.md" in r.stderr
+    assert not (root / "opt/arches/TEST-BUILD").exists()
+    assert not (root / "etc/issue.d/arches-test-build.issue").exists()

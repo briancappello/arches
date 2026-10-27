@@ -141,6 +141,7 @@ podman run --rm --privileged \
     -e ARCHES_TEMPLATE="${TEMPLATE:-}" \
     -e ARCHES_GPU="${ARCHES_GPU:-}" \
     -e ARCHES_ALLOW_DEFAULT_PASSWORD="${ARCHES_ALLOW_DEFAULT_PASSWORD:-}" \
+    -e ARCHES_TEST_BUILD="${ARCHES_TEST_BUILD:-}" \
     "$IMAGE_NAME" \
     /bin/bash -c '
         # On ANY exit (success, failure, SIGINT, SIGTERM, OOM), chown

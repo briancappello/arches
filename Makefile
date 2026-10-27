@@ -311,6 +311,11 @@ _iso: _check-root _check-deps _aur-repo _stage-installer _stage-modules _stage-a
 	@# scripts/userns/ makes pacstrap and arch-chroot run in unshare mode,
 	@# so the build works as root of a rootless container's user namespace.
 	PATH="$(SCRIPTS)/userns:$$PATH" mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
+	@# A TEST-ONLY build (ARCHES_TEST_BUILD=1) says so in its file name.
+	@if [ "$${ARCHES_TEST_BUILD:-}" = 1 ]; then \
+		f=$$(ls -t $(OUT_DIR)/arches-*.iso | head -1); \
+		case "$$f" in *-TEST-ONLY.iso) ;; *) mv "$$f" "$${f%.iso}-TEST-ONLY.iso" ;; esac; \
+	fi
 	@echo ""
 	@echo "══ ISO built ══"
 	@for f in $(OUT_DIR)/arches-*.iso; do \

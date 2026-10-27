@@ -12,6 +12,44 @@ from arches_installer.core.template import InstallTemplate
 
 AUTO_INSTALL_PATH = Path("/root/auto-install.toml")
 
+# Written by scripts/stage-repo-key.sh into TEST-ONLY ISOs: their
+# arches-local is signed by a throwaway key, not the YubiKey key.
+TEST_BUILD_MARKER = Path("/opt/arches/TEST-BUILD")
+
+
+def _is_qemu_vm() -> bool:
+    """True only inside a QEMU/KVM virtual machine (systemd-detect-virt + DMI)."""
+    import subprocess
+
+    try:
+        virt = subprocess.run(
+            ["systemd-detect-virt", "--vm"],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    try:
+        vendor = Path("/sys/class/dmi/id/sys_vendor").read_text().strip()
+    except OSError:
+        vendor = ""
+    return virt in ("qemu", "kvm") and vendor == "QEMU"
+
+
+def refuse_test_build_on_hardware() -> str | None:
+    """Return why a TEST-ONLY ISO must not install here, or None."""
+    if not TEST_BUILD_MARKER.exists():
+        return None
+    if _is_qemu_vm():
+        return None
+    return (
+        "This is a TEST-ONLY Arches ISO: its packages are signed by a "
+        "throwaway key, not the arches-local key. It installs only in a "
+        "QEMU/KVM virtual machine. Build a normal ISO for real hardware."
+    )
+
 
 def _kernel_cmdline_has(param: str) -> bool:
     """Check if a parameter is present in the kernel command line."""
@@ -82,6 +120,11 @@ def main() -> int:
             "       Use: sudo arches-install",
             file=sys.stderr,
         )
+        return 1
+
+    refusal = refuse_test_build_on_hardware()
+    if refusal and not args.dry_run:
+        print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
 
     # --host flag: host-install mode (install into subvolumes on existing system)

@@ -258,6 +258,7 @@ cmd_build() {
         -e ARCHES_TEMPLATE="${TEMPLATE:-}" \
         -e ARCHES_GPU="${ARCHES_GPU:-}" \
         -e ARCHES_ALLOW_DEFAULT_PASSWORD="${ARCHES_ALLOW_DEFAULT_PASSWORD:-}" \
+        -e ARCHES_TEST_BUILD="${ARCHES_TEST_BUILD:-}" \
         "$CONTAINER_NAME" \
         bash -c '
             _chown_back() {
