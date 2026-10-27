@@ -114,6 +114,7 @@ def env(tmp_path: Path):
     _stub(bin_dir, "limine-enroll-config", rec)
     _stub(bin_dir, "findmnt", rec + 'echo "${ROOT_SRC:-/dev/mapper/arches[/@]}"\n')
     _stub(bin_dir, "systemd-cryptenroll", rec)
+    _stub(bin_dir, "arches-freeze-other-systems", rec)
     resign = bin_dir / "arches-secureboot-resign"
     resign.write_text((FILES_DIR / "arches-secureboot-resign").read_text())
     resign.chmod(0o755)
@@ -225,6 +226,7 @@ class TestEnroll:
         r = _run("arches-secureboot-enroll", env, stdin="yes\n")
         assert r.returncode == 1
         assert not any("enroll-keys" in c for c in env.calls())
+        assert not any("freeze" in c for c in env.calls())
         assert "ENABLE_ENROLL_LIMINE_CONFIG=no" in env.defaults.read_text()
 
     def test_unsigned_chain_blocks_enrolling(self, env) -> None:
@@ -246,3 +248,118 @@ class TestTpmReenroll:
             "systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto "
             "--tpm2-pcrs=7 --tpm2-with-pin=yes /dev/disk/by-uuid/1234-abcd"
         )
+
+
+class TestFreeze:
+    OLD_UUID = "64a8b4ff-b1aa-4501-b9f6-8ccfc1ac763a"
+
+    @pytest.fixture
+    def old(self, env):
+        """The old system's root, as the freeze script will mount it."""
+        mnt = env.tmp / "freeze-mnt"
+        root = mnt / OTHER_ID
+        (root / "etc/boot/hooks/pre.d").mkdir(parents=True)
+        (root / "etc/boot/hooks/post.d").mkdir(parents=True)
+        (root / "etc/machine-id").write_text(OTHER_ID + "\n")
+        (root / "etc/fstab").write_text(
+            "# /dev/nvme1n1p2\n"
+            f"UUID={self.OLD_UUID}\t/\tbtrfs\trw,subvol=/@\t0 0\n"
+            "UUID=ABCD-1234\t/boot\tvfat\trw,relatime,fmask=0022\t0 2\n"
+        )
+        (root / "etc/boot/hooks/pre.d/10-limine-reset-enroll").symlink_to(
+            "/usr/bin/limine-reset-enroll"
+        )
+        (root / "etc/boot/hooks/post.d/90-limine-enroll-config").symlink_to(
+            "/usr/bin/limine-enroll-config"
+        )
+        (env.esp / "limine.conf").write_text(
+            "timeout: 3\n\n/+Arch Linux\n"
+            f"comment: machine-id={OTHER_ID} order-priority=50\n"
+            "  //linux-cachyos\n  protocol: linux\n"
+            f"  cmdline: root=UUID={self.OLD_UUID} rw rootflags=subvol=/@ quiet\n"
+            f"/+Arches Linux\ncomment: machine-id={MACHINE_ID}\n"
+            "  //linux-cachyos\n  protocol: efi\n  cmdline: root=UUID=new rw\n"
+        )
+        (env.esp / "EFI/limine/limine_x64.bak").write_text("bak")
+        bin_dir = Path(env.env["PATH"].split(":")[0])
+        rec = f'echo "$(basename "$0") $*" >> {env.log}\n'
+        _stub(bin_dir, "mount", rec)
+        _stub(bin_dir, "umount", rec)
+        _stub(bin_dir, "systemctl", rec)
+        env.state = env.tmp / "state"
+        extra = dict(
+            ARCHES_FREEZE_MNT=str(mnt),
+            ARCHES_STATE_DIR=str(env.state),
+            ARCHES_FREEZE_STAMP="20261027T000000Z",
+        )
+        return root, extra
+
+    def test_freezes_the_old_system_reversibly(self, env, old) -> None:
+        root, extra = old
+        conf_before = (env.esp / "limine.conf").read_text()
+        r = _run("arches-freeze-other-systems", env, **extra)
+        assert r.returncode == 0, r.stderr
+
+        # mounted the right root, rw, its subvolume
+        assert f"mount -o rw,subvol=/@ UUID={self.OLD_UUID} {root}" in env.calls()
+        assert (
+            f"systemctl --root={root} mask limine-snapper-sync.service" in env.calls()
+        )
+        assert f"umount {root}" in env.calls()
+
+        fstab = (root / "etc/fstab").read_text()
+        boot = next(ln for ln in fstab.splitlines() if "\t/boot\t" in ln)
+        assert boot.split("\t")[3] == "rw,relatime,fmask=0022,noauto,nofail"
+        root_line = next(ln for ln in fstab.splitlines() if "\t/\t" in ln)
+        assert "noauto" not in root_line
+        assert (root / "etc/fstab.arches-freeze-20261027T000000Z").read_text().count(
+            "noauto"
+        ) == 0
+
+        assert (
+            root / "etc/boot/hooks/pre.d/10-limine-reset-enroll.disabled"
+        ).is_symlink()
+        assert (
+            root / "etc/boot/hooks/post.d/90-limine-enroll-config.disabled"
+        ).is_symlink()
+        assert not (root / "etc/boot/hooks/pre.d/10-limine-reset-enroll").exists()
+
+        # ESP backups, in two places; limine.conf itself untouched
+        for d in (
+            env.esp / "arches-freeze-20261027T000000Z",
+            env.state / "freeze-20261027T000000Z",
+        ):
+            assert (d / "limine.conf").read_text() == conf_before
+            assert (d / "EFI_limine_limine_x64.efi").read_text() == "limine"
+            assert (d / "EFI_limine_limine_x64.bak").read_text() == "bak"
+        assert (env.esp / "limine.conf").read_text() == conf_before
+
+        # The undo command restores everything.
+        undo = root / "usr/local/sbin/arches-unfreeze"
+        text = undo.read_text().replace(" /etc/", f" {root}/etc/")
+        undo.write_text(text)
+        u = subprocess.run(
+            ["bash", str(undo)], env=env.env, capture_output=True, text=True, timeout=30
+        )
+        assert u.returncode == 0, u.stderr
+        assert (root / "etc/fstab").read_text().count("noauto") == 0
+        assert (root / "etc/boot/hooks/pre.d/10-limine-reset-enroll").is_symlink()
+        assert (root / "etc/boot/hooks/post.d/90-limine-enroll-config").is_symlink()
+        assert "systemctl unmask limine-snapper-sync.service" in env.calls()
+
+    def test_refuses_the_wrong_root(self, env, old) -> None:
+        root, extra = old
+        (root / "etc/machine-id").write_text("b" * 32 + "\n")
+        r = _run("arches-freeze-other-systems", env, **extra)
+        assert r.returncode == 1
+        assert "is not the system" in r.stderr
+        assert "noauto" not in (root / "etc/fstab").read_text()
+
+    def test_nothing_to_freeze(self, env, old) -> None:
+        _, extra = old
+        (env.esp / "limine.conf").write_text(
+            f"/+Arches Linux\ncomment: machine-id={MACHINE_ID}\n"
+        )
+        r = _run("arches-freeze-other-systems", env, **extra)
+        assert r.returncode == 0
+        assert "nothing to freeze" in r.stdout

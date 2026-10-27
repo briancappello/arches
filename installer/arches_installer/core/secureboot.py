@@ -22,6 +22,7 @@ PACKAGES = ["sbctl", "sbsigntools"]
 SCRIPTS = [
     "arches-secureboot-resign",
     "arches-secureboot-enroll",
+    "arches-freeze-other-systems",
     "arches-tpm-reenroll",
 ]
 HOOK = "zzz-arches-secureboot.hook"

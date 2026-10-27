@@ -6,6 +6,7 @@
 #
 #   1. refuses unless / is our encrypted volume and the firmware is in
 #      Setup Mode;
+#   1b. freezes the other systems on the ESP (arches-freeze-other-systems);
 #   2. turns on enrolling the limine.conf hash, rebuilds and signs the
 #      UKIs and Limine, and checks every one;
 #   3. enrolls the sbctl keys together with Microsoft's certificates
@@ -49,21 +50,24 @@ fi
 # Other systems on this ESP. Their linux-protocol entries carry BLAKE2
 # hashes, so Limine still boots them with Secure Boot on. Any change one
 # of them makes to limine.conf or to the Limine binary afterwards stops
-# every entry from booting until Secure Boot is turned off again.
+# every entry from booting, so they are frozen first (decision O4a).
 machine_id="$(<"$MACHINE_ID_FILE")"
 others="$(grep -o 'machine-id=[0-9a-f]\{32\}' "${ESP}/limine.conf" | sort -u | grep -v "machine-id=${machine_id}" || true)"
 if [[ -n "$others" ]]; then
 	echo "limine.conf also boots other systems:"
 	sed 's/^/  /' <<<"$others"
-	echo "After this step they must not write to the ESP (limine.conf, the"
-	echo "Limine binary, kernels): a change breaks the enrolled hash and the"
-	echo "signature, and nothing boots until Secure Boot is turned off."
+	echo "They stay bootable as frozen fallbacks: their /boot is no longer"
+	echo "mounted, limine-snapper-sync and the Limine reset hooks are off, so"
+	echo "they cannot write to the ESP. Do not update them while frozen."
+	echo "Undo on each: sudo arches-unfreeze. ESP files are backed up first."
 fi
 
 echo
 echo "This enrolls the Secure Boot keys of this system into the firmware."
 read -r -p 'Type ENROLL to continue: ' answer
 [[ "$answer" == ENROLL ]] || die "not confirmed; nothing changed."
+
+arches-freeze-other-systems
 
 if grep -q '^ENABLE_ENROLL_LIMINE_CONFIG=' "$DEFAULTS"; then
 	sed -i 's/^ENABLE_ENROLL_LIMINE_CONFIG=.*/ENABLE_ENROLL_LIMINE_CONFIG=yes/' "$DEFAULTS"
