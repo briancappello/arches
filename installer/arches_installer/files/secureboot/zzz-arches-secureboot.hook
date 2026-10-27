@@ -1,0 +1,27 @@
+# Re-sign the Secure Boot chain after updates (design D4). The name sorts
+# after limine's, mkinitcpio's and sbctl's own hooks, so it runs last.
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = limine
+Target = limine-mkinitcpio-hook
+Target = limine-snapper-sync
+Target = sbctl
+Target = systemd
+Target = mkinitcpio
+Target = linux*
+
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = usr/lib/modules/*/vmlinuz
+Target = usr/share/limine/*
+
+[Action]
+Description = Re-signing Limine and the UKIs, re-enrolling the Limine config...
+When = PostTransaction
+Exec = /usr/local/bin/arches-secureboot-resign
+Depends = sbctl
+Depends = sbsigntools

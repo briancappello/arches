@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Bind the disk key to the TPM again, with a PIN, for the current PCR 7.
+#
+# Run as root after anything changed PCR 7 (turning Secure Boot on,
+# enrolling keys, a firmware update that changed db/dbx), once you have
+# unlocked the disk with the recovery key. systemd-cryptenroll asks for an
+# existing key (the recovery key) and for the new PIN.
+set -euo pipefail
+
+CRYPTTAB="${ARCHES_CRYPTTAB:-/etc/crypttab.initramfs}"
+
+if [[ "${ARCHES_SKIP_ROOT_CHECK:-}" != 1 ]] && ((EUID != 0)); then
+	echo "arches-tpm-reenroll: run as root." >&2
+	exit 1
+fi
+
+uuid="$(awk '!/^#/ && NF >= 2 { sub(/^UUID=/, "", $2); print $2; exit }' "$CRYPTTAB")"
+if [[ -z "$uuid" ]]; then
+	echo "arches-tpm-reenroll: no device in $CRYPTTAB." >&2
+	exit 1
+fi
+dev="/dev/disk/by-uuid/${uuid}"
+
+systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 \
+	--tpm2-with-pin=yes "$dev"
+systemd-cryptenroll "$dev"

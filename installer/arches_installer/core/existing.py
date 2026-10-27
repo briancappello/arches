@@ -43,6 +43,7 @@ from arches_installer.core.encryption import (
     write_mdadm_conf,
 )
 from arches_installer.core.run import LogCallback, _log
+from arches_installer.core.secureboot import PACKAGES as SECURE_BOOT_PACKAGES
 from arches_installer.core.run import run as logged_run
 
 # The reused ESP is the one that already holds the Limine config of the
@@ -294,6 +295,8 @@ def layout_packages(layout: DiskLayout) -> list[str]:
     """Packages the target needs to assemble and unlock *layout* at boot."""
     pkgs: list[str] = []
     for p in layout.partitions:
+        if p.reuse:
+            pkgs.extend(pk for pk in SECURE_BOOT_PACKAGES if pk not in pkgs)
         if p.raid_backend == "mdadm" and "mdadm" not in pkgs:
             pkgs.append("mdadm")
         if p.encryption == "luks2":

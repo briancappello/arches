@@ -43,6 +43,7 @@ from arches_installer.core.limine_conf import (
     read_machine_id,
 )
 from arches_installer.core.platform import PlatformConfig
+from arches_installer.core.secureboot import prepare_secure_boot
 from arches_installer.core.run import LogCallback
 from arches_installer.core.snapper import setup_snapshots
 from arches_installer.core.template import InstallTemplate
@@ -224,6 +225,8 @@ def run_install_pipeline(
 
     # Phase 3: Bootloader
     log("[bold cyan]== Phase 3: Bootloader ==[/bold cyan]")
+    if parts.esp_reused and platform.bootloader.type == "limine":
+        prepare_secure_boot(log=log)
     install_bootloader(
         platform,
         params.device,

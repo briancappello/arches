@@ -229,6 +229,7 @@ class TestPipelineMerge:
             patch(f"{mod}.write_limine_defaults", order.write_limine_defaults),
             patch(f"{mod}.install_system", order.install_system),
             patch(f"{mod}.configure_target_storage"),
+            patch(f"{mod}.prepare_secure_boot", order.prepare_secure_boot),
             patch(f"{mod}.install_bootloader", order.install_bootloader),
             patch(f"{mod}.check_merge", order.check_merge),
             patch(f"{mod}.setup_snapshots"),
@@ -242,6 +243,7 @@ class TestPipelineMerge:
             "backup_limine_conf",
             "write_limine_defaults",
             "install_system",
+            "prepare_secure_boot",
             "install_bootloader",
             "check_merge",
         ]

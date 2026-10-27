@@ -265,6 +265,8 @@ class TestMdadmConf:
 class TestTargetStorage:
     def test_p1_layout_packages(self) -> None:
         assert layout_packages(load_disk_layout(P1_LAYOUT)) == [
+            "sbctl",
+            "sbsigntools",
             "mdadm",
             "cryptsetup",
             "tpm2-tss",

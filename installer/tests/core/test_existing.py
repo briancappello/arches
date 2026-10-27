@@ -495,7 +495,10 @@ class TestPipelineEncrypted:
             encryption=secrets,
         )
         parts = PartitionMap(
-            esp=f"{DISK_B}p1", root="/dev/mapper/arches", root_filesystem="btrfs"
+            esp=f"{DISK_B}p1",
+            root="/dev/mapper/arches",
+            root_filesystem="btrfs",
+            esp_reused=True,
         )
         order = MagicMock()
         mod = "arches_installer.core.pipeline"
@@ -506,6 +509,7 @@ class TestPipelineEncrypted:
             patch(f"{mod}.write_limine_defaults"),
             patch(f"{mod}.install_system", order.install_system),
             patch(f"{mod}.configure_target_storage", order.configure_target_storage),
+            patch(f"{mod}.prepare_secure_boot", order.prepare_secure_boot),
             patch(f"{mod}.install_bootloader", order.install_bootloader),
             patch(f"{mod}.setup_snapshots"),
             patch(f"{mod}.inject_firstboot_service"),
@@ -518,8 +522,9 @@ class TestPipelineEncrypted:
         assert [c[0] for c in order.mock_calls] == [
             "install_system",
             "configure_target_storage",
+            "prepare_secure_boot",
             "install_bootloader",
         ]
         template = order.install_system.call_args[0][1]
-        for pkg in ("mdadm", "cryptsetup", "tpm2-tss"):
+        for pkg in ("mdadm", "cryptsetup", "tpm2-tss", "sbctl", "sbsigntools"):
             assert pkg in template.install.pacstrap
