@@ -1,4 +1,7 @@
-"""User setup screen — hostname, username, password."""
+"""User setup screen — hostname, username, password, and the TPM PIN.
+
+The PIN fields appear only when the selected layout is encrypted.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +9,7 @@ from textual.app import ComposeResult
 from textual.containers import Center, Vertical
 from textual.widgets import Button, Input, Label
 
+from arches_installer.core.encryption import MIN_PIN_LENGTH
 from arches_installer.tui import ArrowNavScreen
 
 
@@ -44,6 +48,21 @@ class UserSetupScreen(ArrowNavScreen):
                     id="input-password-confirm",
                 )
 
+                yield Label("Disk unlock PIN (TPM2):", classes="pin")
+                yield Input(
+                    placeholder=f"at least {MIN_PIN_LENGTH} characters",
+                    password=True,
+                    id="input-pin",
+                    classes="pin",
+                )
+                yield Label("Confirm PIN:", classes="pin")
+                yield Input(
+                    placeholder="PIN",
+                    password=True,
+                    id="input-pin-confirm",
+                    classes="pin",
+                )
+
                 yield Label("", id="error-label")
 
                 yield Button(
@@ -53,6 +72,20 @@ class UserSetupScreen(ArrowNavScreen):
                     classes="btn-primary",
                 )
                 yield Button("Back", variant="default", id="btn-back")
+
+    def _encrypted(self) -> bool:
+        layout = getattr(self.app, "selected_layout", None)
+        return bool(layout and layout.is_encrypted)
+
+    def _show_pin_fields(self) -> None:
+        for widget in self.query(".pin"):
+            widget.display = self._encrypted()
+
+    def on_mount(self) -> None:
+        self._show_pin_fields()
+
+    def on_screen_resume(self) -> None:
+        self._show_pin_fields()
 
     def _try_continue(self) -> None:
         """Validate and advance to the confirm screen."""
@@ -67,11 +100,15 @@ class UserSetupScreen(ArrowNavScreen):
         self.app.hostname = self.query_one("#input-hostname", Input).value.strip()
         self.app.username = self.query_one("#input-username", Input).value.strip()
         self.app.password = self.query_one("#input-password", Input).value
+        self.app.tpm_pin = (
+            self.query_one("#input-pin", Input).value if self._encrypted() else ""
+        )
         self.app.push_screen("confirm")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter pressed in an input field."""
-        if event.input.id == "input-password-confirm":
+        last = "input-pin-confirm" if self._encrypted() else "input-password-confirm"
+        if event.input.id == last:
             self._try_continue()
         else:
             # Move focus to the next input field
@@ -96,6 +133,12 @@ class UserSetupScreen(ArrowNavScreen):
             return "Password must be at least 4 characters."
         if not username.isalnum() or username[0].isdigit():
             return "Username must be alphanumeric, starting with a letter."
+        if self._encrypted():
+            pin = self.query_one("#input-pin", Input).value
+            if len(pin) < MIN_PIN_LENGTH:
+                return f"The PIN needs at least {MIN_PIN_LENGTH} characters."
+            if pin != self.query_one("#input-pin-confirm", Input).value:
+                return "PINs do not match."
         return None
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

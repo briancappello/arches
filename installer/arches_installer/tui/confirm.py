@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Center, Vertical
 from textual.widgets import Button, Label, Static
 
+from arches_installer.core.existing import resolve_and_plan
 from arches_installer.tui import ArrowNavScreen
 
 
@@ -40,6 +42,37 @@ class ConfirmScreen(ArrowNavScreen):
                     classes="btn-primary",
                 )
                 yield Button("Back", variant="default", id="btn-back")
+
+    _plan_error: str = ""
+
+    def _existing_summary(self, layout) -> str:
+        """Resolve the existing layout here and now, and run its guard."""
+        hw = self.app.hardware_config
+        try:
+            resolved, plan = resolve_and_plan(
+                layout,
+                machine_disks=hw.disk_role_overrides() if hw else None,
+            )
+        except Exception as e:  # the guard's message is the useful part
+            self._plan_error = str(e)
+            self.app.resolved_disk_roles = None
+            return "  Targets:     (guard failed, see below)\n"
+        self._plan_error = ""
+        self.app.resolved_disk_roles = resolved
+        text = f"  Targets:     {', '.join(plan.targets)}  (erased)\n"
+        for vol in plan.volumes:
+            spec = vol.spec
+            stack = []
+            if spec.raid_level:
+                stack.append(f"mdadm RAID{spec.raid_level}")
+            if spec.encryption:
+                stack.append("LUKS2 (TPM2 + PIN, PCR 7)")
+            stack.append(spec.filesystem)
+            text += f"    {spec.partlabel}: {' -> '.join(stack)} -> {spec.mount_point}\n"
+            for sv in spec.subvolumes:
+                text += f"      subvol: {sv.name} -> {sv.mount_point or '(none)'}\n"
+        text += f"  ESP:         {plan.esp}  (reused, not formatted)\n"
+        return text
 
     def on_mount(self) -> None:
         """Build and display the install summary."""
@@ -81,6 +114,9 @@ class ConfirmScreen(ArrowNavScreen):
                 text += f"  Boot:        {parts.boot}\n"
             if parts.home:
                 text += f"  Home:        {parts.home}\n"
+        elif layout and layout.is_existing:
+            text += f"  Disk layout: {layout.name}\n"
+            text += self._existing_summary(layout)
         elif layout:
             text += f"  Disk layout: {layout.name}\n"
             for i, part in enumerate(layout.partitions):
@@ -121,7 +157,22 @@ class ConfirmScreen(ArrowNavScreen):
 
         # Set appropriate warning based on partition mode
         warning = self.query_one("#disk-warning", Static)
-        if mode == "manual":
+        if self._plan_error:
+            warning.update(f"[bold red]{escape(self._plan_error)}[/bold red]")
+            self.query_one("#btn-install", Button).disabled = True
+        elif layout and mode != "manual" and layout.is_existing:
+            warning.update(
+                "[bold red]WARNING: This will ERASE only the target partitions "
+                "listed above.[/bold red] The ESP is reused, not formatted; "
+                "its limine.conf is backed up and merged."
+                + (
+                    "\nThe disk recovery key is shown ONCE during the install."
+                    " Have somewhere offline to write it down."
+                    if layout.is_encrypted
+                    else ""
+                )
+            )
+        elif mode == "manual":
             warning.update(
                 "[bold yellow]WARNING: The system will be installed onto "
                 "your mounted partitions![/bold yellow]"

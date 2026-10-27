@@ -286,6 +286,25 @@ def plan_existing_layout(
     return ExistingPlan(esp=esp, esp_spec=esp_spec, volumes=volumes)
 
 
+def resolve_and_plan(
+    layout: DiskLayout,
+    machine_disks: list | None = None,
+    auto_install_disks: list | None = None,
+    probe: Probe | None = None,
+) -> tuple[ResolvedDiskRoles, ExistingPlan]:
+    """Resolve the layout's disk roles on this machine and check the guard."""
+    from arches_installer.core.disk import detect_block_devices
+    from arches_installer.core.disk_layout import resolve_disk_roles
+
+    resolved = resolve_disk_roles(
+        layout,
+        detect_block_devices(),
+        machine_disks=machine_disks,
+        auto_install_disks=auto_install_disks,
+    )
+    return resolved, plan_existing_layout(layout, resolved, probe=probe)
+
+
 # ---------------------------------------------------------------------------
 # Applying the plan
 # ---------------------------------------------------------------------------

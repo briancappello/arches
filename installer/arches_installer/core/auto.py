@@ -83,6 +83,9 @@ class AutoInstallConfig:
     # SSH public keys for the user's authorized_keys. Only these are
     # installed; nothing is taken from the build host.
     ssh_authorized_keys: list[str] = field(default_factory=list)
+    # TPM PIN for an encrypted layout. A PIN in a file on the install
+    # medium is for test VMs; on real hardware use the TUI.
+    tpm_pin: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AutoInstallConfig:
@@ -180,6 +183,12 @@ class AutoInstallConfig:
         ):
             raise ValueError("[ssh].authorized_keys must be a list of strings")
 
+        tpm_pin = str((data.get("encryption", {}) or {}).get("tpm_pin", ""))
+        if disk_layout.is_encrypted:
+            from arches_installer.core.encryption import validate_pin
+
+            validate_pin(tpm_pin)
+
         return cls(
             template=template,
             disk_layout=disk_layout,
@@ -194,6 +203,7 @@ class AutoInstallConfig:
             ansible_vars=ansible_vars,
             disks=disks,
             ssh_authorized_keys=ssh_keys,
+            tpm_pin=tpm_pin,
         )
 
     @classmethod

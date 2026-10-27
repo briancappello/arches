@@ -7,13 +7,66 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import HorizontalGroup, Vertical
-from textual.widgets import Button, Label, RichLog
+from textual.containers import Center, HorizontalGroup, Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Button, Label, RichLog, Static
 
+from arches_installer.core.encryption import EncryptionSecrets
 from arches_installer.core.pipeline import InstallParams, run_install_pipeline
 from arches_installer.tui import ArrowNavScreen
 
 INSTALL_LOG = Path("/var/log/arches-install.log")
+
+# Consoles that receive the recovery key in an unattended install.
+_ACTIVE_CONSOLES = Path("/sys/class/tty/console/active")
+
+
+class RecoveryKeyScreen(ModalScreen[None]):
+    """Show the disk recovery key once. It is never logged or saved."""
+
+    CSS = """
+    RecoveryKeyScreen { align: center middle; }
+    RecoveryKeyScreen #key-panel {
+        width: 90; height: auto; padding: 1 2;
+        border: thick $error; background: $surface;
+    }
+    RecoveryKeyScreen #recovery-key { text-style: bold; margin: 1 0; }
+    """
+
+    def __init__(self, key: str) -> None:
+        super().__init__()
+        self._key = key
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Vertical(id="key-panel"):
+                yield Label("Disk recovery key", classes="title")
+                yield Static(
+                    "Write this key down and store it offline. It unlocks the "
+                    "disk when the TPM cannot (for example after a Secure Boot "
+                    "change). It is shown only now and is not saved anywhere."
+                )
+                yield Static(self._key, id="recovery-key")
+                yield Button("I have stored the key", variant="error", id="btn-key-stored")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-key-stored":
+            self._key = ""
+            self.dismiss(None)
+
+
+def write_to_consoles(text: str, active: Path = _ACTIVE_CONSOLES) -> None:
+    """Write *text* straight to the system consoles (not to any log)."""
+    try:
+        names = active.read_text().split()
+    except OSError:
+        names = []
+    for name in names:
+        try:
+            with open(f"/dev/{name}", "w") as tty:
+                tty.write(text)
+        except OSError:
+            pass
 
 
 class InstallProgressScreen(ArrowNavScreen):
@@ -133,6 +186,7 @@ class InstallProgressScreen(ArrowNavScreen):
                 hardware=self.app.hardware_config,
                 ansible_vars=self.app.ansible_vars,
                 ssh_authorized_keys=list(self.app.ssh_authorized_keys),
+                encryption=self._encryption_secrets(),
             )
 
             parts = run_install_pipeline(params, log=self.log_msg)
@@ -155,6 +209,32 @@ class InstallProgressScreen(ArrowNavScreen):
                 self.app.call_from_thread(self._on_install_failed_auto)
             else:
                 self.app.call_from_thread(self._enable_reboot)
+
+    def _encryption_secrets(self) -> EncryptionSecrets | None:
+        layout = self.app.selected_layout
+        if layout is None or not layout.is_encrypted:
+            return None
+        return EncryptionSecrets(
+            pin=self.app.tpm_pin,
+            on_recovery_key=self._show_recovery_key,
+        )
+
+    def _show_recovery_key(self, key: str) -> None:
+        """Called from the install thread. Never passes the key to a log."""
+        if getattr(self.app, "auto_install", False):
+            # Unattended: print it on the consoles and carry on.
+            write_to_consoles(
+                "\n\n==== ARCHES DISK RECOVERY KEY (shown once, not saved) ====\n"
+                f"{key}\n"
+                "==========================================================\n\n"
+            )
+            return
+        # Interactive: block the install until the operator confirms.
+        stored = threading.Event()
+        self.app.call_from_thread(
+            self.app.push_screen, RecoveryKeyScreen(key), lambda _: stored.set()
+        )
+        stored.wait()
 
     def _on_install_failed_auto(self) -> None:
         """Handle install failure in auto-install mode.

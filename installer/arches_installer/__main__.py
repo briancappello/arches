@@ -361,6 +361,7 @@ def _run_auto(
     app.auto_install_failed_action = config.failed_action
     app.ansible_vars = config.ansible_vars or None
     app.ssh_authorized_keys = list(config.ssh_authorized_keys)
+    app.tpm_pin = config.tpm_pin
 
     # When running under the test harness (virtio log port exists),
     # force shutdown on completion so the test script can detect success.

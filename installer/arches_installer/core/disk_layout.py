@@ -158,6 +158,10 @@ class DiskLayout:
         return self.kind == LAYOUT_KIND_EXISTING
 
     @property
+    def is_encrypted(self) -> bool:
+        return any(p.encryption for p in self.partitions)
+
+    @property
     def role_names(self) -> set[str]:
         """All role names declared in this layout."""
         return {d.name for d in self.disks}
