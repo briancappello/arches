@@ -303,6 +303,9 @@ class PartitionMap:
     # pipeline for fstab sanity and by hardware-rescan for stability
     # validation.
     extra_mounts: list[tuple[str, str, str]] = field(default_factory=list)
+    # True when the ESP belongs to another system too (existing layouts):
+    # it was mounted, not formatted, and its limine.conf is merged.
+    esp_reused: bool = False
 
 
 def detect_mounts() -> PartitionMap | None:

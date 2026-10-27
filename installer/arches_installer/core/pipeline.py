@@ -25,6 +25,7 @@ from arches_installer.core.disk_layout import (
     write_disk_roles_state,
     _part_name,
 )
+from arches_installer.core.existing import apply_existing_layout, plan_existing_layout
 from arches_installer.core.firstboot import inject_firstboot_service
 from arches_installer.core.hardware import HardwareConfig
 from arches_installer.core.install import append_swap_fstab_entries, install_system
@@ -99,7 +100,18 @@ def run_install_pipeline(
             log(f"  Home: {parts.home}")
         log("[green]Manual mounts verified.[/green]")
     elif params.disk_layout is not None:
-        if params.resolved_disk_roles is not None:
+        if params.disk_layout.is_existing:
+            if params.resolved_disk_roles is None:
+                raise RuntimeError(
+                    f"Layout {params.disk_layout.name!r} installs into existing "
+                    "partitions and needs resolved disk roles."
+                )
+            # The guard runs here, right before the first write, so a
+            # disk that changed after the confirm screen is still caught.
+            plan = plan_existing_layout(params.disk_layout, params.resolved_disk_roles)
+            parts = apply_existing_layout(params.disk_layout, plan, log=log)
+            log("[green]Existing partitions prepared successfully.[/green]")
+        elif params.resolved_disk_roles is not None:
             # Multi-disk role-based path: a separate resolver step
             # already mapped each layout role to physical disks.
             log(

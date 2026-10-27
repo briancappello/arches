@@ -1,0 +1,56 @@
+# p1 spare slot — install a second, self-contained system into the two
+# partitions labelled "spare" (one on each NVMe disk), next to the current
+# system. Design: docs/superpowers/specs/2026-10-27-secure-spare-slot-install-design.md
+#
+# kind = "existing": the installer writes no partition table. It refuses
+# unless every target partition has the PARTLABEL below, carries no
+# signature (blkid -p), and is unused, and unless exactly one vfat ESP on
+# these disks already holds limine.conf. It never formats, resizes or
+# deletes any other partition. The ESP is mounted, not formatted.
+#
+# The two spare partitions become one mdadm RAID0 array. RAID0 has no
+# redundancy: losing either disk loses this system.
+
+[meta]
+name = "p1 Spare Slot"
+description = "Existing 'spare' partitions on both NVMe disks: mdadm RAID0, btrfs; the current ESP is reused."
+kind = "existing"
+bootloaders = ["limine"]
+
+[[disks]]
+name = "spare-pair"
+device = "NVMe SSD"
+
+# The current ESP. Its limine.conf gains our entries; nothing is removed.
+[[partitions]]
+disk = "spare-pair"
+partlabel = "ESP"
+reuse = true
+filesystem = "vfat"
+mount_point = "/boot"
+
+[[partitions]]
+disks = "spare-pair"
+partlabel = "spare"
+raid_level = "0"
+raid_backend = "mdadm"
+filesystem = "btrfs"
+mount_point = "/"
+label = "arches"
+mount_options = "compress=zstd:1,noatime"
+
+[[partitions.subvolumes]]
+name = "@"
+mount_point = "/"
+
+[[partitions.subvolumes]]
+name = "@home"
+mount_point = "/home"
+
+[[partitions.subvolumes]]
+name = "@var"
+mount_point = "/var"
+
+[[partitions.subvolumes]]
+name = "@snapshots"
+mount_point = "/.snapshots"
