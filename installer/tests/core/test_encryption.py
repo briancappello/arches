@@ -175,23 +175,16 @@ class TestHooks:
     ARCH_DEFAULT = "base systemd autodetect microcode modconf kms keyboard sd-vconsole block filesystems fsck"
     LEGACY = "base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck"
 
+    EXPECTED = (
+        "base systemd keyboard autodetect microcode modconf kms sd-vconsole "
+        "block mdadm_udev sd-encrypt filesystems fsck"
+    ).split()
+
     def test_arch_default(self) -> None:
-        assert (
-            edit_hooks(self.ARCH_DEFAULT.split(), mdadm=True)
-            == (
-                "base systemd autodetect microcode modconf kms keyboard sd-vconsole "
-                "block mdadm_udev sd-encrypt filesystems fsck"
-            ).split()
-        )
+        assert edit_hooks(self.ARCH_DEFAULT.split(), mdadm=True) == self.EXPECTED
 
     def test_legacy_busybox(self) -> None:
-        assert (
-            edit_hooks(self.LEGACY.split(), mdadm=True)
-            == (
-                "base systemd autodetect microcode modconf kms keyboard sd-vconsole "
-                "block mdadm_udev sd-encrypt filesystems fsck"
-            ).split()
-        )
+        assert edit_hooks(self.LEGACY.split(), mdadm=True) == self.EXPECTED
 
     def test_without_mdadm(self) -> None:
         hooks = edit_hooks(self.ARCH_DEFAULT.split(), mdadm=False)
@@ -295,3 +288,12 @@ class TestTargetStorage:
         with patch(f"{mod}.configure_mkinitcpio_hooks") as hooks:
             configure_target_storage(PartitionMap(esp="/dev/sda1", root="/dev/sda2"))
         hooks.assert_not_called()
+
+
+def test_installer_pre_pacstrap_hooks_get_autodetect() -> None:
+    # _pre_pacstrap_setup writes HOOKS without autodetect; on the shared ESP
+    # that made 229 MB UKIs (QEMU, 2026-10-27), 41 MB with it.
+    pre = "base udev microcode modconf kms keyboard keymap block filesystems fsck"
+    hooks = edit_hooks(pre.split(), mdadm=True)
+    assert hooks.index("keyboard") < hooks.index("autodetect")
+    assert hooks == TestHooks.EXPECTED

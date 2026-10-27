@@ -209,7 +209,8 @@ def write_crypttab_initramfs(
 def edit_hooks(hooks: list[str], *, mdadm: bool) -> list[str]:
     """Return *hooks* converted to a systemd initramfs that unlocks LUKS.
 
-    Busybox-only hooks are replaced by their systemd counterparts, then
+    Busybox-only hooks are replaced by their systemd counterparts,
+    ``keyboard`` and ``autodetect`` follow ``systemd`` (in that order), and
     ``mdadm_udev`` (if *mdadm*) and ``sd-encrypt`` go before ``filesystems``.
     """
     out: list[str] = []
@@ -235,6 +236,14 @@ def edit_hooks(hooks: list[str], *, mdadm: bool) -> list[str]:
 
     if "systemd" not in out:
         out.insert(out.index("base") + 1 if "base" in out else 0, "systemd")
+    # autodetect keeps the UKIs small enough for an ESP shared with another
+    # system (a QEMU UKI: 229 MB without, 41 MB with). keyboard goes before
+    # it so every keyboard driver stays in, for the PIN prompt.
+    for h in ("keyboard", "autodetect"):
+        if h in out:
+            out.remove(h)
+    at = out.index("systemd") + 1
+    out[at:at] = ["keyboard", "autodetect"]
     if "sd-vconsole" not in out:
         if "keyboard" in out:
             out.insert(out.index("keyboard") + 1, "sd-vconsole")
