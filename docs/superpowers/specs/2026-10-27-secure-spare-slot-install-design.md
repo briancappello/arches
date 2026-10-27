@@ -99,7 +99,7 @@ QEMU proof checksums every other partition before and after the install.
 
 Lockdown would refuse NVIDIA and `evdi` unless the kernel trusts their
 signing key, and without shim our db key is not a module key. So this design
-does not turn lockdown on. The implementation records whether CachyOS's
+does not turn lockdown on (a follow-up, O2). The implementation records whether CachyOS's
 kernel can trust a module key we control; enabling lockdown is a follow-up.
 
 ### D6. Defaults that change for every install
@@ -110,10 +110,26 @@ kernel can trust a module key we control; enabling lockdown is a follow-up.
 | `deploy_ssh_key` copies the build host's public key into `authorized_keys` | Only a key the install config names explicitly, and the confirm screen shows it |
 | sshd follows the Arch defaults: password login on | Workstation and laptop templates leave sshd off. Where it is on: keys only (`PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `PermitRootLogin no`), and firewalld opens it only when declared |
 | KDE never locks the screen | `kscreenlockerrc`: `Autolock=true`, `Timeout=5`, `LockOnResume=true` |
-| `arches-local` is `SigLevel = Optional TrustAll` and comes before `core` | Packages are signed with an arches repository key and the repo is `SigLevel = Required`. Where that key lives is open (O3). |
+| `arches-local` is `SigLevel = Optional TrustAll` and comes before `core` | Packages are signed with the YubiKey repository key and the repo is `SigLevel = Required` (D7) |
 | The builder needs root podman | Rootless (`fix/rootless-builder`) |
 
 Each row gets a test that fails if the old default comes back.
+
+### D7. Signing `arches-local` with the YubiKey
+
+- The repository key is an OpenPGP signing key generated **on** the YubiKey
+  (OpenPGP applet, touch required). The private key never exists outside
+  the card. Only its public key and fingerprint are in this repository, and
+  the installer adds them to the target's pacman keyring.
+- Builds stay unprivileged and unsigned: agents and the rootless builder
+  produce packages but cannot sign them. Signing is a separate host step that
+  the operator runs with the YubiKey (`gpg` with the card, one touch per
+  signature) before the packages enter the repository. That step is the
+  human gate between agent-built code and p1's root.
+- `pacman.conf` gives `[arches-local]` `SigLevel = Required` and trusts only
+  that fingerprint. An unsigned or foreign package fails to install.
+- Losing the YubiKey means a new key and re-signing; nothing already
+  installed stops working.
 
 ## Validation
 
@@ -141,6 +157,5 @@ Each row gets a test that fails if the old default comes back.
 ## Open decisions
 
 - **O1.** Decided: mdadm RAID0, one LUKS2 device, 200G (D2).
-- **O2.** Lockdown (D5): follow-up or blocker?
-- **O3.** Where the `arches-local` signing key lives: not as a plain file on
-  p1. A YubiKey OpenPGP slot is the candidate.
+- **O2.** Decided: lockdown is a follow-up (D5), not part of this work.
+- **O3.** Decided: the `arches-local` signing key lives on the YubiKey (D7).
