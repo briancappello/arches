@@ -517,11 +517,14 @@ class TestPipelineEncrypted:
             resolved_disk_roles=resolved,
             encryption=secrets,
         )
+        from arches_installer.core.disk import EncryptedVolume
+
         parts = PartitionMap(
             esp=f"{DISK_B}p1",
             root="/dev/mapper/arches",
             root_filesystem="btrfs",
             esp_reused=True,
+            encrypted_volumes=[EncryptedVolume("arches", "/dev/md/arches", LUKS_UUID)],
         )
         order = MagicMock()
         mod = "arches_installer.core.pipeline"
@@ -533,6 +536,7 @@ class TestPipelineEncrypted:
             patch(f"{mod}.unmount_shared_esp", order.unmount_shared_esp),
             patch(f"{mod}.install_system", order.install_system),
             patch(f"{mod}.configure_target_storage", order.configure_target_storage),
+            patch(f"{mod}.enroll_tpm2", order.enroll_tpm2),
             patch(f"{mod}.prepare_secure_boot", order.prepare_secure_boot),
             patch(f"{mod}.install_bootloader", order.install_bootloader),
             patch(f"{mod}.setup_snapshots"),
@@ -547,6 +551,7 @@ class TestPipelineEncrypted:
             "unmount_shared_esp",
             "install_system",
             "configure_target_storage",
+            "enroll_tpm2",
             "prepare_secure_boot",
             "install_bootloader",
         ]

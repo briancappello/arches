@@ -29,22 +29,59 @@ from tests.core.test_existing import P1_LAYOUT
 from arches_installer.core.disk_layout import load_disk_layout
 
 
+# Observed in QEMU (2026-10-27): PCR 7 in the live ISO, the os-separator
+# digest the target's systemd 262 ships, and PCR 7 in the target's initrd.
+LIVE_PCR7 = "65CAF8DD1E0EA7A6347B635D2B379C93B9A1351EDC2AFC3ECDA700E534EB3068"
+SEPARATOR = "ff5b9d73dad709633ae76adf444012b57e913a12ed7403c3931145862f35f841"
+UKI_PCR7 = "f35abd9f314f558534a965429ce13ff8025591a719823c8ee49a23f90a221f9d"
+OS_SEPARATOR_PCRLOCK_JSON = (
+    '{"records":[{"pcr":0,"digests":[{"hashAlg":"sha256","digest":"'
+    + SEPARATOR
+    + '"}]},{"pcr":7,"digests":[{"hashAlg":"sha1","digest":"0d3751a5a6707fb8918dfbe6b0d9853ca6c313c4"},'
+    '{"hashAlg":"sha256","digest":"' + SEPARATOR + '"}]}]}'
+)
+
+
+class TestPcr7Prediction:
+    def test_matches_the_qemu_initrd(self) -> None:
+        from arches_installer.core.encryption import expected_pcr7
+
+        assert expected_pcr7(LIVE_PCR7, SEPARATOR) == UKI_PCR7
+
+    def test_no_separator_keeps_the_current_value(self) -> None:
+        from arches_installer.core.encryption import expected_pcr7
+
+        assert expected_pcr7(LIVE_PCR7, None) == LIVE_PCR7.lower()
+
+    def test_reads_the_targets_pcrlock_file(self, tmp_path) -> None:
+        from arches_installer.core.encryption import os_separator_digest
+
+        assert os_separator_digest(tmp_path) is None
+        f = tmp_path / "usr/lib/pcrlock.d/750-os-separator.pcrlock"
+        f.parent.mkdir(parents=True)
+        f.write_text(OS_SEPARATOR_PCRLOCK_JSON)
+        assert os_separator_digest(tmp_path) == SEPARATOR
+
+    def test_failed_install_discards_the_formatting_key(self, tools) -> None:
+        from arches_installer.core.encryption import discard_formatting_keys
+
+        vol = create_luks_volume("/dev/md/arches", "arches", tools.secrets())
+        discard_formatting_keys([vol])
+        assert list(tools.keyfile_dir.iterdir()) == []
+
+
 class TestCreateLuksVolume:
-    def test_enrolls_recovery_key_and_tpm2_with_pin_on_pcr7(self, tools) -> None:
+    def test_formats_luks2_argon2id_and_keeps_the_formatting_key(self, tools) -> None:
         vol = create_luks_volume("/dev/md/arches", "arches", tools.secrets())
 
         assert vol == EncryptedVolume("arches", "/dev/md/arches", LUKS_UUID)
         fmt = next(c for c in tools.calls if c[:2] == ["cryptsetup", "luksFormat"])
         assert fmt[fmt.index("--type") + 1] == "luks2"
         assert fmt[fmt.index("--pbkdf") + 1] == "argon2id"
-
-        tpm_cmd, tpm_env = next(
-            (c, e) for c, e in tools.quiet_calls if "--tpm2-device=auto" in c
-        )
-        assert "--tpm2-pcrs=7" in tpm_cmd
-        assert "--tpm2-with-pin=yes" in tpm_cmd
-        assert tpm_env["NEWPIN"] == PIN
-        assert PIN not in " ".join(tpm_cmd)
+        # No TPM2 slot yet: it waits for the installed target.
+        assert not any("--tpm2-device=auto" in c for c, _ in tools.quiet_calls)
+        assert Path(vol.keyfile).parent == tools.keyfile_dir
+        assert Path(vol.keyfile).exists()
 
     def test_recovery_key_is_shown_once(self, tools) -> None:
         create_luks_volume("/dev/md/arches", "arches", tools.secrets())
@@ -58,11 +95,30 @@ class TestCreateLuksVolume:
         assert RECOVERY_KEY not in logged
         assert PIN not in logged
 
-    def test_formatting_key_slot_is_wiped_and_file_removed(self, tools) -> None:
-        create_luks_volume("/dev/md/arches", "arches", tools.secrets())
+    def test_tpm2_with_pin_for_the_targets_pcr7_then_key_wiped(
+        self, tools, tmp_path
+    ) -> None:
+        from arches_installer.core.encryption import enroll_tpm2
+
+        vol = create_luks_volume("/dev/md/arches", "arches", tools.secrets())
+        root = tmp_path / "target"
+        pcrlock = root / "usr/lib/pcrlock.d/750-os-separator.pcrlock"
+        pcrlock.parent.mkdir(parents=True)
+        pcrlock.write_text(OS_SEPARATOR_PCRLOCK_JSON)
+        sysfs = tmp_path / "pcr7"
+        sysfs.write_text(LIVE_PCR7 + "\n")
+        enroll_tpm2(vol, tools.secrets(), root=root, pcr7_sysfs=sysfs)
+
+        tpm_cmd, tpm_env = next(
+            (c, e) for c, e in tools.quiet_calls if "--tpm2-device=auto" in c
+        )
+        assert f"--tpm2-pcrs=7:sha256={UKI_PCR7}" in tpm_cmd
+        assert "--tpm2-with-pin=yes" in tpm_cmd
+        assert tpm_env["NEWPIN"] == PIN
+        assert PIN not in " ".join(tpm_cmd)
+
         wipe = [c for c in tools.calls if "--wipe-slot=0" in c]
         assert len(wipe) == 1
-        # The wipe comes after both enrollments.
         idx = tools.calls.index(wipe[0])
         enrolled = [
             i
@@ -71,6 +127,7 @@ class TestCreateLuksVolume:
         ]
         assert max(enrolled) < idx
         assert list(tools.keyfile_dir.iterdir()) == []
+        assert vol.keyfile == ""
 
     def test_short_pin_refused_before_any_write(self, tools) -> None:
         from arches_installer.core.encryption import EncryptionSecrets

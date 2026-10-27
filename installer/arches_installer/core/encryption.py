@@ -8,7 +8,9 @@ key slots when the install ends:
   never logged or written to disk.
 
 A random key in ``/run`` (tmpfs on the live ISO) formats the device and
-enrolls both slots, then its slot is wiped and the file is removed.
+enrolls both slots, then its slot is wiped and the file is removed. The
+TPM2 slot is enrolled after the target is installed, for the PCR 7 value
+the target's own initrd will see (see :func:`expected_pcr7`).
 
 The target unlocks in the initramfs (``systemd`` + ``sd-encrypt`` hooks)
 from ``/etc/crypttab.initramfs``.
@@ -16,6 +18,8 @@ from ``/etc/crypttab.initramfs``.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import secrets
@@ -93,15 +97,28 @@ def _quiet(
     )
 
 
+def _shred(keyfile: str) -> None:
+    try:
+        size = os.path.getsize(keyfile)
+        with open(keyfile, "r+b") as f:
+            f.write(b"\0" * size)
+        os.unlink(keyfile)
+    except OSError:
+        pass
+
+
 def create_luks_volume(
     device: str,
     name: str,
     secrets_: EncryptionSecrets,
     log: LogCallback | None = None,
 ) -> EncryptedVolume:
-    """Format *device* as LUKS2, enroll TPM2+PIN and a recovery key, open it.
+    """Format *device* as LUKS2, enroll the recovery key, and open it.
 
-    Returns the opened volume (``/dev/mapper/<name>``).
+    The TPM2 + PIN slot comes later (:func:`enroll_tpm2`), once the target
+    is installed: the PCR 7 it binds to depends on the target's systemd.
+    Until then the random formatting key stays in /run (tmpfs); the
+    returned volume carries its path.
     """
     validate_pin(secrets_.pin)
     _log(f"  Encrypting {device} (LUKS2, argon2id) as {name}...", log)
@@ -140,16 +157,82 @@ def create_luks_volume(
         _log("  Recovery key enrolled. It is shown once and is not logged.", log)
         secrets_.on_recovery_key(key)
         del key
+    except BaseException:
+        _shred(keyfile)
+        raise
 
+    uuid = subprocess.run(
+        ["cryptsetup", "luksUUID", device],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    return EncryptedVolume(
+        name=name, luks_device=device, luks_uuid=uuid, keyfile=keyfile
+    )
+
+
+# systemd 262 (systemd-pcrosseparator.service) extends PCR 7 with an
+# "os-separator" event in the initrd of every UKI boot, before cryptsetup.
+# The live ISO is not a UKI boot, so its PCR 7 lacks that event; the target
+# ships the event's digest in this file.
+OS_SEPARATOR_PCRLOCK = Path("usr/lib/pcrlock.d/750-os-separator.pcrlock")
+PCR7_SYSFS = Path("/sys/class/tpm/tpm0/pcr-sha256/7")
+
+
+def os_separator_digest(root: Path = MOUNT_ROOT) -> str | None:
+    """The sha256 digest the target's systemd extends PCR 7 with, if any."""
+    path = root / OS_SEPARATOR_PCRLOCK
+    if not path.is_file():
+        return None
+    data = json.loads(path.read_text())
+    for record in data.get("records", []):
+        if record.get("pcr") != 7:
+            continue
+        for d in record.get("digests", []):
+            if d.get("hashAlg") == "sha256":
+                return d["digest"]
+    return None
+
+
+def expected_pcr7(current_hex: str, separator_hex: str | None) -> str:
+    """PCR 7 as the target's initrd will see it at cryptsetup time."""
+    if separator_hex is None:
+        return current_hex.lower()
+    return hashlib.sha256(
+        bytes.fromhex(current_hex) + bytes.fromhex(separator_hex)
+    ).hexdigest()
+
+
+def enroll_tpm2(
+    vol: EncryptedVolume,
+    secrets_: EncryptionSecrets,
+    root: Path = MOUNT_ROOT,
+    log: LogCallback | None = None,
+    pcr7_sysfs: Path = PCR7_SYSFS,
+) -> None:
+    """Enroll TPM2 + PIN bound to the target's PCR 7, then drop the formatting key."""
+    if not vol.keyfile:
+        raise EncryptionError(f"no formatting key for {vol.luks_device}")
+    unlock = f"--unlock-key-file={vol.keyfile}"
+    try:
+        current = pcr7_sysfs.read_text().strip()
+        separator = os_separator_digest(root)
+        pcr7 = expected_pcr7(current, separator)
+        _log(
+            f"  PCR 7 now {current.lower()[:16]}...; the target will see "
+            f"{pcr7[:16]}..." + (" (after its os-separator)" if separator else ""),
+            log,
+        )
         env = dict(os.environ, NEWPIN=secrets_.pin)
         result = _quiet(
             [
                 "systemd-cryptenroll",
                 unlock,
                 "--tpm2-device=auto",
-                f"--tpm2-pcrs={TPM2_PCRS}",
+                f"--tpm2-pcrs={TPM2_PCRS}:sha256={pcr7}",
                 "--tpm2-with-pin=yes",
-                device,
+                vol.luks_device,
             ],
             env=env,
         )
@@ -158,26 +241,22 @@ def create_luks_volume(
                 f"TPM2 enrollment failed ({result.returncode}): {result.stderr.strip()}"
             )
         _log(f"  TPM2 + PIN enrolled (PCR {TPM2_PCRS}).", log)
-
         # The formatting key must not survive the install.
-        logged_run(["systemd-cryptenroll", unlock, "--wipe-slot=0", device], log=log)
+        logged_run(
+            ["systemd-cryptenroll", unlock, "--wipe-slot=0", vol.luks_device], log=log
+        )
     finally:
-        try:
-            size = os.path.getsize(keyfile)
-            with open(keyfile, "r+b") as f:
-                f.write(b"\0" * size)
-            os.unlink(keyfile)
-        except OSError:
-            pass
+        _shred(vol.keyfile)
+        vol.keyfile = ""
+    logged_run(["systemd-cryptenroll", vol.luks_device], log=log)
 
-    logged_run(["systemd-cryptenroll", device], log=log)
-    uuid = subprocess.run(
-        ["cryptsetup", "luksUUID", device],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    return EncryptedVolume(name=name, luks_device=device, luks_uuid=uuid)
+
+def discard_formatting_keys(volumes: list[EncryptedVolume]) -> None:
+    """On a failed install: remove formatting keys that are still in /run."""
+    for vol in volumes:
+        if vol.keyfile:
+            _shred(vol.keyfile)
+            vol.keyfile = ""
 
 
 # ---------------------------------------------------------------------------

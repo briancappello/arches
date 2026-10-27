@@ -27,7 +27,11 @@ from arches_installer.core.disk_layout import (
     write_disk_roles_state,
     _part_name,
 )
-from arches_installer.core.encryption import EncryptionSecrets
+from arches_installer.core.encryption import (
+    EncryptionSecrets,
+    discard_formatting_keys,
+    enroll_tpm2,
+)
 from arches_installer.core.existing import (
     apply_existing_layout,
     configure_target_storage,
@@ -91,6 +95,20 @@ class InstallParams:
 def run_install_pipeline(
     params: InstallParams,
     log: LogCallback,
+) -> PartitionMap:
+    """Run the install; on failure, remove any LUKS formatting key left in /run."""
+    created: list = []
+    try:
+        return _run_install_pipeline(params, log, created)
+    except BaseException:
+        discard_formatting_keys(created)
+        raise
+
+
+def _run_install_pipeline(
+    params: InstallParams,
+    log: LogCallback,
+    created: list,
 ) -> PartitionMap:
     """Run the full install pipeline.
 
@@ -196,6 +214,8 @@ def run_install_pipeline(
             "Either manually partition and mount, or select a disk layout."
         )
 
+    created.extend(parts.encrypted_volumes)
+
     # Phase 2: System install
     log("[bold cyan]== Phase 2: System Install ==[/bold cyan]")
     if params.disk_layout is not None and params.disk_layout.is_existing:
@@ -221,7 +241,9 @@ def run_install_pipeline(
         log=log,
         ssh_authorized_keys=params.ssh_authorized_keys,
         after_pacstrap=(
-            (lambda: remount_shared_esp(parts.esp, log=log)) if parts.esp_reused else None
+            (lambda: remount_shared_esp(parts.esp, log=log))
+            if parts.esp_reused
+            else None
         ),
     )
     # genfstab runs inside install_system before chroot config; swap
@@ -230,6 +252,9 @@ def run_install_pipeline(
     if parts.swap_partitions:
         append_swap_fstab_entries(parts.swap_partitions, log=log)
     configure_target_storage(parts, log=log)
+    for vol in parts.encrypted_volumes:
+        assert params.encryption is not None
+        enroll_tpm2(vol, params.encryption, log=log)
     log("[green]System installed successfully.[/green]")
 
     # Phase 3: Bootloader

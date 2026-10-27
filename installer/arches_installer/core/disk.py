@@ -286,6 +286,8 @@ class EncryptedVolume:
     name: str
     luks_device: str
     luks_uuid: str
+    # The install-time formatting key in /run, until enroll_tpm2 wipes it.
+    keyfile: str = field(default="", repr=False, compare=False)
 
     @property
     def mapper(self) -> str:
