@@ -114,11 +114,19 @@ class SystemProbe:
             raise ExistingLayoutError(
                 f"blkid -p {part} failed ({result.returncode}): {result.stderr.strip()}"
             )
+        # For a partition blkid -p also reports the GPT entry itself
+        # (PART_ENTRY_*); that describes the slot, not its content.
         types: list[str] = []
+        content = False
         for line in result.stdout.splitlines():
             key, _, value = line.partition("=")
+            if key == "DEVNAME" or key.startswith("PART_ENTRY_"):
+                continue
+            content = True
             if key in ("TYPE", "PTTYPE"):
                 types.append(value)
+        if not content:
+            return []
         # blkid found something it could not name: still a signature.
         return types or ["unknown"]
 

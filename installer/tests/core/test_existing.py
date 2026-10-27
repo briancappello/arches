@@ -347,10 +347,33 @@ class TestSystemProbe:
             )
             assert SystemProbe().signatures("/dev/x") == ["linux_raid_member"]
 
+    def test_empty_gpt_partition_has_no_signature(self) -> None:
+        # Real `blkid -p -o export` output for p1-style empty "spare"
+        # partition (QEMU proof, 2026-10-27): exit 0, only the GPT entry.
+        out = (
+            "DEVNAME=/dev/nvme0n1p3\nPART_ENTRY_SCHEME=gpt\nPART_ENTRY_NAME=spare\n"
+            "PART_ENTRY_UUID=feb986e9-ff92-40fb-8bd6-bc6d06ada1f7\n"
+            "PART_ENTRY_TYPE=0fc63daf-8483-4772-8e79-3d69d8477de4\n"
+            "PART_ENTRY_NUMBER=3\nPART_ENTRY_OFFSET=20973568\n"
+            "PART_ENTRY_SIZE=50331648\nPART_ENTRY_DISK=259:1\n"
+        )
+        with patch("subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, out, "")
+            assert SystemProbe().signatures("/dev/nvme0n1p3") == []
+
+    def test_filesystem_next_to_gpt_entry_is_a_signature(self) -> None:
+        out = (
+            "DEVNAME=/dev/nvme0n1p2\nLABEL=archroot\nUUID=bdb1\nTYPE=btrfs\n"
+            "USAGE=filesystem\nPART_ENTRY_SCHEME=gpt\nPART_ENTRY_NAME=archroot\n"
+        )
+        with patch("subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, out, "")
+            assert SystemProbe().signatures("/dev/nvme0n1p2") == ["btrfs"]
+
     def test_unnamed_signature_still_counts(self) -> None:
         with patch("subprocess.run") as run:
             run.return_value = subprocess.CompletedProcess(
-                [], 0, "PART_ENTRY_NAME=x\n", ""
+                [], 0, "PART_ENTRY_NAME=x\nUSAGE=other\n", ""
             )
             assert SystemProbe().signatures("/dev/x") == ["unknown"]
 
