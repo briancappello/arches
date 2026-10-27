@@ -1111,7 +1111,7 @@ class TestCreateUser:
         # sudoers file written
         sudoers = mnt / "etc" / "sudoers.d" / "wheel"
         assert sudoers.exists()
-        assert "NOPASSWD" in sudoers.read_text()
+        assert sudoers.read_text() == "%wheel ALL=(ALL:ALL) ALL\n"
 
     def test_idempotent_user_already_exists(self, mnt: Path):
         from arches_installer.core.install import create_user

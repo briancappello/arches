@@ -42,6 +42,9 @@ _target_iso_cache_mounted = False
 # Ansible playbooks shipped on the ISO
 ISO_ANSIBLE_DIR = Path("/opt/arches/ansible")
 
+# wheel may run anything with sudo, after typing the user's password.
+WHEEL_SUDOERS = "%wheel ALL=(ALL:ALL) ALL\n"
+
 # Build host SSH public key (optional, embedded at ISO build time)
 ISO_BUILD_HOST_PUBKEY = Path("/opt/arches/build-host.pub")
 
@@ -764,7 +767,10 @@ def create_user(
     password: str,
     log: LogCallback | None = None,
 ) -> None:
-    """Create a user with sudo privileges.
+    """Create a user who may use sudo with their password.
+
+    wheel never gets NOPASSWD: first boot runs as a root systemd service and
+    needs no sudo (design D6).
 
     Idempotent: if the user already exists (e.g., from a prior failed
     install on the same subvolume), update their groups and shell instead
@@ -805,7 +811,7 @@ def create_user(
     # Enable wheel group in sudoers
     sudoers = MOUNT_ROOT / "etc" / "sudoers.d" / "wheel"
     sudoers.parent.mkdir(parents=True, exist_ok=True)
-    sudoers.write_text("%wheel ALL=(ALL:ALL) NOPASSWD: ALL\n")
+    sudoers.write_text(WHEEL_SUDOERS)
     sudoers.chmod(0o440)
 
 
