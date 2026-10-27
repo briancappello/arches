@@ -133,3 +133,46 @@ def test_ssh_is_off_unless_a_template_turns_it_on() -> None:
     tmpl = InstallTemplate.from_dict({"meta": {"name": "x"}})
     assert not tmpl.ssh.enable
     assert not tmpl.ssh.open_firewall
+
+
+# D6 row 4: KDE locks the screen: Autolock=true, Timeout=5, LockOnResume=true.
+def test_kde_screen_locks_by_itself() -> None:
+    import re
+
+    import jinja2
+
+    defaults = (_REPO / "modules/kde/ansible/defaults/main.yml").read_text()
+    block = re.search(r"^kde_screenlocker:\n((?:  .*\n)+)", defaults, re.MULTILINE)
+    assert block
+    values = dict(
+        re.match(r"\s+(\w+):\s*([^\s#]+)", line).groups()
+        for line in block.group(1).splitlines()
+    )
+    locker = {
+        "autolock": values["autolock"] == "true",
+        "lock_on_resume": values["lock_on_resume"] == "true",
+        "timeout": int(values["timeout"]),
+    }
+
+    tasks = (_REPO / "modules/kde/ansible/tasks/main.yml").read_text()
+    task = re.search(r'- name: "Screen locker:.*?\n(?=\n|- name:)', tasks, re.DOTALL)
+    assert task
+    assert "when:" not in task.group(0)  # always written, never skipped
+    env = jinja2.Environment()
+    env.filters["bool"] = lambda v: (
+        v
+        if isinstance(v, bool)
+        else str(v).lower()
+        in (
+            "true",
+            "yes",
+            "1",
+        )
+    )  # Ansible's bool filter
+    written = {
+        key: env.from_string(value).render(kde_screenlocker=locker)
+        for key, value in re.findall(
+            r'\{ key: "(\w+)",\s*value: "(\{\{.*?\}\})" \}', task.group(0)
+        )
+    }
+    assert written == {"Autolock": "true", "LockOnResume": "true", "Timeout": "5"}
