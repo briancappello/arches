@@ -31,3 +31,6 @@ snap-pac
 # reach the TPM.
 mdadm
 tpm2-tss
+
+# ─── memdiskfind, for archiso.conf's memdisk hook ─────
+syslinux

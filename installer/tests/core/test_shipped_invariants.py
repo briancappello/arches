@@ -249,6 +249,18 @@ def test_postgres_initdb_uses_runuser() -> None:
     assert "runuser -u postgres -- initdb -D /var/lib/postgres/data" in text
 
 
+def test_memdisk_hook_has_memdiskfind() -> None:
+    """archiso.conf's memdisk hook needs memdiskfind, from syslinux."""
+    for platform_dir in sorted((_REPO_ROOT / "platforms").iterdir()):
+        conf = platform_dir / "archiso.conf"
+        if not conf.is_file() or "memdisk" not in conf.read_text():
+            continue
+        # platforms/<p>/packages is what the ISO build installs
+        # ([iso].extra_packages in platform.toml is read by nothing).
+        listed = (platform_dir / "packages").read_text().split()
+        assert "syslinux" in listed, platform_dir.name
+
+
 def test_live_iso_can_build_the_encrypted_spare_layout() -> None:
     listed = (_REPO_ROOT / "platforms/x86-64/packages").read_text().split()
     for pkg in ("mdadm", "tpm2-tss"):
