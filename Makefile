@@ -220,6 +220,8 @@ clean: ## Remove staged files from ISO airootfs
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches-repo
 	rm -rf $(ISO_PROFILE)/airootfs/opt/arches/pkg-cache
 	rm -f  $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub
+	rm -f  $(ISO_PROFILE)/airootfs/usr/share/pacman/keyrings/arches.gpg
+	rm -f  $(ISO_PROFILE)/airootfs/usr/share/pacman/keyrings/arches-trusted
 	rm -f  $(ISO_PROFILE)/packages.x86_64
 	rm -f  $(ISO_PROFILE)/packages.aarch64
 	rm -f  $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook
@@ -485,6 +487,9 @@ _stage-platform:
 	@cp $(PLATFORMS)/$(PLATFORM)/platform.toml $(ISO_PROFILE)/airootfs/opt/arches/platform/
 	@cp $(PLATFORMS)/$(PLATFORM)/pacman.conf $(ISO_PROFILE)/airootfs/opt/arches/platform/
 	@echo "  Copied platform.toml and pacman.conf for $(PLATFORM)"
+	@# arches-local is SigLevel = Required: stage its public key, refuse an
+	@# unsigned repository (design D7).
+	@$(SCRIPTS)/stage-repo-key.sh $(ISO_PROFILE)
 
 _stage-bootconfig:
 	@echo "══ Staging boot config ($(PLATFORM)) ══"

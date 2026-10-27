@@ -176,3 +176,51 @@ def test_kde_screen_locks_by_itself() -> None:
         )
     }
     assert written == {"Autolock": "true", "LockOnResume": "true", "Timeout": "5"}
+
+
+# D6 row 5: arches-local is SigLevel = Required (signed with the YubiKey key).
+def test_arches_local_requires_signatures() -> None:
+    from arches_installer.core.install import repo_siglevel
+
+    for platform in ("x86-64", "aarch64-generic"):
+        conf = (_REPO / "platforms" / platform / "pacman.conf").read_text()
+        level = repo_siglevel(conf, "arches-local")
+        assert level == "Required", platform
+        assert "TrustAll" not in level and "Optional" not in level
+
+
+def test_install_refuses_without_the_repo_key(tmp_path: Path) -> None:
+    import pytest
+
+    from arches_installer.core import install
+
+    conf = tmp_path / "pacman.conf"
+    conf.write_text((_REPO / "platforms/x86-64/pacman.conf").read_text())
+    fpr = "0123456789ABCDEF0123456789ABCDEF01234567"
+    with (
+        patch.object(install, "ISO_PACMAN_CONF", conf),
+        patch.object(install, "LOCAL_REPO_KEY", tmp_path / "arches-local.asc"),
+        patch.object(install, "LOCAL_REPO_FPR", tmp_path / "arches-local.fpr"),
+    ):
+        with pytest.raises(RuntimeError, match="no repository key"):
+            install.require_local_repo_key()
+        (tmp_path / "arches-local.asc").write_text(
+            "-----BEGIN PGP PUBLIC KEY BLOCK-----\n"
+        )
+        (tmp_path / "arches-local.fpr").write_text(fpr.lower() + "\n")
+        assert install.require_local_repo_key() == fpr
+
+        mnt = tmp_path / "mnt"
+        with (
+            patch.object(install, "MOUNT_ROOT", mnt),
+            patch.object(install, "chroot_run") as chroot,
+        ):
+            install.install_local_repo_key()
+        cmds = [c[0][0] for c in chroot.call_args_list]
+        assert cmds[:2] == [
+            ["pacman-key", "--add", "/usr/share/pacman/keyrings/arches.gpg"],
+            ["pacman-key", "--lsign-key", fpr],
+        ]
+        assert (
+            mnt / "usr/share/pacman/keyrings/arches-trusted"
+        ).read_text() == f"{fpr}:4:\n"

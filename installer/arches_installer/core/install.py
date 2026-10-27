@@ -630,6 +630,61 @@ def install_pacman_conf(log: LogCallback | None = None) -> None:
         shutil.copytree(iso_repo, target_repo)
 
 
+# arches-local's public key, staged into the ISO by scripts/stage-repo-key.sh
+# (design D7). The private key lives on the operator's YubiKey.
+LOCAL_REPO_NAME = "arches-local"
+LOCAL_REPO_KEY = ISO_PLATFORM_DIR / "arches-local.asc"
+LOCAL_REPO_FPR = ISO_PLATFORM_DIR / "arches-local.fpr"
+
+
+def repo_siglevel(conf_text: str, repo: str) -> str:
+    """Return the SigLevel line of the ``[repo]`` section, or ''."""
+    section = re.search(
+        rf"^\[{re.escape(repo)}\]\s*$(.*?)(?=^\[|\Z)", conf_text, re.M | re.S
+    )
+    if not section:
+        return ""
+    m = re.search(r"^\s*SigLevel\s*=\s*(.+?)\s*$", section.group(1), re.M)
+    return m.group(1) if m else ""
+
+
+def require_local_repo_key(conf: Path | None = None) -> str:
+    """Return the repository key's fingerprint; fail early if it is missing.
+
+    arches-local is ``SigLevel = Required``: without the key nothing from it
+    can install, so stop before any write with a clear message.
+    """
+    conf = conf or ISO_PACMAN_CONF
+    level = repo_siglevel(conf.read_text(), LOCAL_REPO_NAME) if conf.exists() else ""
+    if "Required" not in level.split():
+        return ""
+    if not (LOCAL_REPO_KEY.is_file() and LOCAL_REPO_FPR.is_file()):
+        raise RuntimeError(
+            "arches-local requires signed packages, but this ISO has no "
+            f"repository key ({LOCAL_REPO_FPR}). Build the ISO after creating "
+            "the key and signing the repository (keys/README.md)."
+        )
+    fpr = LOCAL_REPO_FPR.read_text().strip().upper()
+    if not re.fullmatch(r"[0-9A-F]{40}", fpr):
+        raise RuntimeError(f"{LOCAL_REPO_FPR} is not a 40-hex fingerprint.")
+    return fpr
+
+
+def install_local_repo_key(log: LogCallback | None = None) -> None:
+    """Trust the arches-local key, and only it, in the target's pacman keyring."""
+    fpr = require_local_repo_key()
+    if not fpr:
+        return
+    keyrings = MOUNT_ROOT / "usr" / "share" / "pacman" / "keyrings"
+    keyrings.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(LOCAL_REPO_KEY, keyrings / "arches.gpg")
+    (keyrings / "arches-trusted").write_text(f"{fpr}:4:\n")
+    chroot_run(["pacman-key", "--add", "/usr/share/pacman/keyrings/arches.gpg"], log=log)
+    chroot_run(["pacman-key", "--lsign-key", fpr], log=log)
+    chroot_run(["pacman-key", "--list-keys", fpr], log=log)
+    _log(f"Target trusts the arches-local key {fpr}.", log)
+
+
 def copy_mirrorlists(
     platform: PlatformConfig,
     log: LogCallback | None = None,
@@ -1312,11 +1367,13 @@ def install_system(
     ssh_authorized_keys: list[str] | None = None,
 ) -> None:
     """Full install pipeline after disk is prepared and mounted."""
+    require_local_repo_key()
     _pre_pacstrap_setup(log)
     pacstrap(platform, template, log, hardware=hardware)
     generate_fstab(log)
     configure_var_bind_mounts(log)
     install_pacman_conf(log)
+    install_local_repo_key(log)
     copy_mirrorlists(platform, log)
     sync_chroot_databases(log)
     install_override_packages(template, log)
