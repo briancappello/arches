@@ -69,7 +69,7 @@ iso: ## Build graphical live ISO (OFFLINE=0 skip cache; TEMPLATE=<name>, ARCHES_
 iso-fb: ## Build framebuffer-only ISO (TEMPLATE=<name>, ARCHES_GPU=<stack-list>)
 	ISO_MODE=fb OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/build-iso.sh
 
-usb: ## Build install media and write to USB drive (requires sudo + Podman)
+usb: ## Build install media and write to USB drive (prompts for sudo to write the drive)
 	ISO_MODE=graphical OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/build-usb.sh
 
 usb-fb: ## Build framebuffer-only USB install media

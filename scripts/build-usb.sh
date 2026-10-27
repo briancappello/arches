@@ -7,10 +7,14 @@
 #   aarch64-apple: Build ISO → convert to USB image (U-Boot/extlinux) → write
 #   aarch64-generic: Same as aarch64-apple (U-Boot/extlinux)
 #
+# Run as your user. The ISO is built with rootless Podman; only the steps
+# that touch block devices (loop mounts, writing the drive) run through an
+# interactive sudo.
+#
 # Usage:
-#   sudo ./scripts/build-usb.sh                       # auto-detect
-#   sudo PLATFORM=x86-64 ./scripts/build-usb.sh       # explicit platform
-#   sudo ./scripts/build-usb.sh --rebuild              # force container rebuild
+#   ./scripts/build-usb.sh                       # auto-detect
+#   PLATFORM=x86-64 ./scripts/build-usb.sh       # explicit platform
+#   ./scripts/build-usb.sh --rebuild              # force container rebuild
 #
 set -euo pipefail
 
@@ -35,10 +39,10 @@ export OFFLINE="${OFFLINE:-0}"
 source "$SCRIPT_DIR/detect-platform.sh"
 echo "Platform: $PLATFORM"
 
-# ── Require root ──────────────────────────────────────
-if [[ $EUID -ne 0 ]]; then
-    echo "ERROR: USB build requires root."
-    echo "       Run: sudo make usb"
+# ── Require a regular user ────────────────────────────
+if [[ $EUID -eq 0 ]]; then
+    echo "ERROR: Run the USB build as your user, not as root."
+    echo "       Run: make usb (it asks for sudo only to write the drive)"
     exit 1
 fi
 
@@ -64,14 +68,14 @@ case "$PLATFORM" in
         # archiso ISOs are hybrid (ISO 9660 + GPT) — dd directly to USB.
         echo ""
         echo "══ x86-64: ISO is hybrid — writing directly to USB ══"
-        "$SCRIPT_DIR/write-usb.sh" "$ISO"
+        sudo "$SCRIPT_DIR/write-usb.sh" "$ISO"
         ;;
 
     aarch64-generic|aarch64-apple)
         # Convert to USB image for U-Boot/extlinux boot, then write.
         echo ""
         echo "══ aarch64: Converting ISO to USB image ══"
-        "$SCRIPT_DIR/iso-to-usb-image.sh" "$ISO"
+        sudo "$SCRIPT_DIR/iso-to-usb-image.sh" "$ISO"
 
         IMG=$(ls -t "$OUT_DIR"/arches-"${PLATFORM}"-*.usb.img 2>/dev/null | head -1 || true)
         if [[ -z "$IMG" ]]; then
@@ -80,6 +84,6 @@ case "$PLATFORM" in
         fi
 
         echo ""
-        "$SCRIPT_DIR/write-usb.sh" "$IMG"
+        sudo "$SCRIPT_DIR/write-usb.sh" "$IMG"
         ;;
 esac
