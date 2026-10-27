@@ -45,8 +45,8 @@ ISO_ANSIBLE_DIR = Path("/opt/arches/ansible")
 # wheel may run anything with sudo, after typing the user's password.
 WHEEL_SUDOERS = "%wheel ALL=(ALL:ALL) ALL\n"
 
-# Build host SSH public key (optional, embedded at ISO build time)
-ISO_BUILD_HOST_PUBKEY = Path("/opt/arches/build-host.pub")
+# Public key types accepted in authorized_keys.
+_SSH_KEY_RE = re.compile(r"^(ssh-|ecdsa-|sk-)[A-Za-z0-9@._-]+ [A-Za-z0-9+/=]+( .*)?$")
 
 
 def _setup_local_repo_mirror(log: LogCallback | None = None) -> Path | None:
@@ -817,24 +817,28 @@ def create_user(
 
 def deploy_ssh_key(
     username: str,
+    keys: list[str] | None = None,
     log: LogCallback | None = None,
 ) -> None:
-    """Deploy build host's SSH public key to the created user's authorized_keys.
+    """Install the SSH public keys the install config names explicitly.
 
-    The key is embedded into the ISO at build time as /opt/arches/build-host.pub.
-    If the file doesn't exist (no key was available at build time), this is a
-    silent no-op.
+    No key is ever taken implicitly (for example from the build host): with
+    no declared keys, no authorized_keys file is written (design D6).
     """
-    if not ISO_BUILD_HOST_PUBKEY.exists():
+    keys = [k.strip() for k in keys or [] if k.strip()]
+    if not keys:
+        _log("No SSH keys declared; no authorized_keys installed.", log)
         return
+    bad = [k for k in keys if not _SSH_KEY_RE.match(k)]
+    if bad:
+        raise ValueError(f"Not an SSH public key: {bad[0][:40]!r}")
 
-    _log("Deploying build host SSH key...", log)
-    pubkey = ISO_BUILD_HOST_PUBKEY.read_text().strip()
+    _log(f"Installing {len(keys)} declared SSH key(s) for {username}...", log)
 
     ssh_dir = MOUNT_ROOT / "home" / username / ".ssh"
     ssh_dir.mkdir(parents=True, exist_ok=True)
     auth_keys = ssh_dir / "authorized_keys"
-    auth_keys.write_text(pubkey + "\n")
+    auth_keys.write_text("\n".join(keys) + "\n")
 
     # Set ownership to the user (look up UID/GID from the target's /etc/passwd)
     passwd = (MOUNT_ROOT / "etc" / "passwd").read_text()
@@ -1272,6 +1276,7 @@ def install_system(
     password: str,
     hardware: HardwareConfig | None = None,
     log: LogCallback | None = None,
+    ssh_authorized_keys: list[str] | None = None,
 ) -> None:
     """Full install pipeline after disk is prepared and mounted."""
     _pre_pacstrap_setup(log)
@@ -1286,7 +1291,7 @@ def install_system(
     configure_timezone(template.system.timezone, log)
     configure_hostname(hostname, log)
     create_user(username, password, log)
-    deploy_ssh_key(username, log)
+    deploy_ssh_key(username, ssh_authorized_keys, log)
     copy_apple_firmware(platform, log)
     configure_apple_input(platform, log)
     # Deploy hardware quirk/machine config files (modprobe, udev, sysctl)

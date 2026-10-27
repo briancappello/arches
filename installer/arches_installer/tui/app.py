@@ -82,6 +82,9 @@ class ArchesApp(App):
     hostname: str = ""
     username: str = ""
     password: str = ""
+    # SSH public keys named by the install config; shown on the confirm
+    # screen. Empty means no authorized_keys is installed.
+    ssh_authorized_keys: list[str] = []
 
     # Auto-install mode -- when True, skip to progress screen and
     # handle reboot/shutdown on completion.

@@ -80,6 +80,8 @@ class InstallParams:
     # Extra Ansible variables from auto-install config [ansible_vars].
     # Forwarded as -e key=value to the firstboot ansible-playbook run.
     ansible_vars: dict[str, str] | None = None
+    # SSH public keys named by the install config (never implicit).
+    ssh_authorized_keys: list[str] = dataclasses.field(default_factory=list)
     # TPM PIN and recovery-key display for encrypted (existing) layouts.
     encryption: EncryptionSecrets | None = None
 
@@ -214,6 +216,7 @@ def run_install_pipeline(
         params.password,
         hardware=params.hardware,
         log=log,
+        ssh_authorized_keys=params.ssh_authorized_keys,
     )
     # genfstab runs inside install_system before chroot config; swap
     # partitions need to be appended afterward because genfstab reads

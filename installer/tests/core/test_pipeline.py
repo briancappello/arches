@@ -136,6 +136,7 @@ class TestRunInstallPipelineLayoutBased:
             "testpass",
             hardware=None,
             log=log,
+            ssh_authorized_keys=[],
         )
 
     def test_passes_parts_to_bootloader(self, auto_params, mock_pipeline):

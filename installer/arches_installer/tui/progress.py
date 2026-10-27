@@ -132,6 +132,7 @@ class InstallProgressScreen(ArrowNavScreen):
                 ),
                 hardware=self.app.hardware_config,
                 ansible_vars=self.app.ansible_vars,
+                ssh_authorized_keys=list(self.app.ssh_authorized_keys),
             )
 
             parts = run_install_pipeline(params, log=self.log_msg)

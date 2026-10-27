@@ -201,6 +201,9 @@ def _run_auto(
             print(f"  WiFi:        {config.wifi.ssid}")
         if config.wired:
             print(f"  Static IP:   {config.wired.interface} → {config.wired.static_ip}")
+        from arches_installer.tui.confirm import ssh_keys_summary
+
+        print(ssh_keys_summary(config.ssh_authorized_keys), end="")
         print("")
         print("Dry run complete. No changes made.")
         return 0
@@ -357,6 +360,7 @@ def _run_auto(
     app.auto_reboot = config.reboot
     app.auto_install_failed_action = config.failed_action
     app.ansible_vars = config.ansible_vars or None
+    app.ssh_authorized_keys = list(config.ssh_authorized_keys)
 
     # When running under the test harness (virtio log port exists),
     # force shutdown on completion so the test script can detect success.

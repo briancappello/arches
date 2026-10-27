@@ -23,3 +23,8 @@ shutdown = true  # takes precedence over reboot if true
 # static_ip = "192.168.1.50/24"
 # gateway   = "192.168.1.1"
 # dns       = ["1.1.1.1", "8.8.8.8"]
+
+# Optional: SSH public keys for the user's authorized_keys. Only the keys
+# listed here are installed; none is taken from the build host.
+# [ssh]
+# authorized_keys = ["ssh-ed25519 AAAA... you@host"]

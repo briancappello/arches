@@ -9,6 +9,19 @@ from textual.widgets import Button, Label, Static
 from arches_installer.tui import ArrowNavScreen
 
 
+def ssh_keys_summary(keys: list[str]) -> str:
+    """One line per declared SSH key: its type, the end of the key, its comment."""
+    if not keys:
+        return "  SSH keys:    none (no authorized_keys)\n"
+    lines = ""
+    for k in keys:
+        fields = k.split(None, 2)
+        kind, body = fields[0], fields[1] if len(fields) > 1 else ""
+        comment = fields[2] if len(fields) > 2 else ""
+        lines += f"  SSH key:     {kind} ...{body[-12:]} {comment}".rstrip() + "\n"
+    return lines
+
+
 class ConfirmScreen(ArrowNavScreen):
     """Review all selections and confirm before installing."""
 
@@ -88,6 +101,8 @@ class ConfirmScreen(ArrowNavScreen):
 
         if tmpl.ansible.firstboot_roles:
             text += f"  Ansible (1st boot): {', '.join(tmpl.ansible.firstboot_roles)}\n"
+
+        text += ssh_keys_summary(self.app.ssh_authorized_keys)
 
         # Hardware configuration
         hw = self.app.hardware_config
