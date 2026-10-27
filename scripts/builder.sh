@@ -114,14 +114,16 @@ _build_volumes() {
         volumes+=(-v "$build_home/.ssh:/home/builder/.ssh:ro")
     fi
 
-    # Module build source mounts
+    # Module build source mounts (scripts/lib/build-mounts.sh resolves
+    # them from the main checkout when this is a worktree)
+    source "$PROJECT_DIR/scripts/lib/build-mounts.sh"
     for mounts_file in "$PROJECT_DIR"/modules/*/build.mounts; do
         [[ -f "$mounts_file" ]] || continue
         while IFS= read -r rel_path; do
             [[ "$rel_path" =~ ^#.*$ || -z "$rel_path" ]] && continue
-            local src_path="$PROJECT_DIR/$rel_path"
-            if [[ -d "$src_path" ]]; then
-                volumes+=(-v "$(cd "$src_path" && pwd):/build/$rel_path:ro")
+            local src_path
+            if src_path="$(resolve_build_mount "$PROJECT_DIR" "$rel_path")"; then
+                volumes+=(-v "$src_path:/build/$rel_path:ro")
             fi
         done < "$mounts_file"
     done

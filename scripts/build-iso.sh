@@ -98,15 +98,17 @@ if [[ -d "$HOME/.ssh" ]]; then
     VOLUMES+=(-v "$HOME/.ssh:/home/builder/.ssh:ro")
 fi
 
-# Module build source mounts — discover from modules/*/build.mounts
+# Module build source mounts — discover from modules/*/build.mounts.
+# From a worktree they resolve against the main checkout
+# (scripts/lib/build-mounts.sh; override with ARCHES_SOURCES_ROOT).
+source "$SCRIPT_DIR/lib/build-mounts.sh"
 for mounts_file in "$PROJECT_DIR"/modules/*/build.mounts; do
     [[ -f "$mounts_file" ]] || continue
     module_name=$(basename "$(dirname "$mounts_file")")
     while IFS= read -r rel_path; do
         [[ "$rel_path" =~ ^#.*$ || -z "$rel_path" ]] && continue
-        src_path="$PROJECT_DIR/$rel_path"
-        if [[ -d "$src_path" ]]; then
-            VOLUMES+=(-v "$(cd "$src_path" && pwd):/build/$rel_path:ro")
+        if src_path="$(resolve_build_mount "$PROJECT_DIR" "$rel_path")"; then
+            VOLUMES+=(-v "$src_path:/build/$rel_path:ro")
         else
             echo "  WARNING: Build source not found: $src_path (module: $module_name)"
         fi
