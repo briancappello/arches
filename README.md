@@ -61,18 +61,21 @@ All builds run inside Podman containers regardless of host distro. The platform 
 
 The ISO is built as a **superset** of the selected template's installed system. For graphical templates (like `dev-workstation`), the live ISO boots into the full KDE Plasma desktop with a `liveuser` autologin. For non-graphical templates (like `vm-server`), the ISO boots to a text console with the TUI installer.
 
+Builds run as your user under rootless Podman (setup: see [Persistent Builder](#persistent-builder-recommended-for-development)). Do not run them with `sudo`.
+
 ```bash
-# Build install media and write to USB drive (auto-detects platform + default template)
-sudo make usb
+# Build install media and write to USB drive (auto-detects platform + default template).
+# Asks for sudo only to write the drive.
+make usb
 
 # Or just build the ISO
-sudo make iso
+make iso
 
 # Explicit template override
-sudo TEMPLATE=vm-server make iso
+TEMPLATE=vm-server make iso
 
 # Offline ISO — pre-cache all packages so installs work without internet
-sudo make iso OFFLINE=1
+make iso OFFLINE=1
 
 # Install into a QEMU VM (builds ISO if needed, creates disk, boots QEMU)
 make qemu-install
@@ -103,20 +106,29 @@ The built ISO is written to `out/arches-<date>.iso`. The platform config is bake
 
 ### Persistent Builder (recommended for development)
 
-For iterative development, a persistent privileged Podman container avoids needing `sudo` for every ISO build. You start it once, then build as many times as you want without password prompts.
+For iterative development, a persistent Podman container builds ISOs as your user. It runs under **rootless** Podman and uses no `sudo` at all. Container root is your user, so everything the build writes into the project is owned by you.
 
-**One-time host setup — passwordless sudo for podman:**
+Do not give your user passwordless `sudo` for `podman`. That is passwordless root for every process you run.
+
+**One-time host setup — rootless Podman:**
 
 ```bash
-# Allow passwordless podman commands for your user.
-# The file MUST sort after any other sudoers rules (e.g., 'wheel'),
-# hence the 'zz-' prefix — sudoers uses last-match-wins.
-echo "$(whoami) ALL=(root) NOPASSWD: /usr/bin/podman" \
-  | sudo tee /etc/sudoers.d/zz-arches-builder
-sudo chmod 440 /etc/sudoers.d/zz-arches-builder
+# Your user needs a subordinate uid/gid range (most distros add one
+# when the user is created). Check:
+grep "^$(whoami):" /etc/subuid /etc/subgid
+# If either is missing, add one (this is the only step that needs root):
+sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$(whoami)"
+
+# btrfs hosts only: the default overlay storage driver does not work
+# on btrfs. Use the btrfs driver for rootless Podman:
+mkdir -p ~/.config/containers
+printf '[storage]\ndriver = "btrfs"\n' > ~/.config/containers/storage.conf
+podman system reset   # deletes existing rootless images and containers
 ```
 
-**Start the builder** (one-time per session, prompts for sudo on first run):
+The builder container is `--privileged` inside your user namespace only. mkarchiso runs `pacstrap` and `arch-chroot` in unshare mode (`scripts/userns/`), because root in a user namespace cannot mount devtmpfs. The builder uses Podman's default rootless network: with `--network=host` the container cannot mount sysfs.
+
+**Start the builder** (one-time per session):
 
 ```bash
 ./scripts/builder.sh start

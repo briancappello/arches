@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#
+# Run pacstrap in unshare mode (-N).
+#
+# The builder runs in a rootless Podman container, so "root" there is root
+# of a user namespace. Such a root cannot mount devtmpfs, which plain
+# pacstrap does for <newroot>/dev. mkarchiso passes -N only when EUID != 0,
+# so the Makefile puts this directory first in PATH for mkarchiso.
+# With /etc/subuid and /etc/subgid set to root:1:65535 (Containerfile),
+# the nested namespace maps uids 0-65535 to themselves, so file ownership
+# inside the image is unchanged.
+exec /usr/bin/pacstrap -N "$@"

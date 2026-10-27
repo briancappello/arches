@@ -168,4 +168,12 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 RUN useradd -m builder && \
     echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
+# ─── Rootless builds: subordinate ids for root ───────
+# The builder runs under rootless Podman, where root cannot mount devtmpfs.
+# mkarchiso therefore runs pacstrap and arch-chroot in unshare mode
+# (scripts/userns/), and `unshare --map-auto` reads root's range here.
+# 1-65535 maps every container uid to itself inside the nested namespace.
+RUN echo "root:1:65535" > /etc/subuid && \
+    echo "root:1:65535" > /etc/subgid
+
 WORKDIR /build

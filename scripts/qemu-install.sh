@@ -132,12 +132,7 @@ if [[ "${ARCHES_QEMU_DRY_RUN:-0}" != "1" ]]; then
             echo "══ Rebuilding ISO ══"
         fi
         echo ""
-        if [[ $EUID -eq 0 ]]; then
-            PLATFORM="$PLATFORM" "$SCRIPT_DIR/build-iso.sh" ${BUILD_ISO_ARGS[@]+"${BUILD_ISO_ARGS[@]}"}
-        else
-            echo "  (This requires sudo for the container build)"
-            sudo PLATFORM="$PLATFORM" SUDO_USER="${SUDO_USER:-$USER}" "$SCRIPT_DIR/build-iso.sh" ${BUILD_ISO_ARGS[@]+"${BUILD_ISO_ARGS[@]}"}
-        fi
+        PLATFORM="$PLATFORM" "$SCRIPT_DIR/build-iso.sh" ${BUILD_ISO_ARGS[@]+"${BUILD_ISO_ARGS[@]}"}
         ISO=$(ls -t "$OUT_DIR"/arches-"${PLATFORM}"-*.iso 2>/dev/null | head -1 || true)
         if [[ -z "$ISO" ]]; then
             echo "ERROR: ISO build failed — no ISO found in $OUT_DIR/"

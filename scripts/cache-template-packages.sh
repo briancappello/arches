@@ -88,7 +88,7 @@ echo "  ISO environment packages: ${#iso_packages[@]}"
 # the cache, chwd would need network access to install drivers.
 hw_driver_packages=(
     # AMD
-    mesa vulkan-radeon xf86-video-amdgpu libva-mesa-driver mesa-vdpau
+    mesa vulkan-radeon xf86-video-amdgpu libva-mesa-driver
     # Intel
     vulkan-intel intel-media-driver
     # NVIDIA (open kernel modules + proprietary userspace)
