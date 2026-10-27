@@ -2,12 +2,12 @@
 #
 # Manage a persistent privileged build container for Arches ISO builds.
 #
-# The container runs under root's podman (required for --privileged).
-# All podman commands use sudo transparently. The user's password is
-# requested once and cached by sudo for subsequent calls.
+# The container runs under the user's rootless Podman. No sudo is used:
+# container root is the host user, so files the build writes into the
+# bind-mounted project are owned by the user on the host.
 #
 # Usage:
-#   ./scripts/builder.sh start      # Start the builder (prompts for sudo once)
+#   ./scripts/builder.sh start      # Start the builder
 #   ./scripts/builder.sh stop       # Stop the builder
 #   ./scripts/builder.sh status     # Check if running
 #   ./scripts/builder.sh build      # Build graphical ISO
@@ -32,14 +32,13 @@ IMAGE_NAME="arches-builder-${TARGETARCH}"
 CACHE_DIR="$PROJECT_DIR/.pkg-cache/$PLATFORM"
 BUILD_LOG="$PROJECT_DIR/builder.log"
 
-# All podman operations go through root's podman.
-# For start/stop, the user provides their password via normal sudo.
-# For build/exec, passwordless sudo is configured for 'podman exec'.
-_podman() {
+# The builder must run under the user's rootless Podman. Root's Podman
+# would write root-owned files into the project and needs sudo.
+_check_rootless() {
     if [[ $EUID -eq 0 ]]; then
-        podman "$@"
-    else
-        sudo podman "$@"
+        echo "ERROR: Run the builder as your user, not as root."
+        echo "       It uses rootless Podman and needs no sudo."
+        exit 1
     fi
 }
 
@@ -47,7 +46,7 @@ _podman() {
 # Common failure: overlay driver on btrfs, which the kernel does not support.
 _check_storage() {
     local err rc=0
-    err=$(_podman info 2>&1) || rc=$?
+    err=$(podman info 2>&1) || rc=$?
     if [[ $rc -eq 0 ]]; then
         return 0
     fi
@@ -58,7 +57,7 @@ _check_storage() {
         echo "The old storage database is forcing a different driver than the one"
         echo "in your storage.conf. Delete the stale storage data:"
         echo ""
-        echo "    sudo rm -rf /var/lib/containers/storage"
+        echo "    rm -rf ~/.local/share/containers/storage"
         echo ""
         echo "Then retry: make builder-start"
     elif [[ "$err" == *"overlay"*"btrfs"* || "$err" == *"is not supported over btrfs"* ]]; then
@@ -67,12 +66,6 @@ _check_storage() {
         echo "Your root filesystem uses btrfs, which is incompatible with the"
         echo "default overlay storage driver. Configure the btrfs driver for podman:"
         echo ""
-        echo "  # Root podman (used by the builder):"
-        echo "  sudo mkdir -p /etc/containers"
-        echo "  printf '[storage]\ndriver = \"btrfs\"\n' | sudo tee /etc/containers/storage.conf"
-        echo "  sudo rm -rf /var/lib/containers/storage"
-        echo ""
-        echo "  # Rootless podman (your user):"
         echo "  mkdir -p ~/.config/containers"
         echo "  printf '[storage]\ndriver = \"btrfs\"\n' > ~/.config/containers/storage.conf"
         echo "  rm -rf ~/.local/share/containers/storage"
@@ -84,32 +77,19 @@ _check_storage() {
         echo "$err"
         echo ""
         echo "Try deleting podman storage and retrying:"
-        echo "    sudo rm -rf /var/lib/containers/storage"
-        echo "    sudo podman system reset"
+        echo "    podman system reset"
     fi
     exit 1
 }
 
-# Use sudo -n (non-interactive) for checks that should work without password.
-# Falls back to podman exec with a simple test command.
 _builder_running() {
-    # Try non-interactive sudo first (works if sudo credentials are cached
-    # or if broad NOPASSWD is configured)
-    if sudo -n podman inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null | grep -q true; then
-        return 0
-    fi
-    # Fall back to checking via podman exec (covered by NOPASSWD rule)
-    if sudo -n podman exec "$CONTAINER_NAME" true 2>/dev/null; then
-        return 0
-    fi
-    return 1
+    [[ "$(podman inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null)" == true ]]
 }
 
 _ensure_image() {
-    if ! _podman image exists "$IMAGE_NAME"; then
+    if ! podman image exists "$IMAGE_NAME"; then
         echo "══ Building container image ($IMAGE_NAME) ══"
-        _podman build \
-            --network=host \
+        podman build \
             --platform="$CONTAINER_ARCH" \
             --build-arg BASE_IMAGE="$BASE_IMAGE" \
             --build-arg TARGETARCH="$TARGETARCH" \
@@ -152,23 +132,17 @@ _build_volumes() {
 cmd_start() {
     _check_storage
 
-    if _podman container exists "$CONTAINER_NAME" 2>/dev/null; then
+    if podman container exists "$CONTAINER_NAME" 2>/dev/null; then
         if _builder_running; then
             echo "Builder is already running."
             return 0
         fi
         echo "Removing stale builder container..."
-        _podman rm -f "$CONTAINER_NAME" >/dev/null
+        podman rm -f "$CONTAINER_NAME" >/dev/null
     fi
 
     _ensure_image
     mkdir -p "$CACHE_DIR"
-
-    local build_user
-    build_user="$(logname 2>/dev/null || whoami)"
-    local build_uid build_gid
-    build_uid=$(id -u "$build_user")
-    build_gid=$(id -g "$build_user")
 
     local volumes
     volumes=$(_build_volumes)
@@ -178,18 +152,19 @@ cmd_start() {
     echo "  Container: $CONTAINER_NAME"
     echo "  Image:     $IMAGE_NAME"
 
+    # Rootless: container root maps to the host user, and --privileged
+    # grants capabilities only inside the user namespace. Podman's default
+    # rootless network is used: with --network=host the container cannot
+    # mount sysfs, because the host network namespace is not ours.
+    #
     # shellcheck disable=SC2086
-    _podman run -d --privileged \
+    podman run -d --privileged \
         --name "$CONTAINER_NAME" \
-        --network=host \
         --security-opt label=disable \
         --pids-limit=-1 \
         $volumes \
         "$IMAGE_NAME" \
         /bin/bash -c "
-            usermod -u $build_uid builder 2>/dev/null
-            groupmod -g $build_gid builder 2>/dev/null
-            chown builder:builder /tmp /home/builder 2>/dev/null
             trap 'exit 0' TERM
             sleep infinity &
             wait
@@ -201,8 +176,8 @@ cmd_start() {
 }
 
 cmd_stop() {
-    if _podman container exists "$CONTAINER_NAME" 2>/dev/null; then
-        _podman rm -f "$CONTAINER_NAME" >/dev/null
+    if podman container exists "$CONTAINER_NAME" 2>/dev/null; then
+        podman rm -f "$CONTAINER_NAME" >/dev/null
         echo "Builder stopped."
     else
         echo "Builder is not running."
@@ -210,7 +185,7 @@ cmd_stop() {
 }
 
 cmd_status() {
-    if _podman container exists "$CONTAINER_NAME" 2>/dev/null; then
+    if podman container exists "$CONTAINER_NAME" 2>/dev/null; then
         if _builder_running; then
             echo "Builder is running ($CONTAINER_NAME)"
             return 0
@@ -228,7 +203,7 @@ cmd_exec() {
         echo "ERROR: Builder is not running. Start with: $0 start"
         exit 1
     fi
-    _podman exec "$CONTAINER_NAME" "$@"
+    podman exec "$CONTAINER_NAME" "$@"
 }
 
 cmd_build() {
@@ -244,7 +219,7 @@ cmd_build() {
     # host directory was deleted and recreated (e.g. make clean-caches)
     # while the container was running, the mount goes stale and pacman
     # will fail with "No such file or directory" deep inside the build.
-    if ! _podman exec "$CONTAINER_NAME" test -d /var/cache/pacman/pkg 2>/dev/null; then
+    if ! podman exec "$CONTAINER_NAME" test -d /var/cache/pacman/pkg 2>/dev/null; then
         echo "ERROR: Package cache mount is stale inside the builder container."
         echo ""
         echo "  This usually happens when the host .pkg-cache/ directory was"
@@ -272,14 +247,13 @@ cmd_build() {
     echo "  Log: $BUILD_LOG"
 
     # Run the build under a bash wrapper that chowns artifacts back
-    # to the host user on every exit (success, failure, signal). The
-    # Makefile staging targets run as root (mkarchiso requires it),
-    # and the workspace is bind-mounted from the host, so without
-    # this cleanup root-owned files would leak into the host repo
-    # and break subsequent git/make operations.
+    # to container root on every exit (success, failure, signal).
+    # Container root is the host user. makepkg runs as 'builder', whose
+    # files would otherwise belong to a subordinate uid on the host,
+    # which the host user cannot remove without root.
     #
     # shellcheck disable=SC2086
-    _podman exec \
+    podman exec \
         -e SUDO_USER=builder \
         -e ARCHES_TEMPLATE="${TEMPLATE:-}" \
         -e ARCHES_GPU="${ARCHES_GPU:-}" \
@@ -287,7 +261,7 @@ cmd_build() {
         "$CONTAINER_NAME" \
         bash -c '
             _chown_back() {
-                chown -R builder:builder \
+                chown -R root:root \
                     /build/iso/airootfs \
                     /build/iso/grub \
                     /build/iso/syslinux \
@@ -343,6 +317,10 @@ cmd_log() {
 # ── Main ──────────────────────────────────────────────
 
 case "${1:-help}" in
+    start|stop|status|exec|build|build-fb) _check_rootless ;;
+esac
+
+case "${1:-help}" in
     start)    cmd_start ;;
     stop)     cmd_stop ;;
     status)   cmd_status ;;
@@ -353,7 +331,7 @@ case "${1:-help}" in
     help|*)
         echo "Usage: $0 <command>"
         echo ""
-        echo "  start       Start the persistent builder (prompts for sudo)"
+        echo "  start       Start the persistent builder"
         echo "  stop        Stop and remove the builder"
         echo "  status      Check if the builder is running"
         echo "  build       Build graphical ISO"

@@ -77,19 +77,19 @@ usb-fb: ## Build framebuffer-only USB install media
 
 ##@ Persistent Builder
 
-builder-start: ## Start persistent build container (requires sudo)
+builder-start: ## Start persistent build container (rootless Podman)
 	$(SCRIPTS)/builder.sh start
 
-builder-stop: ## Stop persistent build container (requires sudo)
+builder-stop: ## Stop persistent build container
 	$(SCRIPTS)/builder.sh stop
 
 builder-status: ## Check if persistent builder is running
 	@$(SCRIPTS)/builder.sh status
 
-builder-iso: ## Build graphical ISO via persistent builder (no sudo)
+builder-iso: ## Build graphical ISO via persistent builder
 	OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/builder.sh build
 
-builder-iso-fb: ## Build framebuffer ISO via persistent builder (no sudo)
+builder-iso-fb: ## Build framebuffer ISO via persistent builder
 	OFFLINE=$(OFFLINE) TEMPLATE=$(TEMPLATE) ARCHES_GPU=$(ARCHES_GPU) $(SCRIPTS)/builder.sh build-fb
 
 ##@ Host Install (Apple Silicon)
@@ -251,9 +251,9 @@ clean-caches: ## Remove AUR repo, pacman cache, and offline package cache
 	@# mounts stale — the next build inside the container will fail with
 	@# "No such file or directory" when pacman tries to write to the cache.
 	@# Stop the builder first so the mounts are released cleanly.
-	@if sudo -n podman inspect --format '{{.State.Running}}' arches-builder 2>/dev/null | grep -q true; then \
+	@if [ "$$(podman inspect --format '{{.State.Running}}' arches-builder 2>/dev/null)" = true ]; then \
 		echo "  Persistent builder is running — stopping it first..."; \
-		sudo -n podman rm -f arches-builder >/dev/null 2>&1 || { \
+		podman rm -f arches-builder >/dev/null 2>&1 || { \
 			echo "ERROR: The persistent builder (arches-builder) is running and"; \
 			echo "       bind-mounts the cache directories. Deleting them while"; \
 			echo "       the container is running will break the next build."; \
@@ -282,9 +282,9 @@ clean-all: clean clean-caches ## Remove all build artifacts (incl. builder conta
 	@# next build starts from a clean slate. Both amd64 and arm64 variants
 	@# are removed if present.
 	@for img in arches-builder-amd64 arches-builder-arm64; do \
-		if sudo -n podman image exists "$$img" 2>/dev/null; then \
+		if podman image exists "$$img" 2>/dev/null; then \
 			echo "  Removing image: $$img"; \
-			sudo -n podman rmi -f "$$img" >/dev/null 2>&1 || \
+			podman rmi -f "$$img" >/dev/null 2>&1 || \
 				echo "  WARNING: failed to remove $$img (in use?)"; \
 		fi; \
 	done
