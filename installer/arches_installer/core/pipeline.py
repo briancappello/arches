@@ -8,10 +8,11 @@ error handling, and phase ordering are consistent regardless of the entry point.
 from __future__ import annotations
 
 import dataclasses
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from arches_installer.core.bootloader import install_bootloader
+from arches_installer.core.bootloader import install_bootloader, write_limine_defaults
 from arches_installer.core.disk import PartitionMap
 from arches_installer.core.disk_layout import (
     DiskLayout,
@@ -36,6 +37,11 @@ from arches_installer.core.existing import (
 from arches_installer.core.firstboot import inject_firstboot_service
 from arches_installer.core.hardware import HardwareConfig
 from arches_installer.core.install import append_swap_fstab_entries, install_system
+from arches_installer.core.limine_conf import (
+    backup_limine_conf,
+    check_merge,
+    read_machine_id,
+)
 from arches_installer.core.platform import PlatformConfig
 from arches_installer.core.run import LogCallback
 from arches_installer.core.snapper import setup_snapshots
@@ -95,6 +101,9 @@ def run_install_pipeline(
     """
     platform = params.platform
     template = params.template
+    from arches_installer.core.disk import MOUNT_ROOT
+
+    limine_backup: Path | None = None
 
     # Phase 1: Disk
     log("[bold cyan]== Phase 1: Disk Setup ==[/bold cyan]")
@@ -121,6 +130,13 @@ def run_install_pipeline(
             parts = apply_existing_layout(
                 params.disk_layout, plan, log=log, encryption=params.encryption
             )
+            # The shared limine.conf is backed up before pacstrap: the
+            # kernel install already runs limine-entry-tool. Writing our
+            # Limine defaults now gives those first entries our OS name
+            # and command line.
+            if platform.bootloader.type == "limine":
+                limine_backup = backup_limine_conf(MOUNT_ROOT / "boot", log=log)
+                write_limine_defaults(platform, parts.root, parts=parts, log=log)
             log("[green]Existing partitions prepared successfully.[/green]")
         elif params.resolved_disk_roles is not None:
             # Multi-disk role-based path: a separate resolver step
@@ -216,6 +232,13 @@ def run_install_pipeline(
         parts=parts,
         log=log,
     )
+    if limine_backup is not None:
+        check_merge(
+            MOUNT_ROOT / "boot", limine_backup, read_machine_id(MOUNT_ROOT), log=log
+        )
+        keep = MOUNT_ROOT / "var" / "lib" / "arches" / "limine.conf.before-install"
+        keep.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(limine_backup, keep)
     log("[green]Bootloader installed.[/green]")
 
     # Phase 3 epilogue: mirror ESP for btrfs RAID 1/10
@@ -258,8 +281,6 @@ def run_install_pipeline(
     # validate disk presence on every subsequent boot. Only meaningful
     # when the multi-disk role path was used; harmless otherwise.
     if params.resolved_disk_roles is not None:
-        from arches_installer.core.disk import MOUNT_ROOT
-
         write_disk_roles_state(params.resolved_disk_roles, MOUNT_ROOT, log=log)
 
     # Copy install log to the installed system for post-mortem debugging

@@ -502,6 +502,8 @@ class TestPipelineEncrypted:
         with (
             patch(f"{mod}.plan_existing_layout"),
             patch(f"{mod}.apply_existing_layout", return_value=parts) as apply,
+            patch(f"{mod}.backup_limine_conf", return_value=None),
+            patch(f"{mod}.write_limine_defaults"),
             patch(f"{mod}.install_system", order.install_system),
             patch(f"{mod}.configure_target_storage", order.configure_target_storage),
             patch(f"{mod}.install_bootloader", order.install_bootloader),

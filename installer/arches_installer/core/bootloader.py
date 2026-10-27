@@ -47,6 +47,22 @@ def get_root_partuuid(root_partition: str) -> str:
 
 # ─── Limine ───────────────────────────────────────────────
 
+# On an ESP shared with another system (existing layouts, design D3):
+# - our OS entry gets a distinct name (limine-entry-tool keys it on the
+#   machine-id, so the other system's entries are left alone);
+# - every kernel boots as a UKI named arches_<kernel>.efi, so kernel,
+#   initramfs and command line are one file that can be signed;
+# - the config hash is NOT enrolled yet: that happens in the attended
+#   Secure Boot step (arches-secureboot-enroll), because the other system
+#   still rewrites limine.conf until then.
+UKI_NAME = "arches"
+SHARED_ESP_LIMINE_DEFAULTS = (
+    'TARGET_OS_NAME="Arches Linux"\n'
+    "ENABLE_UKI=yes\n"
+    f'CUSTOM_UKI_NAME="{UKI_NAME}"\n'
+    "ENABLE_ENROLL_LIMINE_CONFIG=no\n"
+)
+
 
 def write_limine_defaults(
     platform: PlatformConfig,
@@ -84,6 +100,8 @@ def write_limine_defaults(
     if platform.bootloader.snapshot_boot:
         default_conf += ", Snapshots"
     default_conf += '"\n'
+    if parts and parts.esp_reused:
+        default_conf += SHARED_ESP_LIMINE_DEFAULTS
 
     default_dir = MOUNT_ROOT / "etc" / "default"
     default_dir.mkdir(parents=True, exist_ok=True)
