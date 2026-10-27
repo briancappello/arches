@@ -57,16 +57,16 @@ QEMU proof checksums every other partition before and after the install.
 
 ### D2. Encryption
 
-- Each spare partition becomes LUKS2 (argon2id). One btrfs filesystem spans
-  the two opened devices, with subvolumes `@`, `@home`, `@var` and
-  `@snapshots`. `/home` lives inside, so the system stands alone.
+- Decided (operator, 2026-10-27): **one** encrypted device. The two spare
+  partitions form an mdadm RAID0 array (200G). One LUKS2 (argon2id) device
+  sits on the array, and one btrfs filesystem on that holds everything except
+  `/boot`: subvolumes `@` (`/`), `@home`, `@var` and `@snapshots`. `/home`
+  lives inside, so the system stands alone.
 - Unlock: `systemd-cryptenroll --tpm2-device=auto --tpm2-with-pin=yes`,
   bound to PCR 7 (Secure Boot state and keys). The initramfs uses the
-  `systemd` and `sd-encrypt` hooks with `crypttab.initramfs`.
-- One PIN must open both devices. Whether systemd-cryptsetup reuses a TPM PIN
-  across devices is not yet proven; the QEMU proof settles it. If it does
-  not, the fallback is a single LUKS device on an mdadm RAID0 of the two
-  spares, with btrfs on top.
+  `systemd`, `mdadm_udev` and `sd-encrypt` hooks with `crypttab.initramfs`.
+  One device means one PIN prompt.
+- RAID0 has no redundancy: losing either disk loses the system, as today.
 - A recovery key is generated at install, shown once, and never written to
   disk. The operator stores it offline.
 
@@ -140,8 +140,7 @@ Each row gets a test that fails if the old default comes back.
 
 ## Open decisions
 
-- **O1.** The btrfs profile across 2 × 100G: data RAID0 (200G, like today) or
-  RAID1 (100G, survives one disk)? Metadata RAID1 either way.
+- **O1.** Decided: mdadm RAID0, one LUKS2 device, 200G (D2).
 - **O2.** Lockdown (D5): follow-up or blocker?
 - **O3.** Where the `arches-local` signing key lives: not as a plain file on
   p1. A YubiKey OpenPGP slot is the candidate.
