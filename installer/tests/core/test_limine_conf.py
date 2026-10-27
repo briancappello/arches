@@ -250,3 +250,39 @@ class TestPipelineMerge:
         assert order.check_merge.call_args[0][2] == NEW_ID
         kept = tmp_path / "var/lib/arches/limine.conf.before-install"
         assert kept.read_text() == P1_CONF
+
+
+class TestPrePacstrapKeepsSharedEspDefaults:
+    def test_existing_limine_defaults_survive(self, tmp_path) -> None:
+        from arches_installer.core.install import _pre_pacstrap_setup
+
+        etc = tmp_path / "etc"
+        (etc / "default").mkdir(parents=True)
+        (etc / "kernel").mkdir()
+        (etc / "default" / "limine").write_text('TARGET_OS_NAME="Arches Linux"\n')
+        (etc / "kernel" / "cmdline").write_text("root=UUID=new rw\n")
+        mod = "arches_installer.core.install"
+        with (
+            patch(f"{mod}.MOUNT_ROOT", tmp_path),
+            patch(f"{mod}._wait_for_keyring"),
+            patch(f"{mod}._preseed_pacman_databases"),
+            patch(f"{mod}._preseed_pacman_keyring"),
+        ):
+            _pre_pacstrap_setup()
+        assert (
+            etc / "default" / "limine"
+        ).read_text() == 'TARGET_OS_NAME="Arches Linux"\n'
+        assert (etc / "kernel" / "cmdline").read_text() == "root=UUID=new rw\n"
+
+    def test_placeholders_on_a_fresh_target(self, tmp_path) -> None:
+        from arches_installer.core.install import _pre_pacstrap_setup
+
+        mod = "arches_installer.core.install"
+        with (
+            patch(f"{mod}.MOUNT_ROOT", tmp_path),
+            patch(f"{mod}._wait_for_keyring"),
+            patch(f"{mod}._preseed_pacman_databases"),
+            patch(f"{mod}._preseed_pacman_keyring"),
+        ):
+            _pre_pacstrap_setup()
+        assert (tmp_path / "etc/default/limine").read_text() == 'ESP_PATH="/boot"\n'

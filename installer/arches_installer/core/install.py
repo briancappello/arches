@@ -1177,12 +1177,17 @@ def _pre_pacstrap_setup(log: LogCallback | None = None) -> None:
     # phase writes the full config).  The hook needs:
     #   - /etc/default/limine with ESP_PATH
     #   - /etc/kernel/cmdline (even if placeholder)
+    # Files that already exist are kept: on a shared ESP the pipeline wrote
+    # the real ones before pacstrap, so the first entries limine-entry-tool
+    # writes carry our OS name and do not land in another system's entry.
     default_dir = etc / "default"
     default_dir.mkdir(parents=True, exist_ok=True)
-    (default_dir / "limine").write_text('ESP_PATH="/boot"\n')
+    if not (default_dir / "limine").exists():
+        (default_dir / "limine").write_text('ESP_PATH="/boot"\n')
     kernel_dir = etc / "kernel"
     kernel_dir.mkdir(parents=True, exist_ok=True)
-    (kernel_dir / "cmdline").write_text("root=/dev/vda2 rw\n")
+    if not (kernel_dir / "cmdline").exists():
+        (kernel_dir / "cmdline").write_text("root=/dev/vda2 rw\n")
     _log(
         "Pre-created /etc/default/limine and /etc/kernel/cmdline for pacstrap hooks.",
         log,
