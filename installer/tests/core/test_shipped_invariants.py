@@ -247,3 +247,10 @@ def test_roles_do_not_su_into_system_accounts() -> None:
 def test_postgres_initdb_uses_runuser() -> None:
     text = (_MODULES_DIR / "postgresql/ansible/tasks/main.yml").read_text()
     assert "runuser -u postgres -- initdb -D /var/lib/postgres/data" in text
+
+
+def test_live_iso_can_build_the_encrypted_spare_layout() -> None:
+    listed = (_REPO_ROOT / "platforms/x86-64/packages").read_text().split()
+    for pkg in ("mdadm", "tpm2-tss"):
+        assert pkg in listed
+
