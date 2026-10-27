@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from arches_installer.core.disk import PartitionMap
+from arches_installer.core.disk import EncryptedVolume, PartitionMap
 from arches_installer.core.disk_layout import (
     DiskLayout,
     PartitionSpec,
@@ -32,6 +32,15 @@ from arches_installer.core.disk_layout import (
     _create_and_mount_subvolumes,
     _format_partition,
     _mount_partition,
+)
+from arches_installer.core.encryption import (
+    EncryptionSecrets,
+    configure_mkinitcpio_hooks,
+    create_luks_volume,
+    tpm2_present,
+    validate_pin,
+    write_crypttab_initramfs,
+    write_mdadm_conf,
 )
 from arches_installer.core.run import LogCallback, _log
 from arches_installer.core.run import run as logged_run
@@ -64,6 +73,9 @@ class Probe(Protocol):
 
     def has_file(self, part: str, name: str) -> bool:
         """Return True if the filesystem on *part* has *name* at its root."""
+
+    def has_tpm2(self) -> bool:
+        """Return True if a TPM 2.0 is available."""
 
 
 class SystemProbe:
@@ -141,6 +153,9 @@ class SystemProbe:
         finally:
             subprocess.run(["umount", str(tmp)], check=False)
             tmp.rmdir()
+
+    def has_tpm2(self) -> bool:
+        return tpm2_present()
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +271,11 @@ def plan_existing_layout(
     if esp and esp in {m for v in volumes for m in v.members}:
         errors.append(f"{esp} is both the reused ESP and a target")
 
+    if any(v.spec.encryption for v in volumes) and not probe.has_tpm2():
+        errors.append(
+            "the layout is encrypted with TPM2 + PIN, but no TPM 2.0 is present"
+        )
+
     if errors:
         raise ExistingLayoutError(
             "Refusing to install: the existing-partition guard failed. "
@@ -268,6 +288,31 @@ def plan_existing_layout(
 # ---------------------------------------------------------------------------
 # Applying the plan
 # ---------------------------------------------------------------------------
+
+
+def layout_packages(layout: DiskLayout) -> list[str]:
+    """Packages the target needs to assemble and unlock *layout* at boot."""
+    pkgs: list[str] = []
+    for p in layout.partitions:
+        if p.raid_backend == "mdadm" and "mdadm" not in pkgs:
+            pkgs.append("mdadm")
+        if p.encryption == "luks2":
+            for pkg in ("cryptsetup", "tpm2-tss"):
+                if pkg not in pkgs:
+                    pkgs.append(pkg)
+    return pkgs
+
+
+def configure_target_storage(
+    parts: PartitionMap, log: LogCallback | None = None
+) -> None:
+    """Make the installed system assemble and unlock its volumes at boot."""
+    if parts.md_devices:
+        write_mdadm_conf(parts.md_devices, log=log)
+    if parts.encrypted_volumes:
+        write_crypttab_initramfs(parts.encrypted_volumes, log=log)
+    if parts.md_devices or parts.encrypted_volumes:
+        configure_mkinitcpio_hooks(mdadm=bool(parts.md_devices), log=log)
 
 
 def _assemble(vol: ExistingVolume, log: LogCallback | None) -> str:
@@ -290,7 +335,6 @@ def _assemble(vol: ExistingVolume, log: LogCallback | None) -> str:
             f"--raid-devices={len(vol.members)}",
             "--metadata=1.2",
             f"--name={name}",
-            "--homehost=any",
             "--run",
         ]
         + vol.members,
@@ -304,12 +348,20 @@ def apply_existing_layout(
     layout: DiskLayout,
     plan: ExistingPlan,
     log: LogCallback | None = None,
+    *,
+    encryption: EncryptionSecrets | None = None,
 ) -> PartitionMap:
     """Build the planned volumes and mount everything under MOUNT_ROOT.
 
     Writes only to ``plan.targets`` (and devices built on them). The ESP
-    is mounted as-is.
+    is mounted as-is. An encrypted volume needs *encryption*.
     """
+    if any(v.spec.encryption for v in plan.volumes):
+        if encryption is None:
+            raise ExistingLayoutError(
+                f"Layout {layout.name!r} is encrypted; a TPM PIN is required."
+            )
+        validate_pin(encryption.pin)
     _log(
         f'[bold cyan]Applying existing layout "{layout.name}"[/bold cyan]',
         log,
@@ -321,10 +373,21 @@ def apply_existing_layout(
     root_fs = ""
     root_subvolumes: list[str] = []
     mounted_later: list[tuple[str, PartitionSpec]] = []
+    encrypted: list[EncryptedVolume] = []
+    md_devices: list[str] = []
 
     for idx, vol in enumerate(plan.volumes):
         spec = vol.spec
         dev = _assemble(vol, log)
+        if dev not in vol.members:
+            md_devices.append(dev)
+        if spec.encryption:
+            assert encryption is not None
+            crypt = create_luks_volume(
+                dev, spec.label or spec.partlabel, encryption, log
+            )
+            encrypted.append(crypt)
+            dev = crypt.mapper
         _format_partition(dev, spec, idx + 1, log=log)
         if spec.mount_point == "/":
             root_path, root_fs = dev, spec.filesystem
@@ -349,4 +412,6 @@ def apply_existing_layout(
         root_filesystem=root_fs,
         root_subvolumes=root_subvolumes,
         esp_reused=True,
+        encrypted_volumes=encrypted,
+        md_devices=md_devices,
     )

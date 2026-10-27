@@ -9,11 +9,13 @@
 # deletes any other partition. The ESP is mounted, not formatted.
 #
 # The two spare partitions become one mdadm RAID0 array. RAID0 has no
-# redundancy: losing either disk loses this system.
+# redundancy: losing either disk loses this system. One LUKS2 device sits
+# on the array; it unlocks with TPM2 + PIN (PCR 7) or the recovery key the
+# installer shows once. One btrfs inside holds everything except /boot.
 
 [meta]
 name = "p1 Spare Slot"
-description = "Existing 'spare' partitions on both NVMe disks: mdadm RAID0, btrfs; the current ESP is reused."
+description = "Existing 'spare' partitions on both NVMe disks: mdadm RAID0, LUKS2 (TPM2 + PIN), btrfs; the current ESP is reused."
 kind = "existing"
 bootloaders = ["limine"]
 
@@ -34,6 +36,7 @@ disks = "spare-pair"
 partlabel = "spare"
 raid_level = "0"
 raid_backend = "mdadm"
+encryption = "luks2"
 filesystem = "btrfs"
 mount_point = "/"
 label = "arches"

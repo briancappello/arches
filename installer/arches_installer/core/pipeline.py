@@ -7,6 +7,7 @@ error handling, and phase ordering are consistent regardless of the entry point.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +26,13 @@ from arches_installer.core.disk_layout import (
     write_disk_roles_state,
     _part_name,
 )
-from arches_installer.core.existing import apply_existing_layout, plan_existing_layout
+from arches_installer.core.encryption import EncryptionSecrets
+from arches_installer.core.existing import (
+    apply_existing_layout,
+    configure_target_storage,
+    layout_packages,
+    plan_existing_layout,
+)
 from arches_installer.core.firstboot import inject_firstboot_service
 from arches_installer.core.hardware import HardwareConfig
 from arches_installer.core.install import append_swap_fstab_entries, install_system
@@ -66,6 +73,8 @@ class InstallParams:
     # Extra Ansible variables from auto-install config [ansible_vars].
     # Forwarded as -e key=value to the firstboot ansible-playbook run.
     ansible_vars: dict[str, str] | None = None
+    # TPM PIN and recovery-key display for encrypted (existing) layouts.
+    encryption: EncryptionSecrets | None = None
 
 
 def run_install_pipeline(
@@ -109,7 +118,9 @@ def run_install_pipeline(
             # The guard runs here, right before the first write, so a
             # disk that changed after the confirm screen is still caught.
             plan = plan_existing_layout(params.disk_layout, params.resolved_disk_roles)
-            parts = apply_existing_layout(params.disk_layout, plan, log=log)
+            parts = apply_existing_layout(
+                params.disk_layout, plan, log=log, encryption=params.encryption
+            )
             log("[green]Existing partitions prepared successfully.[/green]")
         elif params.resolved_disk_roles is not None:
             # Multi-disk role-based path: a separate resolver step
@@ -165,6 +176,19 @@ def run_install_pipeline(
 
     # Phase 2: System install
     log("[bold cyan]== Phase 2: System Install ==[/bold cyan]")
+    if params.disk_layout is not None and params.disk_layout.is_existing:
+        extra = [
+            p
+            for p in layout_packages(params.disk_layout)
+            if p not in template.install.pacstrap
+        ]
+        if extra:
+            template = dataclasses.replace(
+                template,
+                install=dataclasses.replace(
+                    template.install, pacstrap=template.install.pacstrap + extra
+                ),
+            )
     install_system(
         platform,
         template,
@@ -179,6 +203,7 @@ def run_install_pipeline(
     # /proc/swaps which is empty during install.
     if parts.swap_partitions:
         append_swap_fstab_entries(parts.swap_partitions, log=log)
+    configure_target_storage(parts, log=log)
     log("[green]System installed successfully.[/green]")
 
     # Phase 3: Bootloader

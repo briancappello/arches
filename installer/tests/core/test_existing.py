@@ -18,6 +18,7 @@ from arches_installer.core.disk_layout import (
     load_disk_layout,
     resolve_disk_roles,
 )
+from tests.core.fakes import LUKS_UUID
 from arches_installer.core.existing import (
     ESP_MARKER,
     ExistingLayoutError,
@@ -75,6 +76,7 @@ class FakeProbe:
         }
         self.files: dict[str, set[str]] = {f"{DISK_B}p1": {ESP_MARKER}}
         self.users: dict[str, list[str]] = {}
+        self.tpm2 = True
 
     def partitions(self, disk: str) -> list[tuple[str, str]]:
         return self.table[disk]
@@ -87,6 +89,9 @@ class FakeProbe:
 
     def has_file(self, part: str, name: str) -> bool:
         return name in self.files.get(part, set())
+
+    def has_tpm2(self) -> bool:
+        return self.tpm2
 
 
 @pytest.fixture
@@ -376,41 +381,46 @@ DESTRUCTIVE = (
 )
 
 
-def _record(calls: list[list[str]]):
-    def fake(cmd, log=None, **kw):
-        calls.append(list(cmd))
-        return subprocess.CompletedProcess(cmd, 0, "", "")
-
-    return fake
-
-
 class TestApply:
-    def test_writes_only_to_targets(self, layout, resolved, tmp_path) -> None:
+    def test_writes_only_to_targets(self, layout, resolved, tools) -> None:
         plan = plan_existing_layout(layout, resolved, probe=FakeProbe())
-        calls: list[list[str]] = []
-        with (
-            patch("arches_installer.core.existing.logged_run", _record(calls)),
-            patch("arches_installer.core.disk_layout.logged_run", _record(calls)),
-            patch("arches_installer.core.disk_layout.MOUNT_ROOT", tmp_path),
-        ):
-            parts = apply_existing_layout(layout, plan)
+        parts = apply_existing_layout(layout, plan, encryption=tools.secrets())
 
-        allowed = set(plan.targets) | {"/dev/md/arches"}
-        for cmd in calls:
+        allowed = set(plan.targets) | {"/dev/md/arches", "/dev/mapper/arches"}
+        for cmd in tools.calls:
             assert cmd[0] not in ("sgdisk", "wipefs", "parted", "sfdisk", "mkfs.fat")
             if cmd[0] in DESTRUCTIVE:
                 devs = {a for a in cmd[1:] if a.startswith("/dev/")}
                 assert devs <= allowed, cmd
 
-        mdadm = next(c for c in calls if c[0] == "mdadm")
+        mdadm = next(c for c in tools.calls if c[0] == "mdadm")
         assert "--level=0" in mdadm
         assert mdadm[-2:] == [f"{DISK_A}p3", f"{DISK_B}p3"]
-        assert any(c[0] == "mkfs.btrfs" and c[-1] == "/dev/md/arches" for c in calls)
+        luks = next(c for c in tools.calls if c[:2] == ["cryptsetup", "luksFormat"])
+        assert luks[-1] == "/dev/md/arches"
+        assert any(
+            c[0] == "mkfs.btrfs" and c[-1] == "/dev/mapper/arches" for c in tools.calls
+        )
         # ESP mounted as-is at /boot, never formatted
-        assert ["mount", f"{DISK_B}p1", str(tmp_path / "boot")] in calls
+        assert ["mount", f"{DISK_B}p1", str(tools.mnt / "boot")] in tools.calls
         assert parts.esp == f"{DISK_B}p1"
         assert parts.esp_reused
+        assert parts.root == "/dev/mapper/arches"
         assert parts.root_subvolumes == ["@", "@home", "@var", "@snapshots"]
+        assert parts.md_devices == ["/dev/md/arches"]
+        assert [v.luks_uuid for v in parts.encrypted_volumes] == [LUKS_UUID]
+
+    def test_encrypted_layout_needs_a_pin(self, layout, resolved, tools) -> None:
+        plan = plan_existing_layout(layout, resolved, probe=FakeProbe())
+        with pytest.raises(ExistingLayoutError, match="PIN"):
+            apply_existing_layout(layout, plan)
+        assert tools.calls == []
+
+    def test_guard_refuses_encrypted_layout_without_tpm(self, layout, resolved) -> None:
+        probe = FakeProbe()
+        probe.tpm2 = False
+        with pytest.raises(ExistingLayoutError, match="no TPM 2.0"):
+            plan_existing_layout(layout, resolved, probe=probe)
 
 
 class TestPipeline:
@@ -460,3 +470,54 @@ class TestPipeline:
             with pytest.raises(RuntimeError, match="existing partitions"):
                 run_install_pipeline(params, log=lambda m: None)
         legacy.assert_not_called()
+
+
+class TestPipelineEncrypted:
+    def test_unlock_config_written_between_install_and_bootloader(
+        self, layout, resolved, x86_64_platform, dev_workstation_template
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from arches_installer.core.disk import PartitionMap
+        from arches_installer.core.encryption import EncryptionSecrets
+        from arches_installer.core.pipeline import InstallParams, run_install_pipeline
+
+        secrets = EncryptionSecrets(pin="123456", on_recovery_key=lambda k: None)
+        params = InstallParams(
+            platform=x86_64_platform,
+            template=dev_workstation_template,
+            device="",
+            hostname="h",
+            username="u",
+            password="p",
+            disk_layout=layout,
+            resolved_disk_roles=resolved,
+            encryption=secrets,
+        )
+        parts = PartitionMap(
+            esp=f"{DISK_B}p1", root="/dev/mapper/arches", root_filesystem="btrfs"
+        )
+        order = MagicMock()
+        mod = "arches_installer.core.pipeline"
+        with (
+            patch(f"{mod}.plan_existing_layout"),
+            patch(f"{mod}.apply_existing_layout", return_value=parts) as apply,
+            patch(f"{mod}.install_system", order.install_system),
+            patch(f"{mod}.configure_target_storage", order.configure_target_storage),
+            patch(f"{mod}.install_bootloader", order.install_bootloader),
+            patch(f"{mod}.setup_snapshots"),
+            patch(f"{mod}.inject_firstboot_service"),
+            patch(f"{mod}.write_disk_roles_state"),
+            patch(f"{mod}._persist_install_log"),
+        ):
+            run_install_pipeline(params, log=lambda m: None)
+
+        assert apply.call_args.kwargs["encryption"] is secrets
+        assert [c[0] for c in order.mock_calls] == [
+            "install_system",
+            "configure_target_storage",
+            "install_bootloader",
+        ]
+        template = order.install_system.call_args[0][1]
+        for pkg in ("mdadm", "cryptsetup", "tpm2-tss"):
+            assert pkg in template.install.pacstrap
