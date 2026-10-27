@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
 from arches_installer.core.network import copy_network_profiles
@@ -1374,11 +1375,18 @@ def install_system(
     hardware: HardwareConfig | None = None,
     log: LogCallback | None = None,
     ssh_authorized_keys: list[str] | None = None,
+    after_pacstrap: Callable[[], None] | None = None,
 ) -> None:
-    """Full install pipeline after disk is prepared and mounted."""
+    """Full install pipeline after disk is prepared and mounted.
+
+    *after_pacstrap* runs between pacstrap and genfstab (the shared-ESP
+    install mounts the ESP there).
+    """
     require_local_repo_key()
     _pre_pacstrap_setup(log)
     pacstrap(platform, template, log, hardware=hardware)
+    if after_pacstrap is not None:
+        after_pacstrap()
     generate_fstab(log)
     configure_var_bind_mounts(log)
     install_pacman_conf(log)

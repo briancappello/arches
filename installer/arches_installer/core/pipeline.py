@@ -33,6 +33,8 @@ from arches_installer.core.existing import (
     configure_target_storage,
     layout_packages,
     plan_existing_layout,
+    remount_shared_esp,
+    unmount_shared_esp,
 )
 from arches_installer.core.firstboot import inject_firstboot_service
 from arches_installer.core.hardware import HardwareConfig
@@ -140,6 +142,7 @@ def run_install_pipeline(
             if platform.bootloader.type == "limine":
                 limine_backup = backup_limine_conf(MOUNT_ROOT / "boot", log=log)
                 write_limine_defaults(platform, parts.root, parts=parts, log=log)
+            unmount_shared_esp(log=log)
             log("[green]Existing partitions prepared successfully.[/green]")
         elif params.resolved_disk_roles is not None:
             # Multi-disk role-based path: a separate resolver step
@@ -217,6 +220,9 @@ def run_install_pipeline(
         hardware=params.hardware,
         log=log,
         ssh_authorized_keys=params.ssh_authorized_keys,
+        after_pacstrap=(
+            (lambda: remount_shared_esp(parts.esp, log=log)) if parts.esp_reused else None
+        ),
     )
     # genfstab runs inside install_system before chroot config; swap
     # partitions need to be appended afterward because genfstab reads

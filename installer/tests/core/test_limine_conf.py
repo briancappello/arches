@@ -227,6 +227,7 @@ class TestPipelineMerge:
             patch(f"{mod}.apply_existing_layout", return_value=parts),
             patch(f"{mod}.backup_limine_conf", order.backup_limine_conf),
             patch(f"{mod}.write_limine_defaults", order.write_limine_defaults),
+            patch(f"{mod}.unmount_shared_esp", order.unmount_shared_esp),
             patch(f"{mod}.install_system", order.install_system),
             patch(f"{mod}.configure_target_storage"),
             patch(f"{mod}.prepare_secure_boot", order.prepare_secure_boot),
@@ -242,6 +243,7 @@ class TestPipelineMerge:
         assert [c[0] for c in order.mock_calls] == [
             "backup_limine_conf",
             "write_limine_defaults",
+            "unmount_shared_esp",
             "install_system",
             "prepare_secure_boot",
             "install_bootloader",

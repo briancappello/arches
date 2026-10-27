@@ -18,13 +18,15 @@ Before anything is written, :func:`plan_existing_layout` checks the guard
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from arches_installer.core.disk import EncryptedVolume, PartitionMap
+from arches_installer.core.disk import MOUNT_ROOT, EncryptedVolume, PartitionMap
 from arches_installer.core.disk_layout import (
     DiskLayout,
     PartitionSpec,
@@ -331,6 +333,40 @@ def layout_packages(layout: DiskLayout) -> list[str]:
                 if pkg not in pkgs:
                     pkgs.append(pkg)
     return pkgs
+
+
+def unmount_shared_esp(log: LogCallback | None = None) -> None:
+    """Take the shared ESP away from the target before pacstrap.
+
+    Installing kernels runs mkinitcpio's preset hook and limine's deploy
+    hook; with the ESP at /mnt/boot they would write vmlinuz-*,
+    initramfs-*.img (overwriting another system's files of that name),
+    limine.conf entries and an NVRAM entry onto the shared ESP. Without
+    it they write into the new root's own /boot directory instead.
+    """
+    logged_run(["umount", str(MOUNT_ROOT / "boot")], log=log)
+
+
+def remount_shared_esp(esp: str, log: LogCallback | None = None) -> None:
+    """After pacstrap: drop what it wrote into the root's /boot, mount the ESP.
+
+    Also removes the mkinitcpio presets: this system boots UKIs built by
+    limine-mkinitcpio, and a later ``mkinitcpio -P`` (chwd runs one) would
+    otherwise build preset images onto the shared ESP.
+    """
+    boot = MOUNT_ROOT / "boot"
+    if os.path.ismount(boot):
+        raise ExistingLayoutError(f"{boot} is still a mount point; not cleaning it")
+    for child in boot.iterdir() if boot.is_dir() else []:
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    for preset in (MOUNT_ROOT / "etc" / "mkinitcpio.d").glob("*.preset"):
+        preset.unlink()
+        _log(f"Removed mkinitcpio preset {preset.name} (UKIs only)", log)
+    boot.mkdir(parents=True, exist_ok=True)
+    logged_run(["mount", esp, str(boot)], log=log)
 
 
 def configure_target_storage(

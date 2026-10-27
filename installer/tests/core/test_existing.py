@@ -530,6 +530,7 @@ class TestPipelineEncrypted:
             patch(f"{mod}.apply_existing_layout", return_value=parts) as apply,
             patch(f"{mod}.backup_limine_conf", return_value=None),
             patch(f"{mod}.write_limine_defaults"),
+            patch(f"{mod}.unmount_shared_esp", order.unmount_shared_esp),
             patch(f"{mod}.install_system", order.install_system),
             patch(f"{mod}.configure_target_storage", order.configure_target_storage),
             patch(f"{mod}.prepare_secure_boot", order.prepare_secure_boot),
@@ -543,6 +544,7 @@ class TestPipelineEncrypted:
 
         assert apply.call_args.kwargs["encryption"] is secrets
         assert [c[0] for c in order.mock_calls] == [
+            "unmount_shared_esp",
             "install_system",
             "configure_target_storage",
             "prepare_secure_boot",
@@ -551,3 +553,97 @@ class TestPipelineEncrypted:
         template = order.install_system.call_args[0][1]
         for pkg in ("mdadm", "cryptsetup", "tpm2-tss", "sbctl", "sbsigntools"):
             assert pkg in template.install.pacstrap
+
+
+class TestSharedEspDuringPacstrap:
+    """QEMU, 2026-10-27: with the ESP mounted, pacstrap's kernel hooks wrote
+    vmlinuz-*/initramfs-*.img over the other system's files on the ESP."""
+
+    def test_remount_cleans_root_boot_and_presets(self, tmp_path) -> None:
+        from arches_installer.core.existing import remount_shared_esp
+
+        boot = tmp_path / "boot"
+        (boot / "memtest86+").mkdir(parents=True)
+        (boot / "vmlinuz-linux-cachyos").write_text("k")
+        (boot / "initramfs-linux-cachyos.img").write_text("i")
+        presets = tmp_path / "etc/mkinitcpio.d"
+        presets.mkdir(parents=True)
+        (presets / "linux-cachyos.preset").write_text("p")
+        calls: list[list[str]] = []
+        with (
+            patch("arches_installer.core.existing.MOUNT_ROOT", tmp_path),
+            patch(
+                "arches_installer.core.existing.logged_run",
+                lambda cmd, log=None: calls.append(cmd),
+            ),
+        ):
+            remount_shared_esp("/dev/nvme1n1p1")
+        assert list(boot.iterdir()) == []
+        assert list(presets.iterdir()) == []
+        assert calls == [["mount", "/dev/nvme1n1p1", str(boot)]]
+
+    def test_refuses_to_clean_a_mounted_boot(self, tmp_path) -> None:
+        from arches_installer.core.existing import remount_shared_esp
+
+        (tmp_path / "boot").mkdir()
+        with (
+            patch("arches_installer.core.existing.MOUNT_ROOT", tmp_path),
+            patch("os.path.ismount", return_value=True),
+        ):
+            with pytest.raises(ExistingLayoutError, match="still a mount point"):
+                remount_shared_esp("/dev/nvme1n1p1")
+
+    def test_install_system_mounts_esp_between_pacstrap_and_fstab(
+        self, tmp_path, x86_64_platform, dev_workstation_template
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from arches_installer.core import install
+
+        order = MagicMock()
+        names = [
+            "require_local_repo_key",
+            "_pre_pacstrap_setup",
+            "pacstrap",
+            "generate_fstab",
+            "configure_var_bind_mounts",
+            "install_pacman_conf",
+            "install_local_repo_key",
+            "copy_mirrorlists",
+            "sync_chroot_databases",
+            "install_override_packages",
+            "configure_locale",
+            "configure_timezone",
+            "configure_hostname",
+            "create_user",
+            "deploy_ssh_key",
+            "copy_apple_firmware",
+            "configure_apple_input",
+            "copy_network_profiles",
+            "preseed_network_deps",
+            "run_hardware_detection",
+            "_unmount_iso_cache_from_target",
+            "enable_services",
+            "configure_ssh",
+            "stage_ansible",
+        ]
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            for n in names:
+                stack.enter_context(patch.object(install, n, getattr(order, n)))
+            stack.enter_context(patch.object(install, "MOUNT_ROOT", tmp_path))
+            install.install_system(
+                x86_64_platform,
+                dev_workstation_template,
+                "h",
+                "u",
+                "p",
+                after_pacstrap=order.after_pacstrap,
+            )
+        seq = [c[0] for c in order.mock_calls]
+        assert (
+            seq.index("pacstrap")
+            < seq.index("after_pacstrap")
+            < seq.index("generate_fstab")
+        )
