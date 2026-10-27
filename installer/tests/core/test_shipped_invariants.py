@@ -266,3 +266,34 @@ def test_live_iso_can_build_the_encrypted_spare_layout() -> None:
     for pkg in ("mdadm", "tpm2-tss"):
         assert pkg in listed
 
+
+def test_usb_image_is_handed_back_to_the_sudo_user(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    script = _REPO_ROOT / "scripts/iso-to-usb-image.sh"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "chown.log"
+    (bin_dir / "chown").write_text(f'#!/bin/sh\necho "$@" >> {log}\n')
+    (bin_dir / "chown").chmod(0o755)
+    img = tmp_path / "x.usb.img"
+    img.write_text("")
+
+    def run(**env):
+        return subprocess.run(
+            ["bash", "-c", f'source "{script}"; give_to_invoking_user "{img}"'],
+            env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", **env),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    assert run().returncode == 0
+    assert not log.exists()
+    assert run(SUDO_UID="1000", SUDO_GID="1000").returncode == 0
+    assert log.read_text().split() == ["1000:1000", str(img)]
+    # The cleanup trap, which runs on every exit, hands it back.
+    text = script.read_text()
+    cleanup = text[text.index("cleanup() {") :]
+    assert 'give_to_invoking_user "$USB_IMG"' in cleanup.split("}")[0]

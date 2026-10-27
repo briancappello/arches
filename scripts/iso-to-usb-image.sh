@@ -26,6 +26,20 @@
 #
 set -euo pipefail
 
+# The script runs under sudo (loop mounts), but the image belongs to the
+# user who asked for it: give it to $SUDO_UID:$SUDO_GID so no root-owned
+# file is left in out/.
+give_to_invoking_user() {
+    local file="$1"
+    [[ -e "$file" && -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]] || return 0
+    chown "$SUDO_UID:$SUDO_GID" "$file"
+}
+
+# Sourced (by tests): define the helpers only.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
+
 # ── Arguments ─────────────────────────────────────────
 ISO="${1:-}"
 if [[ -z "$ISO" || ! -f "$ISO" ]]; then
@@ -66,6 +80,7 @@ IMG_MNT="${WORK}/img"
 LOOP=""
 cleanup() {
     echo "Cleaning up..."
+    give_to_invoking_user "$USB_IMG"
     umount "$IMG_MNT" 2>/dev/null || true
     umount "$ISO_MNT" 2>/dev/null || true
     [[ -n "$LOOP" ]] && losetup -d "$LOOP" 2>/dev/null || true
