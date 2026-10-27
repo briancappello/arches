@@ -12,14 +12,14 @@ Always use `uv` for all Python operations. The Python project lives in `installe
 
 ### Persistent Builder
 
-A persistent privileged Podman container is used for ISO builds. It runs under root's podman with passwordless sudo configured for the `brian` user via `/etc/sudoers.d/zz-arches-builder`.
+A persistent privileged Podman container is used for ISO builds. It runs under the user's **rootless** Podman and uses no sudo. Container root is the host user, so build output in the project is user-owned. Never run podman through sudo, and never add a passwordless sudoers rule for it: that is passwordless root for every process the user runs, agents included. Rootless setup (subuid range, btrfs storage driver) is in README.md.
 
-**Starting the builder** (one-time per session, no sudo password needed):
+**Starting the builder** (one-time per session):
 ```bash
 ./scripts/builder.sh start
 ```
 
-**Building ISOs** (no sudo password needed):
+**Building ISOs**:
 ```bash
 ./scripts/builder.sh build       # Graphical live ISO (default)
 ./scripts/builder.sh build-fb    # Framebuffer-only ISO (no desktop)
@@ -89,8 +89,7 @@ ssh-keygen -R "[localhost]:2222"
 
 If the offline package cache has corrupted/outdated packages:
 ```bash
-# Use the builder container (has root access to the bind-mounted dir)
-./scripts/builder.sh exec rm -rf /build/.offline-cache
+rm -rf .offline-cache
 ```
 
 If the AUR repo needs rebuilding:
@@ -105,7 +104,9 @@ FORCE=1 ./scripts/builder.sh build
 
 ### Architecture Notes
 
-- The builder container runs with `--privileged` and `--pids-limit=-1` (unlimited PIDs required for mkarchiso)
+- The builder container runs rootless with `--privileged` (capabilities inside the user namespace only) and `--pids-limit=-1` (unlimited PIDs required for mkarchiso)
+- Root in a user namespace cannot mount devtmpfs, so mkarchiso runs `pacstrap` and `arch-chroot` in unshare mode through the shims in `scripts/userns/`; the image sets `root:1:65535` in `/etc/subuid` and `/etc/subgid` for that
+- The builder uses Podman's default rootless network; `--network=host` would stop the container from mounting sysfs
 - The project directory is bind-mounted at `/build` inside the container
 - Sibling repos (for custom KDE packages) are discovered from `modules/*/build.mounts` and mounted read-only
 - `SUDO_USER=builder` is set in the container so `build-aur-repo.sh` can drop privileges for `makepkg`
