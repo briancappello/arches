@@ -194,9 +194,22 @@ Each row gets a test that fails if the old default comes back.
   unsigned repository and stages the key for the live ISO and the
   installer. `build-aur-repo.sh` keeps a signed database while no package
   changed.
-- Until the key exists, every ISO build fails at that check: nothing could
-  verify arches-local. `aarch64-apple` keeps `Optional TrustAll`: its
-  host-install flow (`Containerfile.install`) builds an unsigned empty repo.
+- Until the key exists, every normal ISO build fails at that check:
+  nothing could verify arches-local.
+- TEST-ONLY builds (decided 2026-10-27, operator's recommended option):
+  `ARCHES_TEST_BUILD=1` makes `stage-repo-key.sh` generate a throwaway key
+  for that build (valid one day), sign arches-local with it and stage it.
+  The ISO is marked: its file name ends in `-TEST-ONLY.iso`, it carries
+  `/opt/arches/TEST-BUILD` and an `/etc/issue.d` banner, and its installer
+  refuses to run unless `systemd-detect-virt --vm` says kvm/qemu and DMI
+  says QEMU. A normal build removes any marker and still needs `keys/`.
+  To reverse: delete the `ARCHES_TEST_BUILD` block in `stage-repo-key.sh`
+  and `refuse_test_build_on_hardware` in `__main__.py`.
+- Known limitation: `aarch64-apple` keeps `SigLevel = Optional TrustAll`
+  for arches-local. Its host-install flow (`Containerfile.install`) creates
+  an empty, unsigned repository inside a container and never passes
+  through `stage-repo-key.sh`, so `Required` would make every Apple
+  host-install fail. Signing that flow needs its own design.
 - Losing the YubiKey means a new key and re-signing; nothing already
   installed stops working.
 
@@ -224,9 +237,9 @@ Each row gets a test that fails if the old default comes back.
    recovery key down when it is shown; store it offline.
 4. Validate the new system with Secure Boot off (it boots from the same
    Limine menu as the current one).
-5. Decide O4, then, on the new system: `sudo arches-secureboot-enroll`;
-   turn Secure Boot on in the firmware; boot, enter the recovery key once;
-   `sudo arches-tpm-reenroll`.
+5. On the new system: `sudo arches-secureboot-enroll`. It freezes the
+   current system (O4a) and enrolls the keys. Turn Secure Boot on in the
+   firmware; boot, enter the recovery key once; `sudo arches-tpm-reenroll`.
 6. Later, a separate plan: migrate data through external storage.
 
 ## Open decisions
@@ -234,11 +247,17 @@ Each row gets a test that fails if the old default comes back.
 - **O1.** Decided: mdadm RAID0, one LUKS2 device, 200G (D2).
 - **O2.** Decided: lockdown is a follow-up (D5), not part of this work.
 - **O3.** Decided: the `arches-local` signing key lives on the YubiKey (D7).
-- **O4.** Open: what the current system may do once the keys are enrolled
-  (D4 correction). Its Limine entries keep booting under Secure Boot, and
-  any write it makes to the ESP stops every entry from booting. Options:
-  (a) before enrolling, stop it writing the ESP (disable
-  limine-snapper-sync and its limine hooks, or drop `/boot` from its
-  fstab), and keep it as a frozen fallback; (b) at enrolling, remove its
-  entries from `limine.conf` (after a backup), so only signed UKIs boot;
-  (c) accept the risk and recover by turning Secure Boot off.
+- **O4.** Decided (2026-10-27, option a): `arches-secureboot-enroll` runs
+  `arches-freeze-other-systems` before it enrolls. For every other OS entry
+  in `limine.conf` it backs up `limine.conf` and the Limine binary (to
+  `<ESP>/arches-freeze-<time>/` and `/var/lib/arches/freeze-<time>/`),
+  mounts that system's root (from `root=UUID=` in its entry), and:
+  gives `/boot` in its fstab `noauto,nofail` (the old fstab is kept as
+  `/etc/fstab.arches-freeze-<time>`), masks `limine-snapper-sync.service`,
+  and renames its `10-limine-reset-enroll` and `90-limine-enroll-config`
+  hooks to `*.disabled`. The frozen system still boots from the menu
+  (hashed entries), but writes nothing to the ESP, so it must not be
+  updated while frozen. To reverse: boot it and run
+  `sudo arches-unfreeze` (written into it by the freeze), then reboot;
+  with Secure Boot on, its next ESP write breaks the boot chain, so turn
+  Secure Boot off first or stay frozen.
