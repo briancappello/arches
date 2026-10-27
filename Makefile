@@ -306,7 +306,9 @@ _iso: _check-root _check-deps _aur-repo _stage-installer _stage-modules _stage-a
 	@echo "══ Building Arches ISO ($(PLATFORM), mode: $(ISO_MODE)$(if $(filter 1,$(OFFLINE)), — OFFLINE)$(if $(ARCHES_TEMPLATE), — TEMPLATE=$(ARCHES_TEMPLATE))) ══"
 	@rm -rf $(WORK_DIR)
 	@mkdir -p $(OUT_DIR)
-	mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
+	@# scripts/userns/ makes pacstrap and arch-chroot run in unshare mode,
+	@# so the build works as root of a rootless container's user namespace.
+	PATH="$(SCRIPTS)/userns:$$PATH" mkarchiso -v -w $(WORK_DIR) -o $(OUT_DIR) $(ISO_PROFILE)
 	@echo ""
 	@echo "══ ISO built ══"
 	@for f in $(OUT_DIR)/arches-*.iso; do \
