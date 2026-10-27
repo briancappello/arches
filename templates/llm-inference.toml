@@ -27,6 +27,12 @@ locale = "en_US.UTF-8"
 [gpu]
 stacks = ["amd-vulkan"]
 
+# Headless: sshd runs (keys only: declare them in the install config's
+# [ssh] authorized_keys) and firewalld lets it in.
+[ssh]
+enable = true
+open_firewall = true
+
 [modules]
 include = [
     # Base

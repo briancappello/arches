@@ -858,6 +858,39 @@ def deploy_ssh_key(
     _log(f"Installed authorized_keys for {username}.", log)
 
 
+SSHD_HARDENING = """\
+# Written by the Arches installer: keys only, no root login.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+"""
+
+
+def configure_ssh(
+    template: InstallTemplate,
+    log: LogCallback | None = None,
+) -> None:
+    """Keys-only sshd; firewalld opens SSH only when the template says so."""
+    ssh_dir = MOUNT_ROOT / "etc" / "ssh"
+    if ssh_dir.is_dir():
+        conf_d = ssh_dir / "sshd_config.d"
+        conf_d.mkdir(parents=True, exist_ok=True)
+        (conf_d / "10-arches.conf").write_text(SSHD_HARDENING)
+        _log("sshd: keys only, no root login (sshd_config.d/10-arches.conf).", log)
+    if (MOUNT_ROOT / "usr" / "bin" / "firewall-offline-cmd").exists():
+        action = (
+            "--add-service=ssh" if template.ssh.open_firewall else "--remove-service=ssh"
+        )
+        chroot_run(["firewall-offline-cmd", "--zone=public", action], log=log)
+
+
+def services_for(template: InstallTemplate, services: list[str]) -> list[str]:
+    """Drop sshd unless the template turns SSH on."""
+    if template.ssh.enable:
+        return services
+    return [s for s in services if s not in ("sshd", "sshd.service", "sshd.socket")]
+
+
 def enable_services(
     services: list[str],
     log: LogCallback | None = None,
@@ -1380,5 +1413,6 @@ def install_system(
             if removed:
                 _log(f"Hardware profile disabling services: {', '.join(removed)}", log)
             services = [s for s in services if s not in disabled]
-    enable_services(services, log)
+    enable_services(services_for(template, services), log)
+    configure_ssh(template, log)
     stage_ansible(template, log)

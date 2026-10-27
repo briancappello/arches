@@ -55,24 +55,24 @@ make qemu-install
 # 4. Boot the installed system (first-boot ansible runs on first boot)
 make qemu-boot
 
-# 5. SSH into the running VM to inspect
-#    Username: arches, Password: password
-ssh -p 2222 arches@localhost
+# 5. Inspect the running VM on its serial console (QEMU's stdio)
 ```
 
 ### Debugging the Installed System via SSH
 
-SSH uses port 2222 forwarded to the VM. Since there is no interactive TTY available, use the `SSH_ASKPASS` trick:
+Installed systems take SSH keys only, and only keys the install config
+declares. Workstation templates (kde-workstation, cosmic-workstation) leave
+sshd off; server templates (vm-server, llm-inference) run it and open it in
+firewalld. To SSH into a test VM, use a server template and declare your key
+in the auto-install config:
+
+```toml
+[ssh]
+authorized_keys = ["ssh-ed25519 AAAA... you@host"]
+```
 
 ```bash
-# Set up the askpass helper (one-time per session)
-echo '#!/bin/sh
-echo password' > /tmp/sshpass.sh && chmod +x /tmp/sshpass.sh
-
-# SSH commands
-DISPLAY=:0 SSH_ASKPASS=/tmp/sshpass.sh SSH_ASKPASS_REQUIRE=force \
-  ssh -p 2222 -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new \
-  arches@localhost "<command>"
+ssh -p 2222 -o StrictHostKeyChecking=accept-new arches@localhost "<command>"
 
 # If host key changes (after reinstall), clear it first:
 ssh-keygen -R "[localhost]:2222"

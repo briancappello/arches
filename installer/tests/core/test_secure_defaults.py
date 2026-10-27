@@ -76,3 +76,60 @@ def test_auto_install_ssh_keys_are_explicit(tmp_path: Path) -> None:
     key = "ssh-ed25519 AAAA op@p1"
     cfg = AutoInstallConfig.from_dict({**base, "ssh": {"authorized_keys": [key]}})
     assert cfg.ssh_authorized_keys == [key]
+
+
+# D6 row 3: workstation templates leave sshd off; where it runs, keys only,
+# and firewalld opens SSH only when the template declares it.
+def test_sshd_off_on_workstations_and_keys_only_everywhere(tmp_path: Path) -> None:
+    from arches_installer.core.install import (
+        SSHD_HARDENING,
+        configure_ssh,
+        services_for,
+    )
+    from arches_installer.core.template import load_template, resolve_and_merge_modules
+
+    templates = _REPO / "templates"
+    for name, on in [
+        ("kde-workstation.toml", False),
+        ("cosmic-workstation.toml", False),
+        ("vm-server.toml", True),
+        ("llm-inference.toml", True),
+    ]:
+        tmpl = resolve_and_merge_modules(load_template(templates / name))
+        assert "sshd" in tmpl.services  # the networking module still lists it
+        assert ("sshd" in services_for(tmpl, tmpl.services)) is on, name
+        assert tmpl.ssh.open_firewall is on, name
+
+    for line in (
+        "PasswordAuthentication no",
+        "KbdInteractiveAuthentication no",
+        "PermitRootLogin no",
+    ):
+        assert line in SSHD_HARDENING.splitlines()
+
+    (tmp_path / "etc/ssh").mkdir(parents=True)
+    (tmp_path / "usr/bin").mkdir(parents=True)
+    (tmp_path / "usr/bin/firewall-offline-cmd").touch()
+    mod = "arches_installer.core.install"
+    for tmpl_name, action in [
+        ("kde-workstation.toml", "--remove-service=ssh"),
+        ("vm-server.toml", "--add-service=ssh"),
+    ]:
+        tmpl = load_template(templates / tmpl_name)
+        with patch(f"{mod}.MOUNT_ROOT", tmp_path), patch(f"{mod}.chroot_run") as chroot:
+            configure_ssh(tmpl)
+        assert chroot.call_args[0][0] == [
+            "firewall-offline-cmd",
+            "--zone=public",
+            action,
+        ]
+        conf = tmp_path / "etc/ssh/sshd_config.d/10-arches.conf"
+        assert conf.read_text() == SSHD_HARDENING
+
+
+def test_ssh_is_off_unless_a_template_turns_it_on() -> None:
+    from arches_installer.core.template import InstallTemplate
+
+    tmpl = InstallTemplate.from_dict({"meta": {"name": "x"}})
+    assert not tmpl.ssh.enable
+    assert not tmpl.ssh.open_firewall

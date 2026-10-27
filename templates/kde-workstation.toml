@@ -6,6 +6,11 @@ description = "KDE Plasma desktop with full development toolchain"
 timezone = "America/Denver"
 locale = "en_US.UTF-8"
 
+# Workstation: sshd stays off and firewalld keeps SSH closed.
+[ssh]
+enable = false
+open_firewall = false
+
 [modules]
 include = [
     # Base
