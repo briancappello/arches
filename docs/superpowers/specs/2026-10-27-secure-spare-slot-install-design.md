@@ -47,11 +47,17 @@ A new layout kind, `existing`, names its target partitions by PARTLABEL
 (`spare`) on disks chosen by the normal disk roles. It creates no partition
 table. Before it writes anything, the installer refuses to continue unless:
 
-- every target partition carries the declared PARTLABEL;
-- `blkid` finds no signature on it (no filesystem, no LUKS, no RAID member);
-- the ESP it reuses already exists and is vfat.
+- every target partition carries the declared PARTLABEL, exactly once on
+  each disk of the role;
+- `blkid -p` finds no signature on it (no filesystem, no LUKS, no RAID
+  member), and nothing holds or mounts it;
+- the ESP it reuses already exists and is vfat. Both p1 disks have a vfat
+  partition labelled `ESP`, so the reused one is the only one that holds
+  `limine.conf`; zero or two such ESPs is a refusal;
+- for an encrypted layout, a TPM 2.0 is present.
 
-The ESP is mounted but never formatted. The guard is the reason the layout is
+The guard runs again right before the first write, and it reports every
+failed check at once. The ESP is mounted but never formatted. The guard is the reason the layout is
 safe to point at a disk that holds the current system, so it is tested: the
 QEMU proof checksums every other partition before and after the install.
 
@@ -69,6 +75,13 @@ QEMU proof checksums every other partition before and after the install.
 - RAID0 has no redundancy: losing either disk loses the system, as today.
 - A recovery key is generated at install, shown once, and never written to
   disk. The operator stores it offline.
+- The installer enrolls the TPM2 + PIN slot itself (the TUI asks for the
+  PIN). A random key in `/run` formats the device and enrolls both slots;
+  its own slot is then wiped, so the device ends with exactly two slots.
+  Neither the PIN nor the recovery key reaches a log.
+- PCR 7 changes when Secure Boot is turned on, so the first boot after D4
+  asks for the recovery key; `arches-tpm-reenroll` then binds the TPM
+  slot to the new PCR 7.
 
 ### D3. Boot on the shared ESP
 
@@ -81,6 +94,16 @@ QEMU proof checksums every other partition before and after the install.
 - Under Secure Boot, Limine's own binary is signed and the hash of
   `limine.conf` is enrolled into it (`limine enroll-config`). Then an edited
   config or an unsigned image does not boot.
+- How the merge works: limine-entry-tool (both systems run it) keys each OS
+  entry on its machine-id, so the new system adds `/+Arches Linux` and
+  leaves the others alone. The installer backs `limine.conf` up before
+  pacstrap (the kernel install already runs the tool), and after the
+  bootloader phase checks that the global options and every entry that is
+  not ours are byte-identical to the backup; if not, it restores the backup
+  and fails. UKIs are `EFI/Linux/arches_<kernel>.efi`.
+- The config hash is enrolled only in the D4 step, not at install: the
+  current system rewrites `limine.conf` (limine-snapper-sync, hourly) until
+  then, and an enrolled hash would stop every entry from booting.
 
 ### D4. Secure Boot keys
 
@@ -90,10 +113,21 @@ QEMU proof checksums every other partition before and after the install.
 - A pacman hook re-signs the UKIs and Limine after every update, and re-enrolls
   the config hash.
 - Enrolling is a separate, attended step that happens only after the new
-  system has booted correctly with Secure Boot off. After enrolling, the
-  current system no longer boots unless Secure Boot is turned off in the
-  firmware. That fallback is only a fallback if the operator sets a **BIOS
-  supervisor password**.
+  system has booted correctly with Secure Boot off
+  (`arches-secureboot-enroll`). The fallback (turning Secure Boot off) is
+  only a fallback if the operator sets a **BIOS supervisor password**.
+- The keys are created at install (`sbctl create-keys`, on the encrypted
+  root), so mkinitcpio signs each UKI as it builds it. A UKI is never
+  re-signed in place: that changes its bytes after `limine.conf` recorded
+  their hash. `arches-secureboot-resign` rebuilds unsigned UKIs instead.
+- Correction (Limine 12 `USAGE.md`, 2026-10-27): with Secure Boot active and
+  a config hash enrolled, Limine still boots `linux`-protocol entries whose
+  paths carry a BLAKE2 hash; only `efi` chainloads (our UKIs) rely on the
+  firmware's signature check. So the current system's entries **keep
+  booting** under Secure Boot. Its writes to the shared ESP then break the
+  chain for every entry: limine-snapper-sync changes `limine.conf` (the
+  enrolled hash no longer matches), and its `10-limine-reset-enroll` hook
+  restores an unsigned `limine_x64.efi`. See O4.
 
 ### D5. Kernel lockdown and out-of-tree modules
 
@@ -101,6 +135,27 @@ Lockdown would refuse NVIDIA and `evdi` unless the kernel trusts their
 signing key, and without shim our db key is not a module key. So this design
 does not turn lockdown on (a follow-up, O2). The implementation records whether CachyOS's
 kernel can trust a module key we control; enabling lockdown is a follow-up.
+
+Findings (p1, kernel 7.3.0-4-cachyos, `/proc/config.gz`, 2026-10-27):
+
+- `MODULE_SIG=y`, `MODULE_SIG_FORCE` off, `MODULE_SIG_ALL=y` with a
+  per-build key: in-tree modules are signed; unsigned ones load and taint.
+- `SECURITY_LOCKDOWN_LSM=y`, `LOCK_DOWN_KERNEL_FORCE_NONE=y`: lockdown is
+  available (`lockdown=integrity`) but off.
+- `INTEGRITY_PLATFORM_KEYRING=y`, `LOAD_UEFI_KEYS=y`: firmware db keys go
+  to the `.platform` keyring, which verifies kexec images, **not** modules.
+- `INTEGRITY_MACHINE_KEYRING=y`: MOK keys (`MokListRT`, set by shim) go to
+  `.machine`, which modules do trust.
+- On p1, `nvidia` and `evdi` are DKMS builds under `updates/dkms/`, signed
+  with the "DKMS module signing key" (`1F:44:72:...`), which the kernel
+  does not trust. In-tree modules carry the "Build time autogenerated
+  kernel key".
+- So a module key we control is trusted only through shim + MOK, or by
+  building it into the kernel. Without one of those, lockdown refuses the
+  DKMS-built NVIDIA and `evdi` modules. CachyOS ships
+  `linux-cachyos-nvidia-open`, built with the kernel; if it is signed with
+  the kernel's build key it would cover NVIDIA (to check), but nothing
+  covers `evdi`.
 
 ### D6. Defaults that change for every install
 
@@ -126,8 +181,22 @@ Each row gets a test that fails if the old default comes back.
   the operator runs with the YubiKey (`gpg` with the card, one touch per
   signature) before the packages enter the repository. That step is the
   human gate between agent-built code and p1's root.
-- `pacman.conf` gives `[arches-local]` `SigLevel = Required` and trusts only
-  that fingerprint. An unsigned or foreign package fails to install.
+- `pacman.conf` gives `[arches-local]` `SigLevel = Required`, and the
+  installer adds and locally signs only that key. An unsigned package, or
+  one signed by an unknown key, fails to install. pacman cannot pin a key
+  to one repository: a signature by any key the keyring already trusts
+  (Arch, CachyOS) also passes. Agents hold none of those keys.
+- Tooling: the public key and fingerprint are `keys/arches-local.{asc,fpr}`
+  (`keys/README.md` shows how to create the key on the card).
+  `scripts/sign-local-repo.sh` signs packages and the database and refuses
+  a key that is not on a smartcard. The ISO build
+  (`scripts/stage-repo-key.sh`, from `_stage-platform`) refuses an
+  unsigned repository and stages the key for the live ISO and the
+  installer. `build-aur-repo.sh` keeps a signed database while no package
+  changed.
+- Until the key exists, every ISO build fails at that check: nothing could
+  verify arches-local. `aarch64-apple` keeps `Optional TrustAll`: its
+  host-install flow (`Containerfile.install`) builds an unsigned empty repo.
 - Losing the YubiKey means a new key and re-signing; nothing already
   installed stops working.
 
@@ -148,14 +217,28 @@ Each row gets a test that fails if the old default comes back.
 ## Operator steps on p1
 
 1. Set a BIOS supervisor password.
-2. Boot the Arches ISO from USB and install into the spare pair.
-3. Validate the new system with Secure Boot off; set the TPM PIN; store the
-   recovery key offline.
-4. Enroll the Secure Boot keys and turn Secure Boot on.
-5. Later, a separate plan: migrate data through external storage.
+2. Create the arches-local key on the YubiKey, commit its public half, sign
+   the repository, build the ISO (`keys/README.md`).
+3. Boot the Arches ISO from USB and install into the spare pair with the
+   `p1 Spare Slot` layout. Set the TPM PIN in the installer; write the
+   recovery key down when it is shown; store it offline.
+4. Validate the new system with Secure Boot off (it boots from the same
+   Limine menu as the current one).
+5. Decide O4, then, on the new system: `sudo arches-secureboot-enroll`;
+   turn Secure Boot on in the firmware; boot, enter the recovery key once;
+   `sudo arches-tpm-reenroll`.
+6. Later, a separate plan: migrate data through external storage.
 
 ## Open decisions
 
 - **O1.** Decided: mdadm RAID0, one LUKS2 device, 200G (D2).
 - **O2.** Decided: lockdown is a follow-up (D5), not part of this work.
 - **O3.** Decided: the `arches-local` signing key lives on the YubiKey (D7).
+- **O4.** Open: what the current system may do once the keys are enrolled
+  (D4 correction). Its Limine entries keep booting under Secure Boot, and
+  any write it makes to the ESP stops every entry from booting. Options:
+  (a) before enrolling, stop it writing the ESP (disable
+  limine-snapper-sync and its limine hooks, or drop `/boot` from its
+  fstab), and keep it as a frozen fallback; (b) at enrolling, remove its
+  entries from `limine.conf` (after a backup), so only signed UKIs boot;
+  (c) accept the risk and recover by turning Secure Boot off.
