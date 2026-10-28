@@ -7,10 +7,12 @@ error handling, and phase ordering are consistent regardless of the entry point.
 
 from __future__ import annotations
 
+import dataclasses
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from arches_installer.core.bootloader import install_bootloader
+from arches_installer.core.bootloader import install_bootloader, write_limine_defaults
 from arches_installer.core.disk import PartitionMap
 from arches_installer.core.disk_layout import (
     DiskLayout,
@@ -25,10 +27,29 @@ from arches_installer.core.disk_layout import (
     write_disk_roles_state,
     _part_name,
 )
+from arches_installer.core.encryption import (
+    EncryptionSecrets,
+    discard_formatting_keys,
+    enroll_tpm2,
+)
+from arches_installer.core.existing import (
+    apply_existing_layout,
+    configure_target_storage,
+    layout_packages,
+    plan_existing_layout,
+    remount_shared_esp,
+    unmount_shared_esp,
+)
 from arches_installer.core.firstboot import inject_firstboot_service
 from arches_installer.core.hardware import HardwareConfig
 from arches_installer.core.install import append_swap_fstab_entries, install_system
+from arches_installer.core.limine_conf import (
+    backup_limine_conf,
+    check_merge,
+    read_machine_id,
+)
 from arches_installer.core.platform import PlatformConfig
+from arches_installer.core.secureboot import prepare_secure_boot
 from arches_installer.core.run import LogCallback
 from arches_installer.core.snapper import setup_snapshots
 from arches_installer.core.template import InstallTemplate
@@ -65,11 +86,29 @@ class InstallParams:
     # Extra Ansible variables from auto-install config [ansible_vars].
     # Forwarded as -e key=value to the firstboot ansible-playbook run.
     ansible_vars: dict[str, str] | None = None
+    # SSH public keys named by the install config (never implicit).
+    ssh_authorized_keys: list[str] = dataclasses.field(default_factory=list)
+    # TPM PIN and recovery-key display for encrypted (existing) layouts.
+    encryption: EncryptionSecrets | None = None
 
 
 def run_install_pipeline(
     params: InstallParams,
     log: LogCallback,
+) -> PartitionMap:
+    """Run the install; on failure, remove any LUKS formatting key left in /run."""
+    created: list = []
+    try:
+        return _run_install_pipeline(params, log, created)
+    except BaseException:
+        discard_formatting_keys(created)
+        raise
+
+
+def _run_install_pipeline(
+    params: InstallParams,
+    log: LogCallback,
+    created: list,
 ) -> PartitionMap:
     """Run the full install pipeline.
 
@@ -85,6 +124,9 @@ def run_install_pipeline(
     """
     platform = params.platform
     template = params.template
+    from arches_installer.core.disk import MOUNT_ROOT
+
+    limine_backup: Path | None = None
 
     # Phase 1: Disk
     log("[bold cyan]== Phase 1: Disk Setup ==[/bold cyan]")
@@ -99,7 +141,28 @@ def run_install_pipeline(
             log(f"  Home: {parts.home}")
         log("[green]Manual mounts verified.[/green]")
     elif params.disk_layout is not None:
-        if params.resolved_disk_roles is not None:
+        if params.disk_layout.is_existing:
+            if params.resolved_disk_roles is None:
+                raise RuntimeError(
+                    f"Layout {params.disk_layout.name!r} installs into existing "
+                    "partitions and needs resolved disk roles."
+                )
+            # The guard runs here, right before the first write, so a
+            # disk that changed after the confirm screen is still caught.
+            plan = plan_existing_layout(params.disk_layout, params.resolved_disk_roles)
+            parts = apply_existing_layout(
+                params.disk_layout, plan, log=log, encryption=params.encryption
+            )
+            # The shared limine.conf is backed up before pacstrap: the
+            # kernel install already runs limine-entry-tool. Writing our
+            # Limine defaults now gives those first entries our OS name
+            # and command line.
+            if platform.bootloader.type == "limine":
+                limine_backup = backup_limine_conf(MOUNT_ROOT / "boot", log=log)
+                write_limine_defaults(platform, parts.root, parts=parts, log=log)
+            unmount_shared_esp(log=log)
+            log("[green]Existing partitions prepared successfully.[/green]")
+        elif params.resolved_disk_roles is not None:
             # Multi-disk role-based path: a separate resolver step
             # already mapped each layout role to physical disks.
             log(
@@ -151,8 +214,23 @@ def run_install_pipeline(
             "Either manually partition and mount, or select a disk layout."
         )
 
+    created.extend(parts.encrypted_volumes)
+
     # Phase 2: System install
     log("[bold cyan]== Phase 2: System Install ==[/bold cyan]")
+    if params.disk_layout is not None and params.disk_layout.is_existing:
+        extra = [
+            p
+            for p in layout_packages(params.disk_layout)
+            if p not in template.install.pacstrap
+        ]
+        if extra:
+            template = dataclasses.replace(
+                template,
+                install=dataclasses.replace(
+                    template.install, pacstrap=template.install.pacstrap + extra
+                ),
+            )
     install_system(
         platform,
         template,
@@ -161,16 +239,28 @@ def run_install_pipeline(
         params.password,
         hardware=params.hardware,
         log=log,
+        ssh_authorized_keys=params.ssh_authorized_keys,
+        after_pacstrap=(
+            (lambda: remount_shared_esp(parts.esp, log=log))
+            if parts.esp_reused
+            else None
+        ),
     )
     # genfstab runs inside install_system before chroot config; swap
     # partitions need to be appended afterward because genfstab reads
     # /proc/swaps which is empty during install.
     if parts.swap_partitions:
         append_swap_fstab_entries(parts.swap_partitions, log=log)
+    configure_target_storage(parts, log=log)
+    for vol in parts.encrypted_volumes:
+        assert params.encryption is not None
+        enroll_tpm2(vol, params.encryption, log=log)
     log("[green]System installed successfully.[/green]")
 
     # Phase 3: Bootloader
     log("[bold cyan]== Phase 3: Bootloader ==[/bold cyan]")
+    if parts.esp_reused and platform.bootloader.type == "limine":
+        prepare_secure_boot(log=log)
     install_bootloader(
         platform,
         params.device,
@@ -179,6 +269,13 @@ def run_install_pipeline(
         parts=parts,
         log=log,
     )
+    if limine_backup is not None:
+        check_merge(
+            MOUNT_ROOT / "boot", limine_backup, read_machine_id(MOUNT_ROOT), log=log
+        )
+        keep = MOUNT_ROOT / "var" / "lib" / "arches" / "limine.conf.before-install"
+        keep.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(limine_backup, keep)
     log("[green]Bootloader installed.[/green]")
 
     # Phase 3 epilogue: mirror ESP for btrfs RAID 1/10
@@ -221,8 +318,6 @@ def run_install_pipeline(
     # validate disk presence on every subsequent boot. Only meaningful
     # when the multi-disk role path was used; harmless otherwise.
     if params.resolved_disk_roles is not None:
-        from arches_installer.core.disk import MOUNT_ROOT
-
         write_disk_roles_state(params.resolved_disk_roles, MOUNT_ROOT, log=log)
 
     # Copy install log to the installed system for post-mortem debugging

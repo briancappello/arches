@@ -51,6 +51,17 @@ class InstallPhases:
 
 
 @dataclass
+class SshConfig:
+    """Whether sshd runs, and whether firewalld lets it in (design D6).
+
+    Off unless a template turns it on. Where sshd runs it takes keys only.
+    """
+
+    enable: bool = False
+    open_firewall: bool = False
+
+
+@dataclass
 class AnsibleConfig:
     firstboot_roles: list[str] = field(default_factory=list)
 
@@ -75,6 +86,7 @@ class InstallTemplate:
     # and packages that get merged into the install. The ARCHES_GPU
     # env var overrides this list at build time.
     gpu_stacks: list[str] = field(default_factory=list)
+    ssh: SshConfig = field(default_factory=SshConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InstallTemplate:
@@ -89,6 +101,7 @@ class InstallTemplate:
         sys_raw = data.get("system", {})
         modules_raw = data.get("modules", {})
         gpu_raw = data.get("gpu", {})
+        ssh_raw = data.get("ssh", {})
 
         module_slugs = modules_raw.get("include", [])
         gpu_stacks = gpu_raw.get("stacks", [])
@@ -106,6 +119,10 @@ class InstallTemplate:
             graphical=False,
             module_slugs=module_slugs,
             gpu_stacks=gpu_stacks,
+            ssh=SshConfig(
+                enable=bool(ssh_raw.get("enable", False)),
+                open_firewall=bool(ssh_raw.get("open_firewall", False)),
+            ),
         )
 
 

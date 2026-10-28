@@ -25,3 +25,12 @@ memtest86+-efi
 # ─── Snapshot support (btrfs) ────────────────────────
 snapper
 snap-pac
+
+# ─── Existing-partition installs (disk-layouts/p1-spare.toml) ──
+# mdadm assembles the spare pair; tpm2-tss lets systemd-cryptenroll
+# reach the TPM.
+mdadm
+tpm2-tss
+
+# ─── memdiskfind, for archiso.conf's memdisk hook ─────
+syslinux

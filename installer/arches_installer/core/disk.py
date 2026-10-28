@@ -280,6 +280,21 @@ def _part_name(device: str, num: int) -> str:
 
 
 @dataclass
+class EncryptedVolume:
+    """An opened LUKS2 device: /dev/mapper/<name> on top of luks_device."""
+
+    name: str
+    luks_device: str
+    luks_uuid: str
+    # The install-time formatting key in /run, until enroll_tpm2 wipes it.
+    keyfile: str = field(default="", repr=False, compare=False)
+
+    @property
+    def mapper(self) -> str:
+        return f"/dev/mapper/{self.name}"
+
+
+@dataclass
 class PartitionMap:
     """Maps partition roles to device paths.
 
@@ -303,6 +318,12 @@ class PartitionMap:
     # pipeline for fstab sanity and by hardware-rescan for stability
     # validation.
     extra_mounts: list[tuple[str, str, str]] = field(default_factory=list)
+    # True when the ESP belongs to another system too (existing layouts):
+    # it was mounted, not formatted, and its limine.conf is merged.
+    esp_reused: bool = False
+    # LUKS2 devices the install created, and mdadm arrays it assembled.
+    encrypted_volumes: list[EncryptedVolume] = field(default_factory=list)
+    md_devices: list[str] = field(default_factory=list)
 
 
 def detect_mounts() -> PartitionMap | None:

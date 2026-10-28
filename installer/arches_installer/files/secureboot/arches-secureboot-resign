@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Keep the Secure Boot chain signed after package updates (design D4).
+#
+# Run by /etc/pacman.d/hooks/zzz-arches-secureboot.hook after every
+# transaction that touches Limine, a kernel, systemd's UKI stub or sbctl,
+# and by arches-secureboot-enroll. It:
+#
+#   1. rebuilds the UKIs if any of ours is not signed with our db key
+#      (limine-update signs them through mkinitcpio's sbctl hook and puts
+#      their new hashes in limine.conf);
+#   2. re-enrolls the limine.conf hash into Limine (when
+#      ENABLE_ENROLL_LIMINE_CONFIG=yes) and re-signs the Limine binary;
+#   3. fails if anything is still unsigned.
+#
+# A UKI is never re-signed in place: that would change its bytes after
+# limine.conf recorded their hash, and Limine would refuse to boot it.
+set -euo pipefail
+
+ESP="${ARCHES_ESP:-/boot}"
+UKI_NAME="${ARCHES_UKI_NAME:-arches}"
+DB_CERT="${ARCHES_DB_CERT:-/var/lib/sbctl/keys/db/db.pem}"
+LIMINE_EFI="${ESP}/EFI/limine/limine_x64.efi"
+
+if ! sbctl setup --print-state --json 2>/dev/null | grep -q '"installed": *true'; then
+	echo "arches-secureboot-resign: no sbctl keys, nothing to sign."
+	exit 0
+fi
+
+signed() {
+	sbverify --cert "$DB_CERT" "$1" >/dev/null 2>&1
+}
+
+ukis() {
+	compgen -G "${ESP}/EFI/Linux/${UKI_NAME}_*.efi" || true
+}
+
+rebuild=0
+for uki in $(ukis); do
+	if ! signed "$uki"; then
+		echo "arches-secureboot-resign: $uki is not signed; rebuilding the UKIs."
+		rebuild=1
+	fi
+done
+if ((rebuild)); then
+	limine-update
+fi
+
+# Enrolls the config hash (if enabled) and signs the Limine binary.
+limine-enroll-config
+
+fail=0
+for f in "$LIMINE_EFI" $(ukis); do
+	if [[ ! -f "$f" ]]; then
+		continue
+	fi
+	if signed "$f"; then
+		echo "signed: $f"
+	else
+		echo "NOT SIGNED: $f" >&2
+		fail=1
+	fi
+done
+if [[ -z "$(ukis)" ]]; then
+	echo "arches-secureboot-resign: no ${UKI_NAME}_*.efi UKI found in ${ESP}/EFI/Linux." >&2
+	fail=1
+fi
+exit "$fail"

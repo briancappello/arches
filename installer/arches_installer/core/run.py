@@ -102,6 +102,13 @@ def run(
     """
     _log(f"$ {' '.join(cmd)}", log)
 
+    # No install step may wait on a terminal: an unattended install has
+    # nobody to answer (e.g. limine-mkinitcpio-hook's /usr/local/bin/mkinitcpio
+    # asks "[Y/n]" when chwd runs `mkinitcpio -P`). On EOF that prompt takes
+    # its default, Y, which runs limine-mkinitcpio.
+    if "input" not in kwargs:
+        kwargs.setdefault("stdin", subprocess.DEVNULL)
+
     # If caller needs to capture stdout (e.g. genfstab), fall back to buffered
     if kwargs.pop("capture_output", False) or kwargs.get("stdout"):
         result = subprocess.run(cmd, capture_output=True, text=True, **kwargs)

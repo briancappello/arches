@@ -76,20 +76,11 @@ def iso_ansible_dir(tmp_path: Path) -> Path:
     return d
 
 
-@pytest.fixture
-def iso_build_host_pubkey(tmp_path: Path) -> Path:
-    """Provide a temporary ISO_BUILD_HOST_PUBKEY file."""
-    key = tmp_path / "build-host.pub"
-    key.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest test@build")
-    return key
-
-
 def _patch_constants(
     mnt: Path,
     iso_pkg_cache: Path | None = None,
     iso_pacman_conf: Path | None = None,
     iso_ansible_dir: Path | None = None,
-    iso_build_host_pubkey: Path | None = None,
     iso_platform_dir: Path | None = None,
 ):
     """Return a context manager that patches all module-level Path constants."""
@@ -102,8 +93,6 @@ def _patch_constants(
         patches[f"{MODULE}.ISO_PACMAN_CONF"] = iso_pacman_conf
     if iso_ansible_dir is not None:
         patches[f"{MODULE}.ISO_ANSIBLE_DIR"] = iso_ansible_dir
-    if iso_build_host_pubkey is not None:
-        patches[f"{MODULE}.ISO_BUILD_HOST_PUBKEY"] = iso_build_host_pubkey
     if iso_platform_dir is not None:
         patches[f"{MODULE}.ISO_PLATFORM_DIR"] = iso_platform_dir
 
@@ -1111,7 +1100,7 @@ class TestCreateUser:
         # sudoers file written
         sudoers = mnt / "etc" / "sudoers.d" / "wheel"
         assert sudoers.exists()
-        assert "NOPASSWD" in sudoers.read_text()
+        assert sudoers.read_text() == "%wheel ALL=(ALL:ALL) ALL\n"
 
     def test_idempotent_user_already_exists(self, mnt: Path):
         from arches_installer.core.install import create_user
@@ -1151,16 +1140,17 @@ class TestCreateUser:
 class TestDeploySshKey:
     """Tests for deploy_ssh_key."""
 
-    def test_noop_when_no_pubkey(self, tmp_path: Path):
+    KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest test@build"
+
+    def test_noop_without_declared_keys(self, mnt: Path):
         from arches_installer.core.install import deploy_ssh_key
 
-        nonexistent = tmp_path / "no-key.pub"
-
-        with patch(f"{MODULE}.ISO_BUILD_HOST_PUBKEY", nonexistent):
-            # Should not raise or do anything
+        with patch(f"{MODULE}.MOUNT_ROOT", mnt):
             deploy_ssh_key("testuser")
+            deploy_ssh_key("testuser", [])
+        assert not (mnt / "home" / "testuser" / ".ssh").exists()
 
-    def test_deploys_key(self, mnt: Path, iso_build_host_pubkey: Path):
+    def test_deploys_declared_keys(self, mnt: Path):
         from arches_installer.core.install import deploy_ssh_key
 
         # Create the user's home and /etc/passwd
@@ -1171,20 +1161,23 @@ class TestDeploySshKey:
 
         with (
             patch(f"{MODULE}.MOUNT_ROOT", mnt),
-            patch(f"{MODULE}.ISO_BUILD_HOST_PUBKEY", iso_build_host_pubkey),
             patch("os.chown") as mock_chown,
         ):
-            deploy_ssh_key("testuser")
+            deploy_ssh_key("testuser", [self.KEY])
 
         auth_keys = home / ".ssh" / "authorized_keys"
-        assert auth_keys.exists()
-        assert "ssh-ed25519" in auth_keys.read_text()
+        assert auth_keys.read_text() == self.KEY + "\n"
         # chown called for .ssh dir and authorized_keys
         assert mock_chown.call_count == 2
 
-    def test_warns_when_user_not_in_passwd(
-        self, mnt: Path, iso_build_host_pubkey: Path
-    ):
+    def test_rejects_non_key(self, mnt: Path):
+        from arches_installer.core.install import deploy_ssh_key
+
+        with patch(f"{MODULE}.MOUNT_ROOT", mnt):
+            with pytest.raises(ValueError, match="Not an SSH public key"):
+                deploy_ssh_key("testuser", ["-----BEGIN OPENSSH PRIVATE KEY-----"])
+
+    def test_warns_when_user_not_in_passwd(self, mnt: Path):
         from arches_installer.core.install import deploy_ssh_key
 
         home = mnt / "home" / "testuser"
@@ -1194,11 +1187,8 @@ class TestDeploySshKey:
 
         log_messages = []
 
-        with (
-            patch(f"{MODULE}.MOUNT_ROOT", mnt),
-            patch(f"{MODULE}.ISO_BUILD_HOST_PUBKEY", iso_build_host_pubkey),
-        ):
-            deploy_ssh_key("testuser", log=log_messages.append)
+        with patch(f"{MODULE}.MOUNT_ROOT", mnt):
+            deploy_ssh_key("testuser", [self.KEY], log=log_messages.append)
 
         # Should have logged a warning
         assert any("WARNING" in m for m in log_messages)
@@ -1761,7 +1751,7 @@ class TestInstallSystem:
         )
         mock_host.assert_called_once_with("myhost", log_fn)
         mock_user.assert_called_once_with("testuser", "testpass", log_fn)
-        mock_ssh.assert_called_once_with("testuser", log_fn)
+        mock_ssh.assert_called_once_with("testuser", None, log_fn)
         mock_svc.assert_called_once_with(dev_workstation_template.services, log_fn)
         mock_ansible.assert_called_once_with(dev_workstation_template, log_fn)
         mock_fw.assert_called_once_with(x86_64_platform, log_fn)

@@ -155,10 +155,11 @@ kde_session:
   logout_confirm: false
   logout_prompt: "ShutdownTypeNone"     # ShutdownTypeNone = go straight to logout
 
+# The screen locks by itself (design D6): after 5 idle minutes and on resume.
 kde_screenlocker:
-  autolock: false
-  lock_on_resume: false
-  timeout: 0                            # minutes; 0 = never
+  autolock: true
+  lock_on_resume: true
+  timeout: 5                            # minutes
 
 kde_kded:
   delete_confirmation: false            # kio / file manager delete confirmation

@@ -39,6 +39,9 @@ from arches_installer.core.run import run as logged_run
 # compatibility with basic.toml / flexible.toml uses this name.
 DEFAULT_DISK_ROLE = "primary"
 
+LAYOUT_KIND_CREATE = "create"
+LAYOUT_KIND_EXISTING = "existing"
+
 # Search paths for the disk-layouts directory, checked in order.
 # On the live ISO, layouts are staged at /opt/arches/disk-layouts/.
 # In development, they're at <project>/disk-layouts/ (relative to the
@@ -115,6 +118,14 @@ class PartitionSpec:
     disks: str = ""  # role name (same shape as `disk` but for RAID)
     raid_level: str = ""  # "0", "1", "5", "6", "10"; only valid with `disks`
     raid_backend: str = ""  # "btrfs" or "mdadm"; defaults to filesystem-native
+    # Existing-partition layouts (kind = "existing") only:
+    #   partlabel: the GPT PARTLABEL that names the target partition on
+    #     every disk of the role.
+    #   reuse: mount the partition as-is, never format it (the shared ESP).
+    #   encryption: "luks2" puts the volume inside one LUKS2 device.
+    partlabel: str = ""
+    reuse: bool = False
+    encryption: str = ""
 
     @property
     def target_role(self) -> str:
@@ -137,6 +148,18 @@ class DiskLayout:
     partitions: list[PartitionSpec]
     disks: list[DiskRole] = field(default_factory=list)
     path: Path | None = None  # source TOML file path
+    # "create": partition whole disks (the default).
+    # "existing": install into partitions that already exist, found by
+    # PARTLABEL; no partition table is written (see core/existing.py).
+    kind: str = LAYOUT_KIND_CREATE
+
+    @property
+    def is_existing(self) -> bool:
+        return self.kind == LAYOUT_KIND_EXISTING
+
+    @property
+    def is_encrypted(self) -> bool:
+        return any(p.encryption for p in self.partitions)
 
     @property
     def role_names(self) -> set[str]:
@@ -220,7 +243,7 @@ def _parse_partition(data: dict[str, Any]) -> PartitionSpec:
         for sv in subvols_raw
     ]
     return PartitionSpec(
-        size=data["size"],
+        size=data.get("size", ""),
         filesystem=data.get("filesystem", ""),
         mount_point=data.get("mount_point"),
         label=data.get("label", ""),
@@ -230,6 +253,9 @@ def _parse_partition(data: dict[str, Any]) -> PartitionSpec:
         disks=data.get("disks", ""),
         raid_level=str(data.get("raid_level", "")),
         raid_backend=data.get("raid_backend", ""),
+        partlabel=data.get("partlabel", ""),
+        reuse=bool(data.get("reuse", False)),
+        encryption=data.get("encryption", ""),
     )
 
 
@@ -350,6 +376,69 @@ def _validate_layout(layout: DiskLayout) -> list[str]:
                 f"{part.raid_backend!r}. Supported: btrfs, mdadm."
             )
 
+    if layout.kind == LAYOUT_KIND_EXISTING:
+        errors.extend(_validate_existing_layout(layout))
+    elif layout.kind == LAYOUT_KIND_CREATE:
+        for i, part in enumerate(layout.partitions):
+            if not part.size:
+                errors.append(f"Partition {i + 1} has no size.")
+            if part.partlabel or part.reuse or part.encryption:
+                errors.append(
+                    f"Partition {i + 1} sets partlabel, reuse or encryption, "
+                    f'which only a kind = "existing" layout supports.'
+                )
+    else:
+        errors.append(
+            f"Unknown layout kind {layout.kind!r}. "
+            f"Supported: {LAYOUT_KIND_CREATE!r}, {LAYOUT_KIND_EXISTING!r}."
+        )
+
+    return errors
+
+
+def _validate_existing_layout(layout: DiskLayout) -> list[str]:
+    """Rules for a layout that installs into partitions that already exist."""
+    errors: list[str] = []
+    reused = [p for p in layout.partitions if p.reuse]
+    if len(reused) != 1:
+        errors.append(
+            f"An existing layout must reuse exactly one ESP (reuse = true); "
+            f"found {len(reused)}."
+        )
+    for i, part in enumerate(layout.partitions):
+        name = f"Partition {i + 1} ({part.partlabel or 'no partlabel'})"
+        if not part.partlabel:
+            errors.append(f"{name} has no partlabel.")
+        if part.size:
+            errors.append(
+                f"{name} sets size; an existing layout never creates or "
+                f"resizes partitions."
+            )
+        if part.reuse:
+            if part.filesystem != "vfat" or part.mount_point not in (
+                "/boot",
+                "/boot/efi",
+            ):
+                errors.append(
+                    f"{name} is reused, so it must be the vfat ESP mounted "
+                    f"at /boot or /boot/efi."
+                )
+            if part.encryption or part.raid_level:
+                errors.append(f"{name} is reused; it cannot be encrypted or RAID.")
+            continue
+        if not part.filesystem:
+            errors.append(f"{name} has no filesystem.")
+        if part.encryption not in ("", "luks2"):
+            errors.append(
+                f"{name} has unsupported encryption {part.encryption!r}. "
+                f"Supported: luks2."
+            )
+        if part.raid_level and part.raid_backend != "mdadm":
+            errors.append(
+                f'{name}: RAID in an existing layout needs raid_backend = "mdadm".'
+            )
+    if not any(p.mount_point == "/" for p in layout.partitions):
+        errors.append("An existing layout needs a partition mounted at /.")
     return errors
 
 
@@ -372,6 +461,7 @@ def load_disk_layout(path: Path) -> DiskLayout:
         partitions=[_parse_partition(p) for p in partitions_raw],
         disks=[_parse_disk_role(d) for d in disks_raw],
         path=path,
+        kind=meta.get("kind", LAYOUT_KIND_CREATE),
     )
 
     errors = _validate_layout(layout)

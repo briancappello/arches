@@ -178,19 +178,45 @@ fi
 # --------------------------------------------------------------------------
 # 3. Create/update the repo database
 # --------------------------------------------------------------------------
-if compgen -G "$REPO_DIR"/*.pkg.tar.* &>/dev/null; then
+# Packages only: detached signatures (*.sig) sit next to them.
+mapfile -t PKG_FILES < <(cd "$REPO_DIR" && compgen -G "*.pkg.tar.*" | grep -v '\.sig$' || true)
+if ((${#PKG_FILES[@]})); then
     echo ""
-    echo "── Updating repo database ──"
     cd "$REPO_DIR"
-    # Remove old db and recreate to ensure consistency
-    rm -f "${REPO_NAME}.db" "${REPO_NAME}.db.tar.gz" \
-          "${REPO_NAME}.files" "${REPO_NAME}.files.tar.gz"
-    repo-add "${REPO_NAME}.db.tar.gz" ./*.pkg.tar.*
+    # Keep a database that is newer than every package: it may carry the
+    # operator's signature (scripts/sign-local-repo.sh), and recreating it
+    # would drop that signature.
+    db_current=true
+    [[ -f "${REPO_NAME}.db.tar.gz" ]] || db_current=false
+    for f in "${PKG_FILES[@]}"; do
+        [[ "$f" -nt "${REPO_NAME}.db.tar.gz" ]] && db_current=false
+    done
+    if [[ "$db_current" == true ]]; then
+        echo "── Repo database is current; kept ──"
+    else
+        echo "── Updating repo database ──"
+        # Remove old db (and its signature) and recreate to ensure consistency
+        rm -f "${REPO_NAME}".db* "${REPO_NAME}".files*
+        repo-add "${REPO_NAME}.db.tar.gz" "${PKG_FILES[@]/#/./}"
+    fi
 
     echo ""
     echo "=== AUR repo ready at $REPO_DIR ==="
     echo "Packages:"
-    ls -1 "$REPO_DIR"/*.pkg.tar.*
+    printf '%s\n' "${PKG_FILES[@]}"
+
+    # arches-local is SigLevel = Required: nothing installs from it until
+    # the operator signs it with the YubiKey (design D7).
+    unsigned=()
+    for f in "${PKG_FILES[@]}"; do
+        [[ -f "$f.sig" ]] || unsigned+=("$f")
+    done
+    [[ -f "${REPO_NAME}.db.tar.gz.sig" ]] || unsigned+=("${REPO_NAME}.db.tar.gz")
+    if ((${#unsigned[@]})); then
+        echo ""
+        echo "NOTE: arches-local is not signed (${#unsigned[@]} file(s)). Sign it with"
+        echo "      the YubiKey before building the ISO: ./scripts/sign-local-repo.sh"
+    fi
 else
     echo ""
     echo "=== No packages to build — repo is empty ==="

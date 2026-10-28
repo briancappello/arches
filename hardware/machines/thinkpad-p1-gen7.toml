@@ -41,6 +41,12 @@ enable = [
 [ansible]
 firstboot_roles = ["power", "edp-recovery"]
 
+# Both internal 1 TB NVMe disks (a Micron and a Sabrent on p1) carry the
+# "spare" partitions that disk-layouts/p1-spare.toml installs into.
+[[disks]]
+name = "spare-pair"
+device = "1TB NVMe SSD"
+
 [modprobe]
 # Internal panel stays black after resume / lid-open. Kernel logs:
 #   *ERROR* Timeout waiting for DDI BUF A to get active   (link power-up race)

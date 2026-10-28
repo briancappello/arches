@@ -577,3 +577,11 @@ def mock_discover_disk_layouts(basic_disk_layout):
         return_value=[basic_disk_layout],
     ) as m:
         yield m
+
+
+@pytest.fixture
+def tools(tmp_path: Path):
+    """Record installer commands instead of running them (see tests/core/fakes.py)."""
+    from tests.core.fakes import patched_tools
+
+    yield from patched_tools(tmp_path)

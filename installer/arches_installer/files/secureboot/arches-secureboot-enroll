@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Enroll our Secure Boot keys into the firmware (design D4). Attended.
+#
+# Run this once, as root, on the NEW system, after it has booted and been
+# checked with Secure Boot off, and with the firmware in Setup Mode. It:
+#
+#   1. refuses unless / is our encrypted volume and the firmware is in
+#      Setup Mode;
+#   1b. freezes the other systems on the ESP (arches-freeze-other-systems);
+#   2. turns on enrolling the limine.conf hash, rebuilds and signs the
+#      UKIs and Limine, and checks every one;
+#   3. enrolls the sbctl keys together with Microsoft's certificates
+#      (the GPU's option ROM is signed by them; without them the screen
+#      can stay black at boot).
+#
+# Afterwards: reboot into the firmware, turn Secure Boot on, set a BIOS
+# supervisor password. The first boot with Secure Boot on changes PCR 7,
+# so the TPM will not unlock the disk: enter the recovery key, then run
+# arches-tpm-reenroll.
+set -euo pipefail
+
+ESP="${ARCHES_ESP:-/boot}"
+DEFAULTS="${ARCHES_LIMINE_DEFAULTS:-/etc/default/limine}"
+MACHINE_ID_FILE="${ARCHES_MACHINE_ID:-/etc/machine-id}"
+CRYPT_NAME="${ARCHES_CRYPT_NAME:-arches}"
+
+die() {
+	echo "arches-secureboot-enroll: $*" >&2
+	exit 1
+}
+
+if [[ "${ARCHES_SKIP_ROOT_CHECK:-}" != 1 ]] && ((EUID != 0)); then
+	die "run as root."
+fi
+
+root_src="$(findmnt -n -o SOURCE /)"
+root_src="${root_src%%[*}"
+if [[ "$root_src" != "/dev/mapper/${CRYPT_NAME}" ]]; then
+	die "/ is ${root_src}, not /dev/mapper/${CRYPT_NAME}. Run this on the new system."
+fi
+
+status="$(sbctl status --json)"
+if ! grep -q '"setup_mode": *true' <<<"$status"; then
+	die "the firmware is not in Setup Mode. Clear the Secure Boot keys in the firmware setup (Reset to Setup Mode), then run this again."
+fi
+if ! sbctl setup --print-state --json | grep -q '"installed": *true'; then
+	die "no sbctl keys. Run: sbctl create-keys"
+fi
+
+# Other systems on this ESP. Their linux-protocol entries carry BLAKE2
+# hashes, so Limine still boots them with Secure Boot on. Any change one
+# of them makes to limine.conf or to the Limine binary afterwards stops
+# every entry from booting, so they are frozen first (decision O4a).
+machine_id="$(<"$MACHINE_ID_FILE")"
+others="$(grep -o 'machine-id=[0-9a-f]\{32\}' "${ESP}/limine.conf" | sort -u | grep -v "machine-id=${machine_id}" || true)"
+if [[ -n "$others" ]]; then
+	echo "limine.conf also boots other systems:"
+	sed 's/^/  /' <<<"$others"
+	echo "They stay bootable as frozen fallbacks: their /boot is no longer"
+	echo "mounted, limine-snapper-sync and the Limine reset hooks are off, so"
+	echo "they cannot write to the ESP. Do not update them while frozen."
+	echo "Undo on each: sudo arches-unfreeze. ESP files are backed up first."
+fi
+
+echo
+echo "This enrolls the Secure Boot keys of this system into the firmware."
+read -r -p 'Type ENROLL to continue: ' answer
+[[ "$answer" == ENROLL ]] || die "not confirmed; nothing changed."
+
+arches-freeze-other-systems
+
+if grep -q '^ENABLE_ENROLL_LIMINE_CONFIG=' "$DEFAULTS"; then
+	sed -i 's/^ENABLE_ENROLL_LIMINE_CONFIG=.*/ENABLE_ENROLL_LIMINE_CONFIG=yes/' "$DEFAULTS"
+else
+	echo 'ENABLE_ENROLL_LIMINE_CONFIG=yes' >>"$DEFAULTS"
+fi
+
+limine-update
+arches-secureboot-resign || die "something is not signed; keys NOT enrolled."
+
+sbctl enroll-keys --microsoft
+
+cat <<EOF
+
+Keys enrolled. Next:
+  1. Reboot into the firmware setup, turn Secure Boot on, and set a BIOS
+     supervisor password.
+  2. On the first boot the TPM will not unlock the disk (PCR 7 changed):
+     enter the recovery key.
+  3. Run: arches-tpm-reenroll
+EOF

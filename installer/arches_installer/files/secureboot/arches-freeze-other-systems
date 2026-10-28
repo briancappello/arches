@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Freeze the other systems on this ESP as fallbacks (design D4, decision O4a).
+#
+# Run by arches-secureboot-enroll before it enrolls keys. Once the Limine
+# config hash is enrolled and Limine is signed, any write another system
+# makes to the shared ESP stops every entry from booting. For each other
+# OS entry in limine.conf this script:
+#
+#   1. backs up the ESP files it guards (limine.conf, the Limine binary and
+#      its .bak) to <ESP>/arches-freeze-<time>/ and to
+#      /var/lib/arches/freeze-<time>/;
+#   2. mounts that system's root (root=UUID=... from its limine.conf entry);
+#   3. stops its ESP writers, reversibly:
+#        - /boot in its fstab gets "noauto" (nothing mounts the ESP there,
+#          so limine-entry-tool, limine-snapper-sync and kernel hooks find
+#          no ESP to write);
+#        - its limine-snapper-sync.service is masked;
+#        - its 10-limine-reset-enroll and 90-limine-enroll-config hooks get
+#          the .disabled suffix (they restore an unsigned Limine binary);
+#   4. writes /usr/local/sbin/arches-unfreeze into it, which undoes 3.
+#
+# The frozen system still boots from the Limine menu (its entries carry
+# BLAKE2 hashes, which Limine accepts under Secure Boot). It must not be
+# updated while frozen: a new kernel would not reach the ESP.
+#
+# Undo: boot the frozen system, run `sudo arches-unfreeze`, reboot.
+set -euo pipefail
+
+ESP="${ARCHES_ESP:-/boot}"
+MACHINE_ID_FILE="${ARCHES_MACHINE_ID:-/etc/machine-id}"
+STATE_DIR="${ARCHES_STATE_DIR:-/var/lib/arches}"
+MNT_BASE="${ARCHES_FREEZE_MNT:-/run/arches-freeze}"
+STAMP="${ARCHES_FREEZE_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
+
+die() {
+	echo "arches-freeze-other-systems: $*" >&2
+	exit 1
+}
+
+conf="$ESP/limine.conf"
+[[ -f "$conf" ]] || die "no $conf"
+ours="$(<"$MACHINE_ID_FILE")"
+
+# machine-id -> the first root= / rootflags= of that OS entry's cmdlines
+mapfile -t others < <(awk -v ours="$ours" '
+	/^\/[^\/]/ { mid = "" }
+	match($0, /machine-id=[0-9a-f]{32}/) { mid = substr($0, RSTART + 11, 32) }
+	mid != "" && mid != ours && /^[[:space:]]*cmdline:/ && !(mid in seen) {
+		seen[mid] = 1; sub(/^[[:space:]]*cmdline:[[:space:]]*/, ""); print mid " " $0
+	}' "$conf")
+
+if ((${#others[@]} == 0)); then
+	echo "No other systems in $conf; nothing to freeze."
+	exit 0
+fi
+
+# 1. Back up the ESP files this step protects.
+backup_esp="$ESP/arches-freeze-$STAMP"
+backup_local="$STATE_DIR/freeze-$STAMP"
+mkdir -p "$backup_esp" "$backup_local"
+for f in limine.conf EFI/limine/limine_x64.efi EFI/limine/limine_x64.bak; do
+	[[ -f "$ESP/$f" ]] || continue
+	cp -p "$ESP/$f" "$backup_esp/${f//\//_}"
+	cp -p "$ESP/$f" "$backup_local/${f//\//_}"
+done
+echo "ESP files backed up to $backup_esp and $backup_local"
+
+for line in "${others[@]}"; do
+	mid="${line%% *}"
+	cmdline="${line#* }"
+	uuid="$(grep -o 'root=UUID=[^ ]*' <<<"$cmdline" | head -1 | cut -d= -f3)"
+	subvol="$(grep -o 'rootflags=[^ ]*' <<<"$cmdline" | grep -o 'subvol=[^, ]*' | head -1 | cut -d= -f2)"
+	[[ -n "$uuid" ]] || die "entry $mid has no root=UUID= in its cmdline; freeze it by hand."
+
+	mnt="$MNT_BASE/$mid"
+	mkdir -p "$mnt"
+	opts="rw"
+	[[ -n "$subvol" ]] && opts="rw,subvol=$subvol"
+	mount -o "$opts" "UUID=$uuid" "$mnt"
+	trap 'umount "$mnt" 2>/dev/null || true' EXIT
+
+	[[ "$(cat "$mnt/etc/machine-id" 2>/dev/null)" == "$mid" ]] ||
+		die "UUID=$uuid is not the system with machine-id $mid."
+
+	# 3a. /boot noauto (keep the line, so nothing auto-mounts the ESP)
+	fstab="$mnt/etc/fstab"
+	cp -p "$fstab" "$fstab.arches-freeze-$STAMP"
+	awk 'BEGIN { OFS = "\t" }
+		!/^[[:space:]]*#/ && NF >= 4 && $2 == "/boot" && $4 !~ /(^|,)noauto(,|$)/ { $4 = $4 ",noauto,nofail" }
+		{ print }' "$fstab.arches-freeze-$STAMP" >"$fstab"
+
+	# 3b. limine-snapper-sync off
+	systemctl --root="$mnt" mask limine-snapper-sync.service >/dev/null
+
+	# 3c. the hooks that restore an unsigned Limine binary
+	disabled=()
+	for hook in "$mnt"/etc/boot/hooks/pre.d/10-limine-reset-enroll "$mnt"/etc/boot/hooks/post.d/90-limine-enroll-config; do
+		if [[ -e "$hook" || -L "$hook" ]]; then
+			mv "$hook" "$hook.disabled"
+			disabled+=("${hook#"$mnt"}")
+		fi
+	done
+
+	# 4. the undo command
+	mkdir -p "$mnt/usr/local/sbin"
+	cat >"$mnt/usr/local/sbin/arches-unfreeze" <<EOF
+#!/usr/bin/env bash
+# Undo arches-freeze-other-systems ($STAMP). Run as root on this system.
+set -euo pipefail
+cp -p /etc/fstab.arches-freeze-$STAMP /etc/fstab
+systemctl unmask limine-snapper-sync.service
+$(for h in "${disabled[@]}"; do echo "[[ -e $h.disabled || -L $h.disabled ]] && mv $h.disabled $h"; done)
+echo "Unfrozen. Reboot; /boot is mounted again and limine-snapper-sync runs."
+echo "With Secure Boot on, its next write to the ESP breaks the enrolled hash:"
+echo "turn Secure Boot off first, or keep this system frozen."
+EOF
+	chmod 755 "$mnt/usr/local/sbin/arches-unfreeze"
+	echo "Froze $mid (UUID=$uuid): /boot noauto, limine-snapper-sync masked, ${#disabled[@]} hook(s) disabled."
+	echo "  Undo: boot it and run: sudo arches-unfreeze"
+
+	umount "$mnt"
+	trap - EXIT
+done

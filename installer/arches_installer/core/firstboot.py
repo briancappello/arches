@@ -179,6 +179,20 @@ def generate_firstboot_script(
         ]
     )
 
+    ssh_lines = (
+        [
+            '        echo "  SSH access (keys only):"',
+            '        echo "    ssh ' + username + '@${_hn}.local      "'
+            '"# via mDNS (same L2)"',
+            "        ip -o -4 addr show scope global 2>/dev/null \\",
+            "            | awk '{split($4,a,\"/\"); "
+            'printf "    ssh ' + username + '@%s   # via IP\\n", a[1]}\' || true',
+            '        echo ""',
+        ]
+        if template.ssh.enable
+        else ['        echo "  SSH: off"', '        echo ""']
+    )
+
     # ── Operator banner ─────────────────────────────────
     # Print a human-friendly summary to /dev/console so a headless
     # operator watching the serial console knows the system is ready
@@ -210,13 +224,7 @@ def generate_firstboot_script(
             "        ip -o -4 addr show scope global 2>/dev/null \\",
             "            | awk '{printf \"    %-8s %s\\n\", $2, $4}' || true",
             '        echo ""',
-            '        echo "  SSH access:"',
-            '        echo "    ssh ' + username + '@${_hn}.local      "'
-            '"# via mDNS (same L2)"',
-            "        ip -o -4 addr show scope global 2>/dev/null \\",
-            "            | awk '{split($4,a,\"/\"); "
-            'printf "    ssh ' + username + '@%s   # via IP\\n", a[1]}\' || true',
-            '        echo ""',
+            *ssh_lines,
             '        echo "  logs:"',
             '        echo "    install:   /var/log/arches-install.log"',
             '        echo "    firstboot: /var/log/arches-firstboot.log"',

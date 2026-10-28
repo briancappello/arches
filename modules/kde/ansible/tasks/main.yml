@@ -322,16 +322,15 @@
 # --------------------------------------------------------------------------
 # 12. Screen Locker
 # --------------------------------------------------------------------------
-- name: "Screen locker: disable autolock"
+- name: "Screen locker: autolock, timeout, lock on resume"
   command: >-
     kwriteconfig6 --file {{ kde_config }}/kscreenlockerrc
     --group Daemon --key {{ item.key }}
     {{ item.value }}
   loop:
-    - { key: "Autolock",   value: "false" }
-    - { key: "LockOnResume", value: "false" }
-    - { key: "Timeout",    value: "0" }
-  when: not kde_screenlocker.autolock
+    - { key: "Autolock",     value: "{{ kde_screenlocker.autolock | bool | lower }}" }
+    - { key: "LockOnResume", value: "{{ kde_screenlocker.lock_on_resume | bool | lower }}" }
+    - { key: "Timeout",      value: "{{ kde_screenlocker.timeout }}" }
 
 # --------------------------------------------------------------------------
 # 13. Disable delete confirmation (KIO)

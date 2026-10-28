@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable
 
 from arches_installer.core.disk import MOUNT_ROOT
 from arches_installer.core.network import copy_network_profiles
@@ -42,8 +43,11 @@ _target_iso_cache_mounted = False
 # Ansible playbooks shipped on the ISO
 ISO_ANSIBLE_DIR = Path("/opt/arches/ansible")
 
-# Build host SSH public key (optional, embedded at ISO build time)
-ISO_BUILD_HOST_PUBKEY = Path("/opt/arches/build-host.pub")
+# wheel may run anything with sudo, after typing the user's password.
+WHEEL_SUDOERS = "%wheel ALL=(ALL:ALL) ALL\n"
+
+# Public key types accepted in authorized_keys.
+_SSH_KEY_RE = re.compile(r"^(ssh-|ecdsa-|sk-)[A-Za-z0-9@._-]+ [A-Za-z0-9+/=]+( .*)?$")
 
 
 def _setup_local_repo_mirror(log: LogCallback | None = None) -> Path | None:
@@ -627,6 +631,61 @@ def install_pacman_conf(log: LogCallback | None = None) -> None:
         shutil.copytree(iso_repo, target_repo)
 
 
+# arches-local's public key, staged into the ISO by scripts/stage-repo-key.sh
+# (design D7). The private key lives on the operator's YubiKey.
+LOCAL_REPO_NAME = "arches-local"
+LOCAL_REPO_KEY = ISO_PLATFORM_DIR / "arches-local.asc"
+LOCAL_REPO_FPR = ISO_PLATFORM_DIR / "arches-local.fpr"
+
+
+def repo_siglevel(conf_text: str, repo: str) -> str:
+    """Return the SigLevel line of the ``[repo]`` section, or ''."""
+    section = re.search(
+        rf"^\[{re.escape(repo)}\]\s*$(.*?)(?=^\[|\Z)", conf_text, re.M | re.S
+    )
+    if not section:
+        return ""
+    m = re.search(r"^\s*SigLevel\s*=\s*(.+?)\s*$", section.group(1), re.M)
+    return m.group(1) if m else ""
+
+
+def require_local_repo_key(conf: Path | None = None) -> str:
+    """Return the repository key's fingerprint; fail early if it is missing.
+
+    arches-local is ``SigLevel = Required``: without the key nothing from it
+    can install, so stop before any write with a clear message.
+    """
+    conf = conf or ISO_PACMAN_CONF
+    level = repo_siglevel(conf.read_text(), LOCAL_REPO_NAME) if conf.exists() else ""
+    if "Required" not in level.split():
+        return ""
+    if not (LOCAL_REPO_KEY.is_file() and LOCAL_REPO_FPR.is_file()):
+        raise RuntimeError(
+            "arches-local requires signed packages, but this ISO has no "
+            f"repository key ({LOCAL_REPO_FPR}). Build the ISO after creating "
+            "the key and signing the repository (keys/README.md)."
+        )
+    fpr = LOCAL_REPO_FPR.read_text().strip().upper()
+    if not re.fullmatch(r"[0-9A-F]{40}", fpr):
+        raise RuntimeError(f"{LOCAL_REPO_FPR} is not a 40-hex fingerprint.")
+    return fpr
+
+
+def install_local_repo_key(log: LogCallback | None = None) -> None:
+    """Trust the arches-local key, and only it, in the target's pacman keyring."""
+    fpr = require_local_repo_key()
+    if not fpr:
+        return
+    keyrings = MOUNT_ROOT / "usr" / "share" / "pacman" / "keyrings"
+    keyrings.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(LOCAL_REPO_KEY, keyrings / "arches.gpg")
+    (keyrings / "arches-trusted").write_text(f"{fpr}:4:\n")
+    chroot_run(["pacman-key", "--add", "/usr/share/pacman/keyrings/arches.gpg"], log=log)
+    chroot_run(["pacman-key", "--lsign-key", fpr], log=log)
+    chroot_run(["pacman-key", "--list-keys", fpr], log=log)
+    _log(f"Target trusts the arches-local key {fpr}.", log)
+
+
 def copy_mirrorlists(
     platform: PlatformConfig,
     log: LogCallback | None = None,
@@ -764,7 +823,10 @@ def create_user(
     password: str,
     log: LogCallback | None = None,
 ) -> None:
-    """Create a user with sudo privileges.
+    """Create a user who may use sudo with their password.
+
+    wheel never gets NOPASSWD: first boot runs as a root systemd service and
+    needs no sudo (design D6).
 
     Idempotent: if the user already exists (e.g., from a prior failed
     install on the same subvolume), update their groups and shell instead
@@ -805,30 +867,34 @@ def create_user(
     # Enable wheel group in sudoers
     sudoers = MOUNT_ROOT / "etc" / "sudoers.d" / "wheel"
     sudoers.parent.mkdir(parents=True, exist_ok=True)
-    sudoers.write_text("%wheel ALL=(ALL:ALL) NOPASSWD: ALL\n")
+    sudoers.write_text(WHEEL_SUDOERS)
     sudoers.chmod(0o440)
 
 
 def deploy_ssh_key(
     username: str,
+    keys: list[str] | None = None,
     log: LogCallback | None = None,
 ) -> None:
-    """Deploy build host's SSH public key to the created user's authorized_keys.
+    """Install the SSH public keys the install config names explicitly.
 
-    The key is embedded into the ISO at build time as /opt/arches/build-host.pub.
-    If the file doesn't exist (no key was available at build time), this is a
-    silent no-op.
+    No key is ever taken implicitly (for example from the build host): with
+    no declared keys, no authorized_keys file is written (design D6).
     """
-    if not ISO_BUILD_HOST_PUBKEY.exists():
+    keys = [k.strip() for k in keys or [] if k.strip()]
+    if not keys:
+        _log("No SSH keys declared; no authorized_keys installed.", log)
         return
+    bad = [k for k in keys if not _SSH_KEY_RE.match(k)]
+    if bad:
+        raise ValueError(f"Not an SSH public key: {bad[0][:40]!r}")
 
-    _log("Deploying build host SSH key...", log)
-    pubkey = ISO_BUILD_HOST_PUBKEY.read_text().strip()
+    _log(f"Installing {len(keys)} declared SSH key(s) for {username}...", log)
 
     ssh_dir = MOUNT_ROOT / "home" / username / ".ssh"
     ssh_dir.mkdir(parents=True, exist_ok=True)
     auth_keys = ssh_dir / "authorized_keys"
-    auth_keys.write_text(pubkey + "\n")
+    auth_keys.write_text("\n".join(keys) + "\n")
 
     # Set ownership to the user (look up UID/GID from the target's /etc/passwd)
     passwd = (MOUNT_ROOT / "etc" / "passwd").read_text()
@@ -846,6 +912,43 @@ def deploy_ssh_key(
     os.chown(auth_keys, uid, gid)
     auth_keys.chmod(0o600)
     _log(f"Installed authorized_keys for {username}.", log)
+
+
+SSHD_HARDENING = """\
+# Written by the Arches installer: keys only, no root login.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+"""
+
+
+def configure_ssh(
+    template: InstallTemplate,
+    log: LogCallback | None = None,
+) -> None:
+    """Keys-only sshd; firewalld opens SSH only when the template says so."""
+    ssh_dir = MOUNT_ROOT / "etc" / "ssh"
+    if ssh_dir.is_dir():
+        conf_d = ssh_dir / "sshd_config.d"
+        conf_d.mkdir(parents=True, exist_ok=True)
+        (conf_d / "10-arches.conf").write_text(SSHD_HARDENING)
+        _log("sshd: keys only, no root login (sshd_config.d/10-arches.conf).", log)
+    if (MOUNT_ROOT / "usr" / "bin" / "firewall-offline-cmd").exists():
+        # Not --remove-service: that is a lokkit option, which
+        # firewall-offline-cmd refuses next to --zone.
+        action = (
+            "--add-service=ssh"
+            if template.ssh.open_firewall
+            else "--remove-service-from-zone=ssh"
+        )
+        chroot_run(["firewall-offline-cmd", "--zone=public", action], log=log)
+
+
+def services_for(template: InstallTemplate, services: list[str]) -> list[str]:
+    """Drop sshd unless the template turns SSH on."""
+    if template.ssh.enable:
+        return services
+    return [s for s in services if s not in ("sshd", "sshd.service", "sshd.socket")]
 
 
 def enable_services(
@@ -1079,12 +1182,17 @@ def _pre_pacstrap_setup(log: LogCallback | None = None) -> None:
     # phase writes the full config).  The hook needs:
     #   - /etc/default/limine with ESP_PATH
     #   - /etc/kernel/cmdline (even if placeholder)
+    # Files that already exist are kept: on a shared ESP the pipeline wrote
+    # the real ones before pacstrap, so the first entries limine-entry-tool
+    # writes carry our OS name and do not land in another system's entry.
     default_dir = etc / "default"
     default_dir.mkdir(parents=True, exist_ok=True)
-    (default_dir / "limine").write_text('ESP_PATH="/boot"\n')
+    if not (default_dir / "limine").exists():
+        (default_dir / "limine").write_text('ESP_PATH="/boot"\n')
     kernel_dir = etc / "kernel"
     kernel_dir.mkdir(parents=True, exist_ok=True)
-    (kernel_dir / "cmdline").write_text("root=/dev/vda2 rw\n")
+    if not (kernel_dir / "cmdline").exists():
+        (kernel_dir / "cmdline").write_text("root=/dev/vda2 rw\n")
     _log(
         "Pre-created /etc/default/limine and /etc/kernel/cmdline for pacstrap hooks.",
         log,
@@ -1266,13 +1374,23 @@ def install_system(
     password: str,
     hardware: HardwareConfig | None = None,
     log: LogCallback | None = None,
+    ssh_authorized_keys: list[str] | None = None,
+    after_pacstrap: Callable[[], None] | None = None,
 ) -> None:
-    """Full install pipeline after disk is prepared and mounted."""
+    """Full install pipeline after disk is prepared and mounted.
+
+    *after_pacstrap* runs between pacstrap and genfstab (the shared-ESP
+    install mounts the ESP there).
+    """
+    require_local_repo_key()
     _pre_pacstrap_setup(log)
     pacstrap(platform, template, log, hardware=hardware)
+    if after_pacstrap is not None:
+        after_pacstrap()
     generate_fstab(log)
     configure_var_bind_mounts(log)
     install_pacman_conf(log)
+    install_local_repo_key(log)
     copy_mirrorlists(platform, log)
     sync_chroot_databases(log)
     install_override_packages(template, log)
@@ -1280,7 +1398,7 @@ def install_system(
     configure_timezone(template.system.timezone, log)
     configure_hostname(hostname, log)
     create_user(username, password, log)
-    deploy_ssh_key(username, log)
+    deploy_ssh_key(username, ssh_authorized_keys, log)
     copy_apple_firmware(platform, log)
     configure_apple_input(platform, log)
     # Deploy hardware quirk/machine config files (modprobe, udev, sysctl)
@@ -1369,5 +1487,6 @@ def install_system(
             if removed:
                 _log(f"Hardware profile disabling services: {', '.join(removed)}", log)
             services = [s for s in services if s not in disabled]
-    enable_services(services, log)
+    enable_services(services_for(template, services), log)
+    configure_ssh(template, log)
     stage_ansible(template, log)

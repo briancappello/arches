@@ -227,3 +227,73 @@ class TestModuleCategoriesValid:
             f"{networking_modules}. If you're adding a new networking "
             f"variant, audit avahi/nss-mdns/nsswitch placement first."
         )
+
+
+def test_roles_do_not_su_into_system_accounts() -> None:
+    """systemd 262 creates system accounts expired; su refuses them.
+
+    Roles switch user with runuser (no PAM account check) instead.
+    """
+    offenders = []
+    for path in sorted(_MODULES_DIR.glob("*/ansible/tasks/*.yml")):
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if "su - " in line or "su -c" in line:
+                offenders.append(f"{path.relative_to(_REPO_ROOT)}:{n}: {line.strip()}")
+    assert offenders == []
+
+
+def test_postgres_initdb_uses_runuser() -> None:
+    text = (_MODULES_DIR / "postgresql/ansible/tasks/main.yml").read_text()
+    assert "runuser -u postgres -- initdb -D /var/lib/postgres/data" in text
+
+
+def test_memdisk_hook_has_memdiskfind() -> None:
+    """archiso.conf's memdisk hook needs memdiskfind, from syslinux."""
+    for platform_dir in sorted((_REPO_ROOT / "platforms").iterdir()):
+        conf = platform_dir / "archiso.conf"
+        if not conf.is_file() or "memdisk" not in conf.read_text():
+            continue
+        # platforms/<p>/packages is what the ISO build installs
+        # ([iso].extra_packages in platform.toml is read by nothing).
+        listed = (platform_dir / "packages").read_text().split()
+        assert "syslinux" in listed, platform_dir.name
+
+
+def test_live_iso_can_build_the_encrypted_spare_layout() -> None:
+    listed = (_REPO_ROOT / "platforms/x86-64/packages").read_text().split()
+    for pkg in ("mdadm", "tpm2-tss"):
+        assert pkg in listed
+
+
+def test_usb_image_is_handed_back_to_the_sudo_user(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    script = _REPO_ROOT / "scripts/iso-to-usb-image.sh"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "chown.log"
+    (bin_dir / "chown").write_text(f'#!/bin/sh\necho "$@" >> {log}\n')
+    (bin_dir / "chown").chmod(0o755)
+    img = tmp_path / "x.usb.img"
+    img.write_text("")
+
+    def run(**env):
+        return subprocess.run(
+            ["bash", "-c", f'source "{script}"; give_to_invoking_user "{img}"'],
+            env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", **env),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    assert run().returncode == 0
+    assert not log.exists()
+    assert run(SUDO_UID="1000", SUDO_GID="1000").returncode == 0
+    assert log.read_text().split() == ["1000:1000", str(img)]
+    # The cleanup trap, which runs on every exit, hands it back.
+    text = script.read_text()
+    cleanup = text[text.index("cleanup() {") :]
+    assert 'give_to_invoking_user "$USB_IMG"' in cleanup.split("}")[0]
