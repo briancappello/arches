@@ -95,16 +95,23 @@ if ((${#bad[@]})); then
 	die "arches-local is not signed. Sign it with the YubiKey: ./scripts/sign-local-repo.sh"
 fi
 
-# The offline package cache keeps its own copies of arches-local packages
-# and their signatures. Make them the repository's, or pacman verifies a
-# cached signature from an earlier key (every TEST-ONLY build has a new one).
+# The offline package cache keeps its own copies of packages and their
+# signatures. For a file named like an arches-local package:
+#   - the same bytes: it came from arches-local; give it the repository's
+#     signature (every TEST-ONLY build has a new key);
+#   - other bytes: an older build, or another repository's package of the
+#     same name (cachyos ships limine-snapper-sync and yay too); drop it so
+#     the cache step downloads the right one with its own signature.
 offline_cache="${ARCHES_OFFLINE_CACHE:-$PROJECT_ROOT/.offline-cache}"
 if [[ -d "$offline_cache" && -d "$REPO_DIR" ]]; then
 	while IFS= read -r f; do
 		name="${f##*/}"
 		[[ -f "$offline_cache/$name" ]] || continue
-		cp "$f" "$offline_cache/$name"
-		cp "$f.sig" "$offline_cache/$name.sig"
+		if cmp -s "$f" "$offline_cache/$name"; then
+			cp "$f.sig" "$offline_cache/$name.sig"
+		else
+			rm -f "$offline_cache/$name" "$offline_cache/$name.sig"
+		fi
 	done < <(compgen -G "$REPO_DIR/*.pkg.tar.*" | grep -v '\.sig$' || true)
 fi
 

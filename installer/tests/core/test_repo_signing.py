@@ -306,12 +306,18 @@ def test_offline_cache_gets_the_repository_signatures(setup) -> None:
     assert _sign(setup).returncode == 0
     cache = setup["repo"].parent / "offline-cache"
     cache.mkdir()
-    pkg = setup["pkgs"][0]
-    (cache / pkg.name).write_bytes(b"stale bytes")
-    (cache / f"{pkg.name}.sig").write_bytes(b"signature from an earlier key")
+    ours, other = setup["pkgs"]
+    # Same bytes as arches-local, signature from an earlier key.
+    (cache / ours.name).write_bytes(ours.read_bytes())
+    (cache / f"{ours.name}.sig").write_bytes(b"signature from an earlier key")
+    # Same name, other bytes: another repository's package (or a stale build).
+    (cache / other.name).write_bytes(b"cachyos build")
+    (cache / f"{other.name}.sig").write_bytes(b"cachyos signature")
+    unrelated = cache / "zstd-1.5.7-4-x86_64.pkg.tar.zst"
+    unrelated.write_bytes(b"x")
     r = _stage(setup, setup["repo"].parent / "profile", ARCHES_OFFLINE_CACHE=str(cache))
     assert r.returncode == 0, r.stderr
-    assert (cache / pkg.name).read_bytes() == pkg.read_bytes()
-    assert (cache / f"{pkg.name}.sig").read_bytes() == Path(f"{pkg}.sig").read_bytes()
-    # Packages the cache does not hold are not added to it.
-    assert not (cache / setup["pkgs"][1].name).exists()
+    assert (cache / f"{ours.name}.sig").read_bytes() == Path(f"{ours}.sig").read_bytes()
+    assert not (cache / other.name).exists()
+    assert not (cache / f"{other.name}.sig").exists()
+    assert unrelated.exists()
