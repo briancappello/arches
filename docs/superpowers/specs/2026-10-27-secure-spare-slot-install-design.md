@@ -57,7 +57,11 @@ table. Before it writes anything, the installer refuses to continue unless:
 - for an encrypted layout, a TPM 2.0 is present.
 
 The guard runs again right before the first write, and it reports every
-failed check at once. The ESP is mounted but never formatted. The guard is the reason the layout is
+failed check at once. For a partition, `blkid -p` always reports the GPT
+entry itself (`PART_ENTRY_*`); only other keys count as a signature
+(found in QEMU: an empty `spare` was first refused). NVMe names are not
+stable across boots (QEMU swapped `nvme0n1`/`nvme1n1`); the guard never
+relies on them. The ESP is mounted but never formatted. The guard is the reason the layout is
 safe to point at a disk that holds the current system, so it is tested: the
 QEMU proof checksums every other partition before and after the install.
 
@@ -79,6 +83,17 @@ QEMU proof checksums every other partition before and after the install.
   PIN). A random key in `/run` formats the device and enrolls both slots;
   its own slot is then wiped, so the device ends with exactly two slots.
   Neither the PIN nor the recovery key reaches a log.
+- Found in QEMU (2026-10-27): systemd 262 extends PCR 7 with an
+  `os-separator` event in the initrd of every UKI boot, before cryptsetup
+  (`systemd-pcrosseparator.service`). The live ISO is not a UKI boot, so a
+  slot bound to its PCR 7 never unlocks. The installer therefore enrolls
+  the TPM2 slot after pacstrap, with an explicit value:
+  `--tpm2-pcrs=7:sha256=<sha256(PCR7 || digest)>`, the digest read from the
+  target's `/usr/lib/pcrlock.d/750-os-separator.pcrlock`. Without that file
+  it binds the current PCR 7. To reverse, bind PCR 7 as is in
+  `enroll_tpm2` (and expect the first boot to need the recovery key).
+- The initrd asks for the PIN twice when the TPM refuses (the libcryptsetup
+  token plugin, then systemd's own TPM2 path), then for the recovery key.
 - PCR 7 changes when Secure Boot is turned on, so the first boot after D4
   asks for the recovery key; `arches-tpm-reenroll` then binds the TPM
   slot to the new PCR 7.
@@ -90,7 +105,20 @@ QEMU proof checksums every other partition before and after the install.
   backs the file up first.
 - Each kernel boots as a unified kernel image (UKI), so the kernel, initramfs
   and command line are one signed file. The ESP has 4.2G free; the proof
-  records the UKI sizes so the budget is known.
+  records the UKI sizes so the budget is known: in QEMU 41 MB
+  (`linux-cachyos`) and 43 MB (`-lts`). Without `autodetect` they were
+  229 MB each, so the shared-ESP install adds `autodetect` (with `keyboard`
+  before it, so every keyboard driver stays for the PIN prompt). To
+  reverse: drop `autodetect` from HOOKS and run `limine-update`. NVIDIA
+  modules and firmware on p1 add to the 41 MB; measure on p1.
+- pacstrap runs with the ESP unmounted. With it mounted, the kernel
+  packages' mkinitcpio preset hook wrote `vmlinuz-*` and `initramfs-*.img`
+  onto the shared ESP, over the current system's files of the same name
+  (QEMU). After pacstrap the installer empties the new root's own `/boot`,
+  removes the mkinitcpio presets (UKIs only; a later `mkinitcpio -P`, e.g.
+  from chwd, builds nothing then) and mounts the ESP.
+- `limine-install` adds a "Limine" UEFI boot entry, first in the boot
+  order, only if none exists for `EFI/limine/limine_x64.efi`. p1 has one.
 - Under Secure Boot, Limine's own binary is signed and the hash of
   `limine.conf` is enrolled into it (`limine enroll-config`). Then an edited
   config or an unsigned image does not boot.
@@ -226,6 +254,44 @@ Each row gets a test that fails if the old default comes back.
 2. **Offline:** installer unit tests for D1's guard, the `limine.conf`
    merge, crypttab, and every D6 row.
 3. **p1, attended:** see "Operator steps".
+
+### Validation 1 results (QEMU, 2026-10-27)
+
+Harness: `scripts/qemu-p1/` (README there). Two 40G NVMe disks with p1's
+structure (ESP 2G, archroot 8G btrfs RAID0, spare 24G, archhome rest btrfs
+RAID0), a small current system on archroot with limine-entry-tool,
+limine-snapper-sync and the reset/enroll hooks, OVMF Secure Boot in Setup
+Mode, swtpm. TEST-ONLY ISO, `kde-workstation`, layout `p1-spare.toml`.
+The fixes it forced are in D1 to D3; the last run used an ISO built at
+commit 4199c28 with no installer code copied in, and repeated install,
+checksums, TPM2 + PIN, first boot, enroll, both Secure Boot boots and the
+TPM re-enroll. The tamper checks ran on the run before it (same
+bootloader and Secure Boot code).
+
+- Checksums: partition tables, the other ESP, archroot and archhome (raw,
+  both disks, by serial) and every file of the current system on the
+  shared ESP are unchanged. The one changed file is the shared
+  `EFI/limine/limine_x64.efi`: the new system signs it.
+- The new system boots with TPM2 + PIN from the shared Limine menu; the
+  current system boots from the same menu. First boot: Ansible
+  `failed=0`, postgresql active, sshd off, sudo asks for a password, KDE
+  locks after 5 minutes, `arches-kwin-patched 6.8.1-2` installed offline.
+- Recovery key: printed once on the console, found in no log or file of
+  the live system or the target.
+- `arches-secureboot-enroll`: froze the current system, enrolled the
+  config hash, signed Limine and both UKIs, enrolled the keys with
+  Microsoft's. With Secure Boot enforcing (Limine shows "Secure Boot", no
+  editor), the current system boots, frozen (`/boot` not mounted,
+  limine-snapper-sync masked, both hooks `.disabled`), and the new one
+  boots its signed UKI.
+- Changed Secure Boot state: the TPM refused (PCR 7), the initrd asked for
+  the recovery key, which unlocked; `arches-tpm-reenroll` bound the slot
+  again and the next boot unlocked with the PIN.
+- Tamper: an edited `limine.conf` (cmdline + `init=/bin/sh`) stops Limine
+  with "PANIC: CHECKSUM MISMATCH FOR CONFIG FILE"; an unsigned UKI with a
+  correct hash and a re-enrolled, re-signed config stops with "efi:
+  LoadImage failure (0x800000000000000f)" (firmware: access denied).
+- UKI sizes: 41 MB and 43 MB; ESP use with both systems 145 MB of 2 GB.
 
 ## Operator steps on p1
 
