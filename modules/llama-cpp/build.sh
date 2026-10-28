@@ -156,7 +156,9 @@ fi
 # --------------------------------------------------------------------------
 
 echo "── Resolving upstream HEAD: $UPSTREAM_REPO@$UPSTREAM_BRANCH ──"
-UPSTREAM_SHA=$(git ls-remote "$UPSTREAM_REPO" "refs/heads/$UPSTREAM_BRANCH" \
+# Run from / so git does not open the project repo: in a git worktree,
+# /build/.git points at a gitdir that is not mounted in the container.
+UPSTREAM_SHA=$(git -C / ls-remote "$UPSTREAM_REPO" "refs/heads/$UPSTREAM_BRANCH" \
                | awk '{print $1}')
 if [[ -z "$UPSTREAM_SHA" ]]; then
     echo "ERROR: failed to resolve $UPSTREAM_REPO@$UPSTREAM_BRANCH" >&2

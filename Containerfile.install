@@ -16,9 +16,10 @@
 # Usage (via wrapper script):
 #   sudo make host-install CONFIG=host-install.toml
 #
-# Or directly:
+# Or directly, in a root shell (host install writes real disks, so it
+# needs real root; this is never a passwordless rule):
 #   podman build -t arches-installer -f Containerfile.install .
-#   sudo podman run --rm --privileged \
+#   podman run --rm --privileged \
 #       -v /mnt:/mnt \
 #       -v /dev:/dev \
 #       -v /lib/firmware/vendor:/host-firmware:ro \

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#
+# Run arch-chroot in unshare mode (-N). See ./pacstrap for why.
+exec /usr/bin/arch-chroot -N "$@"
