@@ -222,6 +222,8 @@ clean: ## Remove staged files from ISO airootfs
 	rm -f  $(ISO_PROFILE)/airootfs/opt/arches/build-host.pub
 	rm -f  $(ISO_PROFILE)/airootfs/usr/share/pacman/keyrings/arches.gpg
 	rm -f  $(ISO_PROFILE)/airootfs/usr/share/pacman/keyrings/arches-trusted
+	rm -f  $(ISO_PROFILE)/airootfs/etc/issue.d/arches-test-build.issue
+	rm -f  $(ISO_PROFILE)/airootfs/opt/arches/TEST-BUILD
 	rm -f  $(ISO_PROFILE)/packages.x86_64
 	rm -f  $(ISO_PROFILE)/packages.aarch64
 	rm -f  $(ISO_PROFILE)/airootfs/etc/pacman.d/hooks/archiso-mkinitcpio-preset.hook
