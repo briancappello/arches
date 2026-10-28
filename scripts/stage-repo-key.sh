@@ -95,6 +95,19 @@ if ((${#bad[@]})); then
 	die "arches-local is not signed. Sign it with the YubiKey: ./scripts/sign-local-repo.sh"
 fi
 
+# The offline package cache keeps its own copies of arches-local packages
+# and their signatures. Make them the repository's, or pacman verifies a
+# cached signature from an earlier key (every TEST-ONLY build has a new one).
+offline_cache="${ARCHES_OFFLINE_CACHE:-$PROJECT_ROOT/.offline-cache}"
+if [[ -d "$offline_cache" && -d "$REPO_DIR" ]]; then
+	while IFS= read -r f; do
+		name="${f##*/}"
+		[[ -f "$offline_cache/$name" ]] || continue
+		cp "$f" "$offline_cache/$name"
+		cp "$f.sig" "$offline_cache/$name.sig"
+	done < <(compgen -G "$REPO_DIR/*.pkg.tar.*" | grep -v '\.sig$' || true)
+fi
+
 platform_dir="$PROFILE/airootfs/opt/arches/platform"
 keyrings="$PROFILE/airootfs/usr/share/pacman/keyrings"
 mkdir -p "$platform_dir" "$keyrings"

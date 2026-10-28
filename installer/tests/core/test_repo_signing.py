@@ -299,3 +299,19 @@ def test_test_only_build_signs_with_a_throwaway_key(setup) -> None:
     assert "keys/README.md" in r.stderr
     assert not (root / "opt/arches/TEST-BUILD").exists()
     assert not (root / "etc/issue.d/arches-test-build.issue").exists()
+
+
+def test_offline_cache_gets_the_repository_signatures(setup) -> None:
+    _export(setup)
+    assert _sign(setup).returncode == 0
+    cache = setup["repo"].parent / "offline-cache"
+    cache.mkdir()
+    pkg = setup["pkgs"][0]
+    (cache / pkg.name).write_bytes(b"stale bytes")
+    (cache / f"{pkg.name}.sig").write_bytes(b"signature from an earlier key")
+    r = _stage(setup, setup["repo"].parent / "profile", ARCHES_OFFLINE_CACHE=str(cache))
+    assert r.returncode == 0, r.stderr
+    assert (cache / pkg.name).read_bytes() == pkg.read_bytes()
+    assert (cache / f"{pkg.name}.sig").read_bytes() == Path(f"{pkg}.sig").read_bytes()
+    # Packages the cache does not hold are not added to it.
+    assert not (cache / setup["pkgs"][1].name).exists()
