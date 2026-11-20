@@ -70,6 +70,10 @@ class TestLoadMachine:
         assert "tp_smapi" in m.packages
         assert "tuned" in m.services
         assert "power" in m.ansible_firstboot_roles
+        assert (
+            "options btusb enable_autosuspend=0"
+            in m.modprobe["arches-btusb-autosuspend.conf"]
+        )
         assert not m.is_generic
 
     def test_load_generic_laptop(self, hw_dir: Path) -> None:

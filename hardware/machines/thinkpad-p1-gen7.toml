@@ -35,5 +35,12 @@ enable = [
     "thermald",
 ]
 
+[modprobe]
+"arches-btusb-autosuspend.conf" = """\
+# The BE200 Bluetooth controller (8087:0036) drops audio connections
+# after s2idle resume.  USB autosuspend is a known trigger on Intel BT.
+options btusb enable_autosuspend=0\
+"""
+
 [ansible]
 firstboot_roles = ["power"]

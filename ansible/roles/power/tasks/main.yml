@@ -135,7 +135,25 @@
     state: started
 
 # --------------------------------------------------------------------------
-# 9. Disable ollama and open-webui auto-start (managed by `power` script)
+# 9. Restart Bluetooth after resume
+# --------------------------------------------------------------------------
+# The BE200 Bluetooth controller loses its link to bluetoothd across
+# s2idle; audio devices disconnect within seconds until the daemon
+# restarts.
+- name: "Power: deploy bluetooth resume restart unit"
+  copy:
+    src: bluetooth-resume-restart.service
+    dest: /etc/systemd/system/bluetooth-resume-restart.service
+    mode: "0644"
+
+- name: "Power: enable bluetooth resume restart unit"
+  systemd:
+    name: bluetooth-resume-restart.service
+    enabled: yes
+    daemon_reload: yes
+
+# --------------------------------------------------------------------------
+# 10. Disable ollama and open-webui auto-start (managed by `power` script)
 # --------------------------------------------------------------------------
 - name: "Power: disable ollama auto-start"
   systemd:
